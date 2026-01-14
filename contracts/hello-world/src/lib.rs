@@ -203,6 +203,107 @@ impl VirtualTokenContract {
         env.storage().persistent().get(&key).unwrap_or(0)
     }
     
+    /// Places a bet on the active round
+    /// 
+    /// # Parameters
+    /// * `env` - The contract environment
+    /// * `user` - The address of the user placing the bet
+    /// * `amount` - Amount of vXLM to bet (must be > 0)
+    /// * `side` - Which side to bet on (Up or Down)
+    /// 
+    /// # How it works
+    /// 1. Verify user authorization
+    /// 2. Check that there's an active round
+    /// 3. Check that the round hasn't ended yet
+    /// 4. Verify user has sufficient balance
+    /// 5. Check user hasn't already bet in this round
+    /// 6. Deduct bet amount from user's balance
+    /// 7. Record the bet position
+    /// 8. Update the round's pool totals
+    /// 
+    /// # Panics
+    /// - If amount is 0
+    /// - If no active round
+    /// - If round has already ended
+    /// - If user has insufficient balance
+    /// - If user already bet in this round
+    pub fn place_bet(env: Env, user: Address, amount: i128, side: BetSide) {
+        // User must authorize the bet
+        user.require_auth();
+        
+        // Validate amount
+        if amount <= 0 {
+            panic!("Bet amount must be greater than 0");
+        }
+        
+        // Get the active round
+        let mut round: Round = env.storage()
+            .persistent()
+            .get(&DataKey::ActiveRound)
+            .expect("No active round");
+        
+        // Check if round has ended
+        let current_ledger = env.ledger().sequence();
+        if current_ledger >= round.end_ledger {
+            panic!("Round has already ended");
+        }
+        
+        // Check user balance
+        let user_balance = Self::balance(env.clone(), user.clone());
+        if user_balance < amount {
+            panic!("Insufficient balance");
+        }
+        
+        // Get positions map
+        let mut positions: Map<Address, UserPosition> = env.storage()
+            .persistent()
+            .get(&DataKey::Positions)
+            .unwrap_or(Map::new(&env));
+        
+        // Check if user already has a position
+        if positions.contains_key(user.clone()) {
+            panic!("User has already bet in this round");
+        }
+        
+        // Deduct amount from user's balance
+        let new_balance = user_balance - amount;
+        Self::_set_balance(&env, user.clone(), new_balance);
+        
+        // Record the position
+        let position = UserPosition {
+            amount,
+            side: side.clone(),
+        };
+        positions.set(user, position);
+        
+        // Update round pools
+        match side {
+            BetSide::Up => round.pool_up += amount,
+            BetSide::Down => round.pool_down += amount,
+        }
+        
+        // Save updated data
+        env.storage().persistent().set(&DataKey::Positions, &positions);
+        env.storage().persistent().set(&DataKey::ActiveRound, &round);
+    }
+    
+    /// Gets a user's position in the current round
+    /// 
+    /// # Parameters
+    /// * `env` - The contract environment
+    /// * `user` - The address of the user
+    /// 
+    /// # Returns
+    /// Option<UserPosition> - Some(position) if user has bet, None if not
+    pub fn get_user_position(env: Env, user: Address) -> Option<UserPosition> {
+        let positions: Map<Address, UserPosition> = env.storage()
+            .persistent()
+            .get(&DataKey::Positions)
+            .unwrap_or(Map::new(&env));
+        
+        positions.get(user)
+    }
+    
     /// Resolves a round with the final price and calculates winnings
     /// Only the oracle can call this function
     /// 
@@ -495,7 +596,7 @@ impl VirtualTokenContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env};
 
     #[test]
     fn test_mint_initial() {
@@ -952,5 +1053,443 @@ mod test {
         
         // Try to resolve without creating a round
         client.resolve_round(&1_0000000);
+    }
+    
+    // ============================================
+    // FULL LIFECYCLE TESTS
+    // ============================================
+    
+    #[test]
+    fn test_full_round_lifecycle() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        // Setup
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let charlie = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        // STEP 1: Initialize contract
+        client.initialize(&admin, &oracle);
+        
+        // STEP 2: Users get initial tokens
+        client.mint_initial(&alice);
+        client.mint_initial(&bob);
+        client.mint_initial(&charlie);
+        
+        assert_eq!(client.balance(&alice), 1000_0000000);
+        assert_eq!(client.balance(&bob), 1000_0000000);
+        assert_eq!(client.balance(&charlie), 1000_0000000);
+        
+        // STEP 3: Admin creates a round
+        let start_price: u128 = 1_0000000; // 1.0 XLM
+        client.create_round(&start_price, &100);
+        
+        let round = client.get_active_round().unwrap();
+        assert_eq!(round.price_start, start_price);
+        assert_eq!(round.pool_up, 0);
+        assert_eq!(round.pool_down, 0);
+        
+        // STEP 4: Users place bets
+        client.place_bet(&alice, &100_0000000, &BetSide::Up);
+        client.place_bet(&bob, &200_0000000, &BetSide::Up);
+        client.place_bet(&charlie, &150_0000000, &BetSide::Down);
+        
+        // Verify balances deducted
+        assert_eq!(client.balance(&alice), 900_0000000);
+        assert_eq!(client.balance(&bob), 800_0000000);
+        assert_eq!(client.balance(&charlie), 850_0000000);
+        
+        // Verify positions recorded
+        let alice_pos = client.get_user_position(&alice).unwrap();
+        assert_eq!(alice_pos.amount, 100_0000000);
+        assert_eq!(alice_pos.side, BetSide::Up);
+        
+        // Verify pools updated
+        let round = client.get_active_round().unwrap();
+        assert_eq!(round.pool_up, 300_0000000);
+        assert_eq!(round.pool_down, 150_0000000);
+        
+        // STEP 5: Oracle resolves round (price went UP)
+        let final_price: u128 = 1_5000000; // 1.5 XLM
+        client.resolve_round(&final_price);
+        
+        // Round should be cleared
+        assert_eq!(client.get_active_round(), None);
+        
+        // STEP 6: Verify pending winnings
+        // Alice: 100 + (100/300)*150 = 150
+        // Bob: 200 + (200/300)*150 = 300
+        // Charlie: 0 (lost)
+        assert_eq!(client.get_pending_winnings(&alice), 150_0000000);
+        assert_eq!(client.get_pending_winnings(&bob), 300_0000000);
+        assert_eq!(client.get_pending_winnings(&charlie), 0);
+        
+        // STEP 7: Verify stats updated
+        let alice_stats = client.get_user_stats(&alice);
+        assert_eq!(alice_stats.total_wins, 1);
+        assert_eq!(alice_stats.current_streak, 1);
+        
+        let charlie_stats = client.get_user_stats(&charlie);
+        assert_eq!(charlie_stats.total_losses, 1);
+        assert_eq!(charlie_stats.current_streak, 0);
+        
+        // STEP 8: Users claim winnings
+        let alice_claimed = client.claim_winnings(&alice);
+        let bob_claimed = client.claim_winnings(&bob);
+        
+        assert_eq!(alice_claimed, 150_0000000);
+        assert_eq!(bob_claimed, 300_0000000);
+        
+        // STEP 9: Verify final balances
+        assert_eq!(client.balance(&alice), 1050_0000000); // 900 + 150
+        assert_eq!(client.balance(&bob), 1100_0000000);   // 800 + 300
+        assert_eq!(client.balance(&charlie), 850_0000000); // Lost 150
+        
+        // STEP 10: Pending winnings cleared
+        assert_eq!(client.get_pending_winnings(&alice), 0);
+        assert_eq!(client.get_pending_winnings(&bob), 0);
+    }
+    
+    #[test]
+    fn test_multiple_rounds_lifecycle() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let alice = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        client.mint_initial(&alice);
+        
+        // ROUND 1: Alice bets UP and wins
+        client.create_round(&1_0000000, &100);
+        client.place_bet(&alice, &100_0000000, &BetSide::Up);
+        
+        env.as_contract(&contract_id, || {
+            let mut positions = Map::<Address, UserPosition>::new(&env);
+            positions.set(alice.clone(), UserPosition {
+                amount: 100_0000000,
+                side: BetSide::Up,
+            });
+            env.storage().persistent().set(&DataKey::Positions, &positions);
+            
+            let mut round: Round = env.storage().persistent().get(&DataKey::ActiveRound).unwrap();
+            round.pool_up = 100_0000000;
+            round.pool_down = 50_0000000;
+            env.storage().persistent().set(&DataKey::ActiveRound, &round);
+        });
+        
+        client.resolve_round(&1_5000000); // UP wins
+        client.claim_winnings(&alice);
+        
+        let stats = client.get_user_stats(&alice);
+        assert_eq!(stats.total_wins, 1);
+        assert_eq!(stats.current_streak, 1);
+        
+        // ROUND 2: Alice bets DOWN and wins again
+        client.create_round(&2_0000000, &100);
+        client.place_bet(&alice, &100_0000000, &BetSide::Down);
+        
+        env.as_contract(&contract_id, || {
+            let mut positions = Map::<Address, UserPosition>::new(&env);
+            positions.set(alice.clone(), UserPosition {
+                amount: 100_0000000,
+                side: BetSide::Down,
+            });
+            env.storage().persistent().set(&DataKey::Positions, &positions);
+            
+            let mut round: Round = env.storage().persistent().get(&DataKey::ActiveRound).unwrap();
+            round.pool_up = 80_0000000;
+            round.pool_down = 100_0000000;
+            env.storage().persistent().set(&DataKey::ActiveRound, &round);
+        });
+        
+        client.resolve_round(&1_5000000); // DOWN wins
+        
+        let stats = client.get_user_stats(&alice);
+        assert_eq!(stats.total_wins, 2);
+        assert_eq!(stats.current_streak, 2);
+        assert_eq!(stats.best_streak, 2);
+    }
+    
+    // ============================================
+    // EDGE CASE TESTS
+    // ============================================
+    
+    #[test]
+    #[should_panic(expected = "Bet amount must be greater than 0")]
+    fn test_place_bet_zero_amount() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let user = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        client.mint_initial(&user);
+        client.create_round(&1_0000000, &100);
+        
+        // Try to bet 0 amount
+        client.place_bet(&user, &0, &BetSide::Up);
+    }
+    
+    #[test]
+    #[should_panic(expected = "Bet amount must be greater than 0")]
+    fn test_place_bet_negative_amount() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let user = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        client.mint_initial(&user);
+        client.create_round(&1_0000000, &100);
+        
+        // Try to bet negative amount
+        client.place_bet(&user, &-100, &BetSide::Up);
+    }
+    
+    #[test]
+    #[should_panic(expected = "No active round")]
+    fn test_place_bet_no_active_round() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let user = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        client.mint_initial(&user);
+        
+        // Try to bet without active round
+        client.place_bet(&user, &100_0000000, &BetSide::Up);
+    }
+    
+    #[test]
+    #[should_panic(expected = "Round has already ended")]
+    fn test_place_bet_after_round_ended() {
+        let env = Env::default();
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 0;
+        });
+        
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let user = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        client.mint_initial(&user);
+        
+        // Create round that ends at ledger 50
+        client.create_round(&1_0000000, &50);
+        
+        // Advance ledger past end time
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 100;
+        });
+        
+        // Try to bet after round ended
+        client.place_bet(&user, &100_0000000, &BetSide::Up);
+    }
+    
+    #[test]
+    #[should_panic(expected = "Insufficient balance")]
+    fn test_place_bet_insufficient_balance() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let user = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        client.mint_initial(&user); // Has 1000 vXLM
+        client.create_round(&1_0000000, &100);
+        
+        // Try to bet more than balance
+        client.place_bet(&user, &2000_0000000, &BetSide::Up);
+    }
+    
+    #[test]
+    #[should_panic(expected = "User has already bet in this round")]
+    fn test_place_bet_twice_same_round() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let user = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        client.mint_initial(&user);
+        client.create_round(&1_0000000, &100);
+        
+        // First bet succeeds
+        client.place_bet(&user, &100_0000000, &BetSide::Up);
+        
+        // Second bet should fail
+        client.place_bet(&user, &50_0000000, &BetSide::Down);
+    }
+    
+    #[test]
+    fn test_round_with_no_participants() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        
+        // Create round with no bets
+        client.create_round(&1_0000000, &100);
+        
+        let round = client.get_active_round().unwrap();
+        assert_eq!(round.pool_up, 0);
+        assert_eq!(round.pool_down, 0);
+        
+        // Resolve with no participants
+        client.resolve_round(&1_5000000);
+        
+        // Should clear round without errors
+        assert_eq!(client.get_active_round(), None);
+    }
+    
+    #[test]
+    fn test_round_with_only_one_side() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        client.mint_initial(&alice);
+        client.mint_initial(&bob);
+        
+        // Create round and only bet on UP
+        client.create_round(&1_0000000, &100);
+        client.place_bet(&alice, &100_0000000, &BetSide::Up);
+        client.place_bet(&bob, &150_0000000, &BetSide::Up);
+        
+        let round = client.get_active_round().unwrap();
+        assert_eq!(round.pool_up, 250_0000000);
+        assert_eq!(round.pool_down, 0);
+        
+        // Resolve - UP wins but no losers to take from
+        client.resolve_round(&1_5000000);
+        
+        // Winners should only get their bets back (no losing pool to split)
+        assert_eq!(client.get_pending_winnings(&alice), 100_0000000);
+        assert_eq!(client.get_pending_winnings(&bob), 150_0000000);
+    }
+    
+    #[test]
+    fn test_get_user_position_no_bet() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let user = Address::generate(&env);
+        
+        // No position should return None
+        let position = client.get_user_position(&user);
+        assert_eq!(position, None);
+    }
+    
+    #[test]
+    fn test_accumulate_pending_winnings() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let alice = Address::generate(&env);
+        
+        env.mock_all_auths();
+        
+        client.initialize(&admin, &oracle);
+        client.mint_initial(&alice);
+        
+        // Round 1: Alice bets UP and wins
+        client.create_round(&1_0000000, &100);
+        client.place_bet(&alice, &100_0000000, &BetSide::Up);
+        
+        env.as_contract(&contract_id, || {
+            let mut positions = Map::<Address, UserPosition>::new(&env);
+            positions.set(alice.clone(), UserPosition {
+                amount: 100_0000000,
+                side: BetSide::Up,
+            });
+            env.storage().persistent().set(&DataKey::Positions, &positions);
+            
+            let mut round: Round = env.storage().persistent().get(&DataKey::ActiveRound).unwrap();
+            round.pool_up = 100_0000000;
+            round.pool_down = 50_0000000;
+            env.storage().persistent().set(&DataKey::ActiveRound, &round);
+        });
+        
+        client.resolve_round(&1_5000000); // UP wins
+        
+        let first_pending = client.get_pending_winnings(&alice);
+        assert!(first_pending > 0);
+        
+        // Round 2: Alice bets and gets refund
+        client.create_round(&2_0000000, &100);
+        client.place_bet(&alice, &50_0000000, &BetSide::Down);
+        
+        client.resolve_round(&2_0000000); // Price unchanged - refund
+        
+        // Should have accumulated pending from both rounds
+        let total_pending = client.get_pending_winnings(&alice);
+        assert_eq!(total_pending, first_pending + 50_0000000);
+        
+        // Claim all at once
+        let claimed = client.claim_winnings(&alice);
+        assert_eq!(claimed, total_pending);
+        assert_eq!(client.get_pending_winnings(&alice), 0);
     }
 }
