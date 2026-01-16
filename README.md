@@ -142,12 +142,11 @@
 
 ```
 Xelma-Blockchain/
-├── contracts/
-│   └── hello-world/           # Main prediction market contract
-│       ├── src/
-│       │   └── lib.rs         # Smart contract implementation (1,600 lines)
-│       ├── Cargo.toml         # Rust dependencies
-│       └── test_snapshots/    # Test execution records
+├── contracts/                 # Main prediction market contract
+│   ├── src/
+│   │   └── lib.rs            # Smart contract implementation (1,600 lines)
+│   ├── Cargo.toml            # Rust dependencies
+│   └── test_snapshots/       # Test execution records
 │
 ├── bindings/                  # TypeScript bindings (auto-generated)
 │   ├── src/
@@ -186,7 +185,7 @@ cd Xelma-Blockchain
 ### 2. Build Smart Contract
 
 ```bash
-cd contracts/hello-world
+cd contracts
 cargo build --target wasm32-unknown-unknown --release
 ```
 
@@ -362,10 +361,10 @@ Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Bloc
 
 ## 📚 Documentation
 
-- **[Smart Contract](./contracts/hello-world/src/lib.rs)** - Fully commented Rust code
+- **[Smart Contract](./contracts/src/lib.rs)** - Fully commented Rust code
 - **[Security Review](./SECURITY_REVIEW.md)** - Security analysis and best practices
 - **[Bindings Guide](./bindings/README.md)** - TypeScript integration guide
-- **[Test Suite](./contracts/hello-world/src/lib.rs#tests)** - Comprehensive test examples
+- **[Test Suite](./contracts/src/lib.rs#tests)** - Comprehensive test examples
 
 ---
 
