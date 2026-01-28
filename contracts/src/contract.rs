@@ -1,9 +1,25 @@
 //! Core contract implementation for the XLM Price Prediction Market.
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Map, Vec};
+use soroban_sdk::{contract, contractimpl, contractevent, Address, Env, Map, Vec};
 
 use crate::errors::ContractError;
 use crate::types::{BetSide, DataKey, PrecisionPrediction, Round, RoundMode, UserPosition, UserStats};
+
+/// Event emitted when a new round is created
+#[contractevent]
+pub struct RoundCreatedEvent {
+    pub start_price: u128,
+    pub end_ledger: u32,
+    pub mode: u32,
+}
+
+/// Event emitted when a user makes a precision price prediction
+#[contractevent]
+pub struct PricePredictionEvent {
+    pub user: Address,
+    pub guessed_price: u128,
+    pub end_ledger: u32,
+}
 
 #[contract]
 pub struct VirtualTokenContract;
@@ -76,10 +92,11 @@ impl VirtualTokenContract {
         env.storage().persistent().remove(&DataKey::PrecisionPositions);
 
         // Emit round creation event with mode
-        env.events().publish(
-            (symbol_short!("round"), symbol_short!("created")),
-            (start_price, end_ledger, mode_value),
-        );
+        RoundCreatedEvent {
+            start_price,
+            end_ledger,
+            mode: mode_value,
+        }.publish(&env);
 
         Ok(())
     }
@@ -186,6 +203,88 @@ impl VirtualTokenContract {
             .unwrap_or(Map::new(&env));
         legacy_positions.set(user, UserPosition { amount, side });
         env.storage().persistent().set(&DataKey::Positions, &legacy_positions);
+
+        Ok(())
+    }
+
+    /// Places a precision prediction on the active round (Precision/Legends mode only)
+    /// guessed_price: price scaled to exactly 4 decimals (e.g., 0.2297 → 2297)
+    /// This is the Legends mode function with strict validation
+    pub fn predict_price(
+        env: Env,
+        user: Address,
+        guessed_price: u128,
+        amount: i128,
+    ) -> Result<(), ContractError> {
+        user.require_auth();
+
+        if amount <= 0 {
+            return Err(ContractError::InvalidBetAmount);
+        }
+
+        // Validate price scale: must represent exactly 4 decimal places
+        // Valid range: 0 to 99999 (0.0000 to 9.9999)
+        // Prices >= 100000 would represent 5+ decimals or >= 10.0000
+        if guessed_price >= 100_000 {
+            return Err(ContractError::InvalidPriceScale);
+        }
+
+        let round: Round = env.storage()
+            .persistent()
+            .get(&DataKey::ActiveRound)
+            .ok_or(ContractError::NoActiveRound)?;
+
+        // Verify round is in Precision mode (Legends)
+        if round.mode != RoundMode::Precision {
+            return Err(ContractError::WrongModeForPrediction);
+        }
+
+        let current_ledger = env.ledger().sequence();
+        if current_ledger >= round.end_ledger {
+            return Err(ContractError::RoundEnded);
+        }
+
+        let user_balance = Self::balance(env.clone(), user.clone());
+        if user_balance < amount {
+            return Err(ContractError::InsufficientBalance);
+        }
+
+        // Check if user already has a prediction in this round
+        let mut predictions: Vec<PrecisionPrediction> = env.storage()
+            .persistent()
+            .get(&DataKey::PrecisionPositions)
+            .unwrap_or(Vec::new(&env));
+
+        for i in 0..predictions.len() {
+            if let Some(pred) = predictions.get(i) {
+                if pred.user == user {
+                    return Err(ContractError::AlreadyBet);
+                }
+            }
+        }
+
+        // Deduct balance
+        let new_balance = user_balance
+            .checked_sub(amount)
+            .ok_or(ContractError::Overflow)?;
+        Self::_set_balance(&env, user.clone(), new_balance);
+
+        // Store prediction
+        let prediction = PrecisionPrediction {
+            user: user.clone(),
+            predicted_price: guessed_price,
+            amount,
+        };
+        predictions.push_back(prediction);
+
+        env.storage().persistent().set(&DataKey::PrecisionPositions, &predictions);
+
+        // Emit event with user, scaled guess, and round info
+        PricePredictionEvent {
+            user,
+            guessed_price,
+            end_ledger: round.end_ledger,
+        }.publish(&env);
 
         Ok(())
     }
