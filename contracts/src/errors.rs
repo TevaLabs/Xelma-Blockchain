@@ -37,5 +37,7 @@ pub enum ContractError {
     InvalidMode = 14,
     /// Wrong prediction type for current round mode
     WrongModeForPrediction = 15,
+    /// Invalid price scale (must represent exactly 4 decimal places)
+    InvalidPriceScale = 16,
 }
 
