@@ -2,8 +2,8 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::BetSide;
-use soroban_sdk::{testutils::{Address as _, Ledger as _}, Address, Env};
+use crate::types::{BetSide, DataKey};
+use soroban_sdk::{testutils::{Address as _, Ledger as _}, Address, Env, Map};
 
 #[test]
 fn test_set_windows_admin_only() {
@@ -21,10 +21,35 @@ fn test_set_windows_admin_only() {
     
     // Admin can set windows
     client.set_windows(&10, &20);
+}
+
+#[test]
+#[should_panic]
+fn test_set_windows_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
     
-    // Note: Testing non-admin access is complex in Soroban test environment
-    // The require_auth() call will fail if the caller doesn't match admin
-    // This is tested implicitly through the admin requirement in the function
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    
+    // Auth for initialize
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    
+    // NO mock_all_auths() before this call, and we'll use a different address
+    // Actually, as mentioned, once mock_all_auths is called on an Env, it's global.
+    // So we use a fresh Env and as_contract.
+    let env2 = Env::default();
+    let contract_id2 = env2.register(VirtualTokenContract, ());
+    let client2 = VirtualTokenContractClient::new(&env2, &contract_id2);
+    
+    env2.as_contract(&contract_id2, || {
+        env2.storage().persistent().set(&DataKey::Admin, &admin);
+    });
+    
+    // This should panic because no auth is mocked for 'admin'
+    client2.set_windows(&10, &20);
 }
 
 #[test]

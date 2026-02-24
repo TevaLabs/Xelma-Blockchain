@@ -235,3 +235,123 @@ fn test_multiple_rounds_lifecycle() {
     assert_eq!(stats.best_streak, 2);
 }
 
+
+#[test]
+#[should_panic]
+fn test_create_round_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    
+    let admin = Address::generate(&env);
+    
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&DataKey::Admin, &admin);
+    });
+    
+    // Fails because 'admin' didn't authorize
+    client.create_round(&1_0000000, &None);
+}
+
+#[test]
+#[should_panic]
+fn test_resolve_round_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    
+    let oracle = Address::generate(&env);
+    
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&DataKey::Oracle, &oracle);
+        // Also need an active round and to be at the right ledger
+        let round = Round {
+            price_start: 100,
+            start_ledger: 0,
+            bet_end_ledger: 6,
+            end_ledger: 12,
+            pool_up: 0,
+            pool_down: 0,
+            mode: crate::types::RoundMode::UpDown,
+        };
+        env.storage().persistent().set(&DataKey::ActiveRound, &round);
+    });
+    
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    
+    // Fails because 'oracle' didn't authorize
+    client.resolve_round(&150);
+}
+
+#[test]
+#[should_panic]
+fn test_place_bet_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    
+    let user = Address::generate(&env);
+    
+    env.as_contract(&contract_id, || {
+        let round = Round {
+            price_start: 100,
+            start_ledger: 0,
+            bet_end_ledger: 6,
+            end_ledger: 12,
+            pool_up: 0,
+            pool_down: 0,
+            mode: crate::types::RoundMode::UpDown,
+        };
+        env.storage().persistent().set(&DataKey::ActiveRound, &round);
+        // Give user some balance
+        env.storage().persistent().set(&DataKey::Balance(user.clone()), &1000i128);
+    });
+    
+    // Fails because 'user' didn't authorize
+    client.place_bet(&user, &100, &BetSide::Up);
+}
+
+#[test]
+#[should_panic]
+fn test_claim_winnings_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    
+    let user = Address::generate(&env);
+    
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&DataKey::PendingWinnings(user.clone()), &100i128);
+    });
+    
+    // Fails because 'user' didn't authorize
+    client.claim_winnings(&user);
+}
+
+#[test]
+#[should_panic]
+fn test_place_precision_prediction_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    
+    let user = Address::generate(&env);
+    
+    env.as_contract(&contract_id, || {
+        let round = Round {
+            price_start: 100,
+            start_ledger: 0,
+            bet_end_ledger: 6,
+            end_ledger: 12,
+            pool_up: 0,
+            pool_down: 0,
+            mode: crate::types::RoundMode::Precision,
+        };
+        env.storage().persistent().set(&DataKey::ActiveRound, &round);
+        // Give user some balance
+        env.storage().persistent().set(&DataKey::Balance(user.clone()), &1000i128);
+    });
+    
+    // Fails because 'user' didn't authorize
+    client.place_precision_prediction(&user, &100, &2300);
+}

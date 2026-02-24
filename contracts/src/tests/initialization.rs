@@ -112,3 +112,29 @@ fn test_initialize_twice_fails() {
     assert_eq!(result, Err(Ok(ContractError::AlreadyInitialized)));
 }
 
+
+#[test]
+#[should_panic]
+fn test_initialize_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    
+    // NO mock_all_auths() - should panic on admin.require_auth()
+    client.initialize(&admin, &oracle);
+}
+
+#[test]
+#[should_panic]
+fn test_mint_initial_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+    
+    // NO mock_all_auths() - should panic on user.require_auth()
+    client.mint_initial(&user);
+}
