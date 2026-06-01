@@ -56,7 +56,7 @@ const CLAIM_MEM_MAX: u64 = TX_MEM_BUDGET;
 /// The budget is reset to unlimited before the call so measurement itself
 /// never trips a resource limit; we read the accumulated cost afterwards.
 fn measure<T>(env: &Env, f: impl FnOnce() -> T) -> (u64, u64, T) {
-    let budget = env.cost_estimate().budget();
+    let mut budget = env.cost_estimate().budget();
     budget.reset_unlimited();
     let out = f();
     let cpu = budget.cpu_instruction_cost();

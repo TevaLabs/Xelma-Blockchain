@@ -221,10 +221,42 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
+  fuzz-harness:
+    name: Fuzz Harness (bounded)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-fuzz-
+            ${{ runner.os }}-cargo-
+
+      - name: Run fuzz harness (deterministic, bounded)
+        env:
+          PROPTEST_CASES: "256"
+          PROPTEST_MAX_SHRINK_ITERS: "512"
+          PROPTEST_DISABLE_FAILURE_PERSISTENCE: "true"
+        run: |
+          cargo test --package xelma-contract fuzz_harness --locked -- --nocapture
+
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [rust-test, contract-build, bindings-test, bindings-build, parity-check, format-check]
+    needs: [rust-test, contract-build, bindings-test, bindings-build, parity-check, format-check, fuzz-harness]
     if: always()
     steps:
       - name: Check all jobs status
@@ -234,7 +266,8 @@ jobs:
              [ "${{ needs.bindings-test.result }}" != "success" ] || \
              [ "${{ needs.bindings-build.result }}" != "success" ] || \
              [ "${{ needs.parity-check.result }}" != "success" ] || \
-             [ "${{ needs.format-check.result }}" != "success" ]; then
+             [ "${{ needs.format-check.result }}" != "success" ] || \
+             [ "${{ needs.fuzz-harness.result }}" != "success" ]; then
             echo "One or more CI jobs failed"
             echo "Rust Tests: ${{ needs.rust-test.result }}"
             echo "Contract Build: ${{ needs.contract-build.result }}"
@@ -242,6 +275,7 @@ jobs:
             echo "Bindings Build: ${{ needs.bindings-build.result }}"
             echo "Parity Check: ${{ needs.parity-check.result }}"
             echo "Format Check: ${{ needs.format-check.result }}"
+            echo "Fuzz Harness: ${{ needs.fuzz-harness.result }}"
             exit 1
           fi
           echo "All CI checks passed"
