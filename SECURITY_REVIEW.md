@@ -89,7 +89,7 @@ Soroban-specific risk considerations:
 - **Auth:** state-changing role/user operations call `require_auth()` on the expected `Address`; pause/unpause and windows are admin-gated, resolution is oracle-gated, user actions are user-gated.
 - **Storage:** persistent storage uses indexed per-user keys plus `RoundParticipants(round_id)` to avoid rewriting full maps on each bet, with legacy map fallbacks for migration.
 - **Arithmetic:** critical arithmetic uses checked operations. Payout paths increasingly route through `payout_add` / `payout_mul`, but one Precision indexed path still returns generic `Overflow` rather than `PayoutOverflow`.
-- **Oracle inputs:** `OraclePayload` enforces non-zero price, timestamp not in the future, 300-second freshness, and round binding against `Round.start_ledger`.
+- **Oracle inputs:** `OraclePayload` enforces non-zero price, timestamp at or after the round start timestamp, timestamp not in the future, 300-second freshness, and round binding against `Round.start_ledger`.
 - **Resource limits:** resolution is O(n) over participants; extremely large rounds remain bounded by transaction/resource limits rather than by a contract-level participant cap.
 
 ## Findings

@@ -77,4 +77,6 @@ pub enum ContractError {
     InvalidOracleStatus = 34,
     /// Oracle stale threshold is out of valid range (must be 60–86400 seconds)
     InvalidStaleThreshold = 35,
+    /// Oracle payload timestamp predates the round lifecycle window
+    OracleDataBeforeRound = 36,
 }

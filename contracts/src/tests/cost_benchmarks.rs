@@ -101,7 +101,9 @@ fn bench_cost_place_bet() {
     client.mint_initial(&alice);
     client.create_round(&1_0000000u128, &None);
 
-    let (cpu, mem, _) = measure(&env, || client.place_bet(&alice, &100_0000000, &BetSide::Up));
+    let (cpu, mem, _) = measure(&env, || {
+        client.place_bet(&alice, &100_0000000, &BetSide::Up)
+    });
     report("place_bet", cpu, mem);
     assert!(cpu <= PLACE_BET_CPU_MAX, "place_bet CPU regression: {cpu}");
     assert!(mem <= PLACE_BET_MEM_MAX, "place_bet MEM regression: {mem}");
@@ -147,8 +149,14 @@ fn bench_cost_resolve_round() {
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_round", cpu, mem);
-    assert!(cpu <= RESOLVE_CPU_MAX, "resolve_round CPU regression: {cpu}");
-    assert!(mem <= RESOLVE_MEM_MAX, "resolve_round MEM regression: {mem}");
+    assert!(
+        cpu <= RESOLVE_CPU_MAX,
+        "resolve_round CPU regression: {cpu}"
+    );
+    assert!(
+        mem <= RESOLVE_MEM_MAX,
+        "resolve_round MEM regression: {mem}"
+    );
 }
 
 #[test]

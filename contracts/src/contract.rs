@@ -1,6 +1,8 @@
 //! Core contract implementation for the XLM Price Prediction Market.
 
-use soroban_sdk::{contract, contractimpl, panic_with_error, symbol_short, Address, Env, Map, Vec};
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, symbol_short, Address, Env, Map, Symbol, Vec,
+};
 
 use crate::errors::ContractError;
 use crate::types::{
@@ -18,6 +20,7 @@ const MAX_MIN_PARTICIPANTS: u32 = 10_000;
 const DEFAULT_ORACLE_STALE_THRESHOLD: u64 = 3_600; // 1 hour
 const MIN_ORACLE_STALE_THRESHOLD: u64 = 60; // 1 minute
 const MAX_ORACLE_STALE_THRESHOLD: u64 = 86_400; // 24 hours
+const ORACLE_MAX_DATA_AGE_SECONDS: u64 = 300;
 
 const DEFAULT_BET_WINDOW_LEDGERS: u32 = 6;
 const DEFAULT_RUN_WINDOW_LEDGERS: u32 = 12;
@@ -174,6 +177,10 @@ impl VirtualTokenContract {
         env.storage()
             .persistent()
             .set(&DataKey::ActiveRound, &round);
+        env.storage().persistent().set(
+            &Self::round_start_timestamp_key(round_id),
+            &env.ledger().timestamp(),
+        );
 
         // Note: individual position keys (DataKey::Position / DataKey::PrecisionPosition)
         // are cleaned up at resolve time; no bulk-map clearing needed here.
@@ -259,14 +266,11 @@ impl VirtualTokenContract {
     /// Returns `true` if the oracle has a non-stale heartbeat with status not offline (2).
     /// Uses the configured stale threshold, defaulting to 3600 seconds.
     pub fn is_oracle_live(env: Env) -> bool {
-        let record: OracleHeartbeatRecord = match env
-            .storage()
-            .persistent()
-            .get(&DataKey::OracleHeartbeat)
-        {
-            Some(r) => r,
-            None => return false,
-        };
+        let record: OracleHeartbeatRecord =
+            match env.storage().persistent().get(&DataKey::OracleHeartbeat) {
+                Some(r) => r,
+                None => return false,
+            };
         if record.status == 2 {
             return false;
         }
@@ -473,7 +477,9 @@ impl VirtualTokenContract {
             if v == 0 || v > MAX_MIN_PARTICIPANTS {
                 return Err(ContractError::InvalidMinParticipants);
             }
-            env.storage().persistent().set(&DataKey::MinParticipants, &v);
+            env.storage()
+                .persistent()
+                .set(&DataKey::MinParticipants, &v);
         } else {
             env.storage().persistent().remove(&DataKey::MinParticipants);
         }
@@ -929,23 +935,31 @@ impl VirtualTokenContract {
         // Per-round nonce replay guard (Issue #118).
         // Round-ID checks already block cross-round replays; this additionally
         // makes resolution idempotent against accidental duplicate submissions
-        // of the same payload within a round. The consumed nonce is recorded
-        // before any settlement so a reused nonce is rejected up front.
+        // of the same payload within a round.
         let nonce_key = DataKey::ConsumedOracleNonce(round.round_id, payload.nonce);
         if env.storage().persistent().has(&nonce_key) {
             return Err(ContractError::OracleNonceReused);
         }
-        env.storage().persistent().set(&nonce_key, &true);
 
-        // Verify data freshness (max 300 seconds / 5 minutes old)
+        // Verify the oracle timestamp is inside the deterministic round-safe window:
+        // [round_start_timestamp, current_ledger_timestamp], with a 300 second max age.
         let current_time = env.ledger().timestamp();
+        let round_start_timestamp: u64 = env
+            .storage()
+            .persistent()
+            .get(&Self::round_start_timestamp_key(round.round_id))
+            .unwrap_or(0);
+
+        if payload.timestamp < round_start_timestamp {
+            return Err(ContractError::OracleDataBeforeRound);
+        }
 
         // Reject future timestamps to prevent time-skew manipulation
         if payload.timestamp > current_time {
             return Err(ContractError::FutureOracleData);
         }
 
-        if current_time > payload.timestamp + 300 {
+        if current_time.saturating_sub(payload.timestamp) > ORACLE_MAX_DATA_AGE_SECONDS {
             return Err(ContractError::StaleOracleData);
         }
 
@@ -954,6 +968,9 @@ impl VirtualTokenContract {
         if current_ledger < round.end_ledger {
             return Err(ContractError::RoundNotEnded);
         }
+
+        // Record the consumed nonce only after all pre-settlement validation succeeds.
+        env.storage().persistent().set(&nonce_key, &true);
 
         // Store round ID before cleaning up
         let round_id = round.round_id;
@@ -1013,6 +1030,9 @@ impl VirtualTokenContract {
 
         // Clean up legacy map keys if present (migration compat)
         env.storage().persistent().remove(&DataKey::ActiveRound);
+        env.storage()
+            .persistent()
+            .remove(&Self::round_start_timestamp_key(round_id));
         env.storage().persistent().remove(&DataKey::Positions);
         env.storage().persistent().remove(&DataKey::UpDownPositions);
         env.storage()
@@ -1441,6 +1461,9 @@ impl VirtualTokenContract {
             .persistent()
             .set(&DataKey::CancelledRound(round_id), &true);
         env.storage().persistent().remove(&DataKey::ActiveRound);
+        env.storage()
+            .persistent()
+            .remove(&Self::round_start_timestamp_key(round_id));
 
         // Emit cancellation event
         // Topic: ("round", "cancelled")
@@ -1602,9 +1625,14 @@ impl VirtualTokenContract {
             .persistent()
             .remove(&DataKey::RoundParticipants(round_id));
         env.storage().persistent().remove(&DataKey::ActiveRound);
+        env.storage()
+            .persistent()
+            .remove(&Self::round_start_timestamp_key(round_id));
         env.storage().persistent().remove(&DataKey::Positions);
         env.storage().persistent().remove(&DataKey::UpDownPositions);
-        env.storage().persistent().remove(&DataKey::PrecisionPositions);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PrecisionPositions);
         Ok(())
     }
 
@@ -1706,6 +1734,10 @@ impl VirtualTokenContract {
         }
 
         Ok(())
+    }
+
+    fn round_start_timestamp_key(round_id: u64) -> (Symbol, u64) {
+        (symbol_short!("rstart"), round_id)
     }
 
     /// Checked addition for payout accumulation.

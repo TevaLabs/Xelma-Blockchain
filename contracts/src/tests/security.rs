@@ -133,6 +133,146 @@ fn test_resolve_round_future_timestamp() {
 // ─── Cancel-round security tests (Issue #111) ────────────────────────────────
 
 #[test]
+fn test_resolve_round_timestamp_before_round_start_fails() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 500;
+    });
+    client.create_round(&1_0000000, &None);
+    let round = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+        li.timestamp = 700;
+    });
+
+    let result = client.try_resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: 499,
+        round_id: round.start_ledger,
+        nonce: 1u64,
+    });
+
+    assert_eq!(result, Err(Ok(ContractError::OracleDataBeforeRound)));
+}
+
+#[test]
+fn test_resolve_round_timestamp_at_round_start_boundary_succeeds() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 500;
+    });
+    client.create_round(&1_0000000, &None);
+    let round = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+        li.timestamp = 700;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: 500,
+        round_id: round.start_ledger,
+        nonce: 1u64,
+    });
+
+    assert_eq!(client.get_active_round(), None);
+}
+
+#[test]
+fn test_resolve_round_stale_boundary_is_inclusive() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 100;
+    });
+    client.create_round(&1_0000000, &None);
+    let round = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+        li.timestamp = 400;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: 100,
+        round_id: round.start_ledger,
+        nonce: 1u64,
+    });
+
+    assert_eq!(client.get_active_round(), None);
+}
+
+#[test]
+fn test_invalid_timestamp_does_not_consume_nonce() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 500;
+    });
+    client.create_round(&1_0000000, &None);
+    let round = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+        li.timestamp = 700;
+    });
+
+    let invalid = client.try_resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: 499,
+        round_id: round.start_ledger,
+        nonce: 42u64,
+    });
+    assert_eq!(invalid, Err(Ok(ContractError::OracleDataBeforeRound)));
+
+    client.resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: 700,
+        round_id: round.start_ledger,
+        nonce: 42u64,
+    });
+
+    assert_eq!(client.get_active_round(), None);
+}
+
+#[test]
 fn test_cancelled_round_cannot_be_resolved() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());

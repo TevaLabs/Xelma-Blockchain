@@ -535,7 +535,7 @@ async function watchForNewRounds(contractId: string) {
 - `set_windows(bet_ledgers, run_ledgers)` - Configure round timing windows
 
 ### Oracle Functions:
-- `resolve_round(payload)` - Resolve round and trigger payouts (requires `OraclePayload` with price, timestamp, and round ID)
+- `resolve_round(payload)` - Resolve round and trigger payouts (requires `OraclePayload` with price, timestamp, round ID, and nonce). Payload timestamps must be within the round-safe window: at or after round start, not in the future, and no more than 300 seconds old.
 
 ### Query Functions:
 - `get_active_round()` - View current round details (includes mode)
