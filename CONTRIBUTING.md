@@ -85,6 +85,7 @@ The contract crate name is `xelma-contract`. Do not reintroduce legacy crate nam
 - Describe behavioral impact and migration assumptions.
 - Include test evidence for the changed behavior.
 - Keep generated build artifacts out of commits (`target/`, `bindings/dist/`, etc.).
+- For contract ABI, storage, or event changes, classify the impact (MAJOR/MINOR/PATCH) using [COMPATIBILITY_POLICY.md](./COMPATIBILITY_POLICY.md) and bump `Cargo.toml` accordingly.
 
 ## Review and Merge Policy
 

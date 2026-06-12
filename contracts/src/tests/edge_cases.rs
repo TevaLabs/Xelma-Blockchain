@@ -3,8 +3,9 @@
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::{BetSide, DataKey, OraclePayload, Round, UserPosition};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
-    Address, Env, Map,
+    symbol_short,
+    testutils::{Address as _, Events, Ledger as _},
+    Address, Env, Map, TryIntoVal,
 };
 
 #[test]
@@ -252,4 +253,152 @@ fn test_stats_checked_overflow() {
         nonce: 1u64,
     });
     assert!(result.is_err());
+}
+
+// ─── Issue #115: one-sided liquidity ────────────────────────────────────────
+
+#[test]
+fn test_one_sided_pool_emits_event_and_refunds() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    // All participants bet on the same side (UP only)
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &200_0000000, &BetSide::Up);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    // Price goes up — winner side exists but losing pool is empty
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+    });
+
+    // Capture events immediately — each subsequent contract call resets the log.
+    let events = env.events().all();
+    let one_sided_event = events.iter().find(|e| {
+        let (_contract, topics, _data) = e;
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("pool"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("onesided"))
+    });
+    assert!(
+        one_sided_event.is_some(),
+        "one-sided pool event must be emitted"
+    );
+
+    // Both participants should be refunded their full stakes
+    assert_eq!(client.get_pending_winnings(&alice), 100_0000000);
+    assert_eq!(client.get_pending_winnings(&bob), 200_0000000);
+}
+
+#[test]
+fn test_one_sided_pool_down_side_emits_event_and_refunds() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+
+    // Only DOWN bets placed
+    client.create_round(&2_0000000, &None);
+    client.place_bet(&alice, &300_0000000, &BetSide::Down);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    // Price goes down — winning side exists but losing pool is empty
+    client.resolve_round(&OraclePayload {
+        price: 1_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+    });
+
+    // Capture events before subsequent contract calls reset the log.
+    let events = env.events().all();
+    let one_sided_event = events.iter().find(|e| {
+        let (_contract, topics, _data) = e;
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("pool"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("onesided"))
+    });
+    assert!(
+        one_sided_event.is_some(),
+        "one-sided pool event must be emitted"
+    );
+
+    // Alice gets her stake back
+    assert_eq!(client.get_pending_winnings(&alice), 300_0000000);
+}
+
+#[test]
+fn test_two_sided_pool_does_not_emit_onesided_event() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &100_0000000, &BetSide::Down);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+    });
+
+    let events = env.events().all();
+    let one_sided_count = events
+        .iter()
+        .filter(|e| {
+            let (_contract, topics, _data) = e;
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("pool"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("onesided"))
+        })
+        .count();
+
+    assert_eq!(
+        one_sided_count, 0,
+        "normal two-sided round must not emit one-sided event"
+    );
 }

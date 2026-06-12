@@ -879,3 +879,258 @@ fn test_caps_disabled_precision_prediction_succeeds() {
     client.place_precision_prediction(&user, &500_0000000, &2297u128);
     assert_eq!(client.balance(&user), 500_0000000);
 }
+
+#[test]
+fn test_precision_commit_reveal_happy_path() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &Some(1)); // Precision mode
+
+    let price = 2297u128;
+    let salt = BytesN::from_array(&env, &[9; 32]);
+    let mut preimage = Bytes::new(&env);
+    preimage.append(&price.to_xdr(&env));
+    preimage.append(&salt.clone().to_xdr(&env));
+    let hash = env.crypto().sha256(&preimage);
+
+    // Commit
+    let committed_hash: BytesN<32> = hash.into();
+    client.commit_prediction(&user, &committed_hash, &100_0000000);
+    assert_eq!(client.balance(&user), 900_0000000);
+
+    // Move to reveal window (ledger closes betting at sequence >= 6)
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+
+    // Reveal
+    client.reveal_prediction(&user, &price, &salt);
+
+    // Verify prediction is stored
+    let prediction = client.get_user_precision_prediction(&user).unwrap();
+    assert_eq!(prediction.amount, 100_0000000);
+    assert_eq!(prediction.predicted_price, price);
+}
+
+#[test]
+fn test_precision_commit_reveal_already_revealed() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &Some(1));
+
+    let price = 2297u128;
+    let salt = BytesN::from_array(&env, &[9; 32]);
+    let mut preimage = Bytes::new(&env);
+    preimage.append(&price.to_xdr(&env));
+    preimage.append(&salt.clone().to_xdr(&env));
+    let hash = env.crypto().sha256(&preimage);
+
+    let committed_hash: BytesN<32> = hash.into();
+    client.commit_prediction(&user, &committed_hash, &100_0000000);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+
+    client.reveal_prediction(&user, &price, &salt.clone());
+
+    // Second reveal should fail
+    let result = client.try_reveal_prediction(&user, &price, &salt);
+    assert_eq!(result, Err(Ok(ContractError::AlreadyRevealed)));
+}
+
+#[test]
+fn test_precision_commit_reveal_hash_mismatch() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &Some(1));
+
+    let price = 2297u128;
+    let salt = BytesN::from_array(&env, &[9; 32]);
+    let mut preimage = Bytes::new(&env);
+    preimage.append(&price.to_xdr(&env));
+    preimage.append(&salt.clone().to_xdr(&env));
+    let hash = env.crypto().sha256(&preimage);
+
+    let committed_hash: BytesN<32> = hash.into();
+    client.commit_prediction(&user, &committed_hash, &100_0000000);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+
+    // Wrong price
+    let result = client.try_reveal_prediction(&user, &2500, &salt.clone());
+    assert_eq!(result, Err(Ok(ContractError::HashMismatch)));
+
+    // Wrong salt
+    let wrong_salt = BytesN::from_array(&env, &[8; 32]);
+    let result = client.try_reveal_prediction(&user, &price, &wrong_salt);
+    assert_eq!(result, Err(Ok(ContractError::HashMismatch)));
+}
+
+#[test]
+fn test_precision_commit_reveal_invalid_window_early() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &Some(1));
+
+    let price = 2297u128;
+    let salt = BytesN::from_array(&env, &[9; 32]);
+    let mut preimage = Bytes::new(&env);
+    preimage.append(&price.to_xdr(&env));
+    preimage.append(&salt.clone().to_xdr(&env));
+    let hash = env.crypto().sha256(&preimage);
+
+    let committed_hash: BytesN<32> = hash.into();
+    client.commit_prediction(&user, &committed_hash, &100_0000000);
+
+    // Keep sequence number at 0 (betting window is open)
+    let result = client.try_reveal_prediction(&user, &price, &salt);
+    assert_eq!(result, Err(Ok(ContractError::InvalidRevealWindow)));
+}
+
+#[test]
+fn test_precision_commit_reveal_invalid_window_late() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &Some(1));
+
+    let price = 2297u128;
+    let salt = BytesN::from_array(&env, &[9; 32]);
+    let mut preimage = Bytes::new(&env);
+    preimage.append(&price.to_xdr(&env));
+    preimage.append(&salt.clone().to_xdr(&env));
+    let hash = env.crypto().sha256(&preimage);
+
+    let committed_hash: BytesN<32> = hash.into();
+    client.commit_prediction(&user, &committed_hash, &100_0000000);
+
+    // Move past end of round (sequence >= 12)
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    let result = client.try_reveal_prediction(&user, &price, &salt);
+    assert_eq!(result, Err(Ok(ContractError::InvalidRevealWindow)));
+}
+
+#[test]
+fn test_precision_commit_reveal_commitment_not_found() {
+    use soroban_sdk::BytesN;
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &Some(1));
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+
+    // Reveal without commit
+    let salt = BytesN::from_array(&env, &[9; 32]);
+    let result = client.try_reveal_prediction(&user, &2297, &salt);
+    assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
+}
+
+#[test]
+fn test_precision_commit_reveal_double_bet_fails() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &Some(1));
+
+    let price = 2297u128;
+    let salt = BytesN::from_array(&env, &[9; 32]);
+    let mut preimage = Bytes::new(&env);
+    preimage.append(&price.to_xdr(&env));
+    preimage.append(&salt.clone().to_xdr(&env));
+    let hash = env.crypto().sha256(&preimage);
+
+    let committed_hash: BytesN<32> = hash.into();
+    client.commit_prediction(&user, &committed_hash, &100_0000000);
+
+    // Trying to place a direct prediction now should fail with AlreadyBet
+    let result = client.try_place_precision_prediction(&user, &50_0000000, &2297);
+    assert_eq!(result, Err(Ok(ContractError::AlreadyBet)));
+}

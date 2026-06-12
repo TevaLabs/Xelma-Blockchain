@@ -67,16 +67,39 @@ pub enum ContractError {
     ExposureCapExceeded = 29,
     /// Pending winnings accumulation would exceed the configured cap
     PendingWinningsCapExceeded = 30,
+    /// Start price is below the minimum allowed value
+    StartPriceTooLow = 31,
+    /// Start price exceeds the maximum allowed value
+    StartPriceTooHigh = 32,
     /// Oracle payload nonce was already consumed for this round (replay)
-    OracleNonceReused = 31,
+    OracleNonceReused = 33,
     /// Round has fewer participants than the configured minimum for competitive settlement
-    InsufficientParticipants = 32,
+    InsufficientParticipants = 34,
     /// Minimum participants value is out of valid range (must be 1–10000)
-    InvalidMinParticipants = 33,
+    InvalidMinParticipants = 35,
     /// Oracle heartbeat status is out of range (must be 0, 1, or 2)
-    InvalidOracleStatus = 34,
+    InvalidOracleStatus = 36,
     /// Oracle stale threshold is out of valid range (must be 60–86400 seconds)
     InvalidStaleThreshold = 35,
     /// Oracle payload timestamp predates the round lifecycle window
     OracleDataBeforeRound = 36,
+    InvalidStaleThreshold = 37,
+    /// Oracle max deviation bps is invalid (must be > 0)
+    InvalidOracleDeviationBps = 38,
+    /// Oracle final price deviates beyond configured threshold
+    OracleDeviationExceeded = 39,
+    /// Stored schema version is unknown or unsupported by this contract build
+    UnsupportedSchemaVersion = 40,
+    /// Migration path is invalid for the stored schema version
+    InvalidMigrationPath = 41,
+    /// Migration cannot run while a round is active
+    MigrationActiveRound = 42,
+    /// Commitment for precision prediction not found
+    CommitmentNotFound = 43,
+    /// Precision prediction has already been revealed
+    AlreadyRevealed = 44,
+    /// Attempted to reveal prediction outside the valid window
+    InvalidRevealWindow = 45,
+    /// Revealed prediction hash does not match committed hash
+    HashMismatch = 46,
 }

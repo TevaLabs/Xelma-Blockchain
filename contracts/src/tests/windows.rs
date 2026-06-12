@@ -433,3 +433,59 @@ fn test_place_precision_prediction_fails_without_user_auth() {
     let result = client.try_place_precision_prediction(&user, &100_0000000, &2297);
     assert!(result.is_err());
 }
+
+// ─── Issue #119: start-price bounds ─────────────────────────────────────────
+
+#[test]
+fn test_create_round_rejects_zero_start_price() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    let result = client.try_create_round(&0u128, &None);
+    assert_eq!(result, Err(Ok(ContractError::StartPriceTooLow)));
+}
+
+#[test]
+fn test_create_round_rejects_price_above_max() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // MAX_START_PRICE = 1_000_000_000_000_000_000; one above must fail
+    let result = client.try_create_round(&1_000_000_000_000_000_001u128, &None);
+    assert_eq!(result, Err(Ok(ContractError::StartPriceTooHigh)));
+}
+
+#[test]
+fn test_create_round_accepts_boundary_prices() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Minimum allowed price (1)
+    client.create_round(&1u128, &None);
+    assert!(client.get_active_round().is_some());
+
+    // Cancel to allow a second round
+    client.cancel_round(&0u32);
+
+    // Maximum allowed price
+    client.create_round(&1_000_000_000_000_000_000u128, &None);
+    assert!(client.get_active_round().is_some());
+}

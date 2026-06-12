@@ -1743,3 +1743,157 @@ fn test_precision_payout_conservation_large_tie_set() {
         "Sum of all payouts must equal total pot exactly"
     );
 }
+
+#[test]
+fn test_precision_commit_reveal_resolution_payout_with_unrevealed_participants() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_0000000, &Some(1));
+
+    // Alice commits and reveals guess of 2000
+    let price_alice = 2000u128;
+    let salt_alice = BytesN::from_array(&env, &[1; 32]);
+    let mut preimage_alice = Bytes::new(&env);
+    preimage_alice.append(&price_alice.to_xdr(&env));
+    preimage_alice.append(&salt_alice.clone().to_xdr(&env));
+    let hash_alice = env.crypto().sha256(&preimage_alice);
+    let committed_hash_alice: BytesN<32> = hash_alice.into();
+    client.commit_prediction(&alice, &committed_hash_alice, &100_0000000);
+
+    // Bob commits but does NOT reveal
+    let price_bob = 2200u128;
+    let salt_bob = BytesN::from_array(&env, &[2; 32]);
+    let mut preimage_bob = Bytes::new(&env);
+    preimage_bob.append(&price_bob.to_xdr(&env));
+    preimage_bob.append(&salt_bob.clone().to_xdr(&env));
+    let hash_bob = env.crypto().sha256(&preimage_bob);
+    let committed_hash_bob: BytesN<32> = hash_bob.into();
+    client.commit_prediction(&bob, &committed_hash_bob, &150_0000000);
+
+    // Move to reveal window
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+
+    // Only Alice reveals
+    client.reveal_prediction(&alice, &price_alice, &salt_alice);
+
+    // Move past end of round to allow resolution
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    // Resolve round with actual price 2050
+    client.resolve_round(&OraclePayload {
+        price: 2050,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+    });
+
+    // Total pot is 250 (Alice 100 + Bob 150)
+    // Alice is the only revealed participant, so she wins the entire pot
+    assert_eq!(client.get_pending_winnings(&alice), 250_0000000);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+}
+
+#[test]
+fn test_precision_remainder_goes_to_lexicographically_lowest_winner() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user_a);
+    client.mint_initial(&user_b);
+
+    client.create_round(&1_0000000, &Some(1));
+
+    // Determine which address is lexicographically lowest
+    let (lowest_user, other_user, bet_lowest, bet_other) = if user_a < user_b {
+        (
+            user_a.clone(),
+            user_b.clone(),
+            100_0000001i128,
+            100_0000000i128,
+        )
+    } else {
+        (
+            user_b.clone(),
+            user_a.clone(),
+            100_0000001i128,
+            100_0000000i128,
+        )
+    };
+
+    // Both commit the same guess (2000)
+    let price = 2000u128;
+    let salt_a = BytesN::from_array(&env, &[1; 32]);
+    let mut preimage_a = Bytes::new(&env);
+    preimage_a.append(&price.to_xdr(&env));
+    preimage_a.append(&salt_a.clone().to_xdr(&env));
+    let hash_a = env.crypto().sha256(&preimage_a);
+    let committed_hash_a: BytesN<32> = hash_a.into();
+    client.commit_prediction(&lowest_user, &committed_hash_a, &bet_lowest);
+
+    let salt_b = BytesN::from_array(&env, &[2; 32]);
+    let mut preimage_b = Bytes::new(&env);
+    preimage_b.append(&price.to_xdr(&env));
+    preimage_b.append(&salt_b.clone().to_xdr(&env));
+    let hash_b = env.crypto().sha256(&preimage_b);
+    let committed_hash_b: BytesN<32> = hash_b.into();
+    client.commit_prediction(&other_user, &committed_hash_b, &bet_other);
+
+    // Move to reveal window
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+
+    client.reveal_prediction(&lowest_user, &price, &salt_a);
+    client.reveal_prediction(&other_user, &price, &salt_b);
+
+    // Move to resolution
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    // Resolve
+    client.resolve_round(&OraclePayload {
+        price: 2000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+    });
+
+    // Total pot = 200_0000001
+    // split = 200_0000001 / 2 = 100_0000000
+    // remainder = 1
+    // The lexicographically lowest winner (lowest_user) must get: split + remainder = 100_0000001
+    // The other winner (other_user) must get: 100_0000000
+    assert_eq!(client.get_pending_winnings(&lowest_user), 100_0000001);
+    assert_eq!(client.get_pending_winnings(&other_user), 100_0000000);
+}

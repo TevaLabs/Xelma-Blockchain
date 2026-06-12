@@ -5,8 +5,8 @@ use crate::errors::ContractError;
 use crate::types::{DataKey, OraclePayload};
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Events, Ledger as _, TryIntoVal},
-    Address, Env, IntoVal,
+    testutils::{Address as _, Events, Ledger as _},
+    Address, Env, IntoVal, TryIntoVal,
 };
 
 #[test]
@@ -651,6 +651,154 @@ fn test_set_oracle_stale_threshold_validation() {
     // Valid value
     client.set_oracle_stale_threshold(&1800u64);
     assert_eq!(client.get_oracle_stale_threshold(), 1800u64);
+}
+
+// ─── Oracle deviation guardrails tests ───────────────────────────────────────
+
+#[test]
+fn test_oracle_deviation_rejected_when_over_threshold() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.create_round(&1_0000000u128, &None);
+    let round = client.get_active_round().unwrap();
+
+    // Set max deviation to 5% (500 bp)
+    client.set_oracle_max_deviation_bps(&Some(500u32));
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+        li.timestamp = 1000;
+    });
+
+    // 50% jump: diff_bps = 5000 > 500
+    let result = client.try_resolve_round(&OraclePayload {
+        price: 1_5000000u128,
+        timestamp: 900,
+        round_id: round.start_ledger,
+        nonce: 1u64,
+    });
+    assert_eq!(result, Err(Ok(ContractError::OracleDeviationExceeded)));
+}
+
+#[test]
+fn test_oracle_deviation_allows_at_exact_threshold() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.create_round(&1_0000000u128, &None);
+    let round = client.get_active_round().unwrap();
+
+    // 5% (500 bp)
+    client.set_oracle_max_deviation_bps(&Some(500u32));
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+        li.timestamp = 1000;
+    });
+
+    // Exactly 5%: 1.00 -> 1.05 => diff_bps = 500
+    client.resolve_round(&OraclePayload {
+        price: 1_0500000u128,
+        timestamp: 900,
+        round_id: round.start_ledger,
+        nonce: 1u64,
+    });
+    assert_eq!(client.get_active_round(), None);
+}
+
+#[test]
+fn test_oracle_deviation_rounding_floor_is_deterministic() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    // Start price 3, final 4 => diff_bps = floor(1*10000/3)=3333
+    client.create_round(&3u128, &None);
+    let round = client.get_active_round().unwrap();
+
+    client.set_oracle_max_deviation_bps(&Some(3333u32));
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+        li.timestamp = 1000;
+    });
+
+    // At threshold should pass
+    client.resolve_round(&OraclePayload {
+        price: 4u128,
+        timestamp: 900,
+        round_id: round.start_ledger,
+        nonce: 1u64,
+    });
+    assert_eq!(client.get_active_round(), None);
+}
+
+#[test]
+fn test_oracle_deviation_override_allows_over_threshold_and_emits_event() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.create_round(&1_0000000u128, &None);
+    let round = client.get_active_round().unwrap();
+
+    client.set_oracle_max_deviation_bps(&Some(500u32)); // 5%
+    client.arm_oracle_deviation_override();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+        li.timestamp = 1000;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000u128, // 100% jump
+        timestamp: 900,
+        round_id: round.start_ledger,
+        nonce: 1u64,
+    });
+
+    // Override is one-shot and must be cleared
+    env.as_contract(&contract_id, || {
+        let armed: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OracleDeviationOverrideArmed)
+            .unwrap_or(false);
+        assert!(!armed, "override must be cleared after use");
+    });
+
+    // Verify override event emitted
+    let events = env.events().all();
+    let override_event = events.iter().find(|e| {
+        let (_contract, topics, _data) = e;
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("override"))
+    });
+    assert!(override_event.is_some(), "override event must be emitted");
 }
 
 #[test]

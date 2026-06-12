@@ -91,6 +91,9 @@ fn test_initialize() {
     let stored_oracle = client.get_oracle();
     assert_eq!(stored_admin, Some(admin));
     assert_eq!(stored_oracle, Some(oracle));
+
+    // Schema version must be set deterministically at initialization.
+    assert_eq!(client.get_schema_version(), 2u32);
 }
 
 #[test]

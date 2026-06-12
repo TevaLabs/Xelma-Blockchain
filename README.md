@@ -533,6 +533,8 @@ async function watchForNewRounds(contractId: string) {
 - `initialize(admin, oracle)` - One-time contract setup
 - `create_round(start_price, mode)` - Start new betting round (mode: 0=Up/Down, 1=Precision)
 - `set_windows(bet_ledgers, run_ledgers)` - Configure round timing windows
+- `get_schema_version()` - Query the on-chain storage schema version
+- `migrate_schema_v1_to_v2()` - Admin-only migration helper for legacy deployments
 
 ### Oracle Functions:
 - `resolve_round(payload)` - Resolve round and trigger payouts (requires `OraclePayload` with price, timestamp, round ID, and nonce). Payload timestamps must be within the round-safe window: at or after round start, not in the future, and no more than 300 seconds old.
@@ -608,6 +610,7 @@ We welcome contributions from the community! Start with the maintainer workflow 
 - [CONTRIBUTING.md](./CONTRIBUTING.md)
 - [GOVERNANCE.md](./GOVERNANCE.md)
 - [SUPPORT.md](./SUPPORT.md)
+- [COMPATIBILITY_POLICY.md](./COMPATIBILITY_POLICY.md) — ABI/storage/event versioning rules
 - [CODEOWNERS](./.github/CODEOWNERS)
 
 Here's how you can help:
@@ -757,6 +760,26 @@ When making contract changes, update the following to keep this README in sync:
 - [ ] **Build artifact name** — if the crate name changes, update `Cargo.toml`, CI workflow, and the binding generation command
 - [ ] **SDK version** — after bumping `soroban-sdk`, update the Soroban badge and *Technical Stack* section
 - [ ] **Repository structure** — reflect any new source files or directories
+
+---
+
+## 🔄 Upgrade & Storage Schema Versioning
+
+The contract tracks an on-chain **storage schema version** to make upgrades auditable and migration-safe.
+
+- New deployments set `SchemaVersion = 2` deterministically during `initialize`.
+- If `SchemaVersion` is missing, the contract treats it as legacy **version 1** for compatibility.
+- If `SchemaVersion` is unknown or greater than what the contract supports, mutating entrypoints fail with `UnsupportedSchemaVersion`.
+
+### Migration (v1 → v2)
+
+For legacy deployments (no schema version set), operators can run:
+
+- `migrate_schema_v1_to_v2()`
+
+Guards:
+- Migration is blocked while a round is active (prevents partial state interpretation changes).
+- The migration emits `("schema","migrated")` with `(from_version, to_version)` for indexers.
 
 ---
 
