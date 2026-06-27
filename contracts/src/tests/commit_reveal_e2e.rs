@@ -16,7 +16,8 @@
 //!   1. Hashing / preimage integrity (bad salt & bad price → `HashMismatch`).
 //!   2. Reveal-window boundaries (early & late → `InvalidRevealWindow`).
 //!   3. Idempotency (double reveal → `AlreadyRevealed`).
-//!   Plus extra negative scenarios the issue scope encourages:
+//!
+//! Plus extra negative scenarios the issue scope encourages:
 //!   4. Reveal without an existing commitment → `CommitmentNotFound`.
 //!   5. Mixed routes prevented by the contract (commit-then-place-direct) →
 //!      `AlreadyBet`, ensuring the indexed position/committed keys cannot
@@ -59,9 +60,8 @@
 
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    symbol_short,
-    testutils::{Address as _, Events, Ledger as _},
-    Address, Bytes, BytesN, Env, TryIntoVal,
+    testutils::{Address as _, Ledger as _},
+    Address, Bytes, BytesN, Env,
 };
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};

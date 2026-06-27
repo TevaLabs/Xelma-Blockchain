@@ -71,6 +71,11 @@ pub enum DataKey {
     OracleStaleThreshold,
     /// Maximum participants accepted in a Precision round; unset = protocol default
     MaxPrecisionParticipants,
+    /// Minimum bet/prediction amount (inclusive lower bound).
+    /// If unset, the min-bet floor is disabled and any positive bet is accepted.
+    /// Uses for both `place_bet` (UpDown mode) and `place_precision_prediction`
+    /// / `commit_prediction` (Precision mode).
+    MinBet,
     /// Oracle max deviation threshold in basis points (1 bp = 0.01%).
     /// If unset, deviation guardrails are disabled.
     OracleMaxDeviationBps,

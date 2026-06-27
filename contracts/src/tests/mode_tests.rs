@@ -1498,3 +1498,169 @@ fn test_precision_predictions_page_limit_is_capped_at_max_page_size() {
     let page = client.get_precision_predictions_page(&0, &1_000_000);
     assert_eq!(page.len(), 2);
 }
+
+// ─── Minimum bet floor tests, Precision mode (Issue #161) ────────────────────
+
+#[test]
+fn test_precision_prediction_below_min_bet_fails() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    // Floor set above typical small test amounts
+    client.set_min_bet(&Some(20_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    let result = client.try_place_precision_prediction(&user, &10_0000000i128, &2297u128);
+    assert_eq!(result, Err(Ok(ContractError::InvalidBetAmount)));
+    // All-or-nothing — balance not debited
+    assert_eq!(client.balance(&user), 1000_0000000);
+    // No prediction was stored
+    assert!(client.get_user_precision_prediction(&user).is_none());
+}
+
+#[test]
+fn test_precision_prediction_at_min_bet_boundary_succeeds() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.set_min_bet(&Some(20_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    // Exactly at the floor — must succeed
+    client.place_precision_prediction(&user, &20_0000000i128, &2297u128);
+    assert_eq!(client.balance(&user), 980_0000000);
+    let prediction = client.get_user_precision_prediction(&user).unwrap();
+    assert_eq!(prediction.amount, 20_0000000i128);
+    assert_eq!(prediction.predicted_price, 2297u128);
+}
+
+#[test]
+fn test_predict_price_alias_respects_min_bet() {
+    // `predict_price` is a thin alias that calls `place_precision_prediction`
+    // internally, but we still verify the floor is enforced on that entry
+    // point so future signature changes don't accidentally bypass it.
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.set_min_bet(&Some(50_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    let result = client.try_predict_price(&user, &2297u128, &10_0000000i128);
+    assert_eq!(result, Err(Ok(ContractError::InvalidBetAmount)));
+}
+
+#[test]
+fn test_commit_prediction_below_min_bet_fails() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.set_min_bet(&Some(50_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    let price = 2297u128;
+    let salt = BytesN::from_array(&env, &[1; 32]);
+    let mut preimage = Bytes::new(&env);
+    preimage.append(&price.to_xdr(&env));
+    preimage.append(&salt.clone().to_xdr(&env));
+    let hash = env.crypto().sha256(&preimage);
+    let committed_hash: BytesN<32> = hash.into();
+
+    let result = client.try_commit_prediction(&user, &committed_hash, &10_0000000i128);
+    assert_eq!(result, Err(Ok(ContractError::InvalidBetAmount)));
+    // All-or-nothing — balance untouched
+    assert_eq!(client.balance(&user), 1000_0000000);
+}
+
+#[test]
+fn test_commit_prediction_at_min_bet_boundary_succeeds() {
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{Bytes, BytesN};
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.set_min_bet(&Some(50_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    let price = 2297u128;
+    let salt = BytesN::from_array(&env, &[1; 32]);
+    let mut preimage = Bytes::new(&env);
+    preimage.append(&price.to_xdr(&env));
+    preimage.append(&salt.clone().to_xdr(&env));
+    let hash = env.crypto().sha256(&preimage);
+    let committed_hash: BytesN<32> = hash.into();
+
+    // Exactly at the floor — must succeed
+    client.commit_prediction(&user, &committed_hash, &50_0000000i128);
+    assert_eq!(client.balance(&user), 950_0000000);
+}
+
+#[test]
+fn test_min_bet_does_not_apply_to_updown_when_round_is_precision() {
+    // Sanity test: min_bet is enforced on each call according to *its own*
+    // entry-point semantics, not per round-mode. When the active round is
+    // Precision mode, an Up/Down `place_bet` should still be rejected by
+    // WrongModeForPrediction (and so min_bet never gets the chance to fire).
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.set_min_bet(&Some(500_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    // place_bet rejects on Precision mode — min_bet check never runs.
+    let result = client.try_place_bet(&user, &1000_0000000i128, &BetSide::Up);
+    assert_eq!(result, Err(Ok(ContractError::WrongModeForPrediction)));
+    // balance untouched
+    assert_eq!(client.balance(&user), 1000_0000000);
+}

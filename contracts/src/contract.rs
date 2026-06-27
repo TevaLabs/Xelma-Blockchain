@@ -15,6 +15,14 @@ use crate::types::{
 // ─── Economic control limits ─────────────────────────────────────────────────
 /// Minimum allowed value when setting an economic cap to prevent zero-value lockouts.
 const MIN_CAP_VALUE: i128 = 1;
+/// Lower bound for `min_bet` (Issue #161). Setting min_bet below this floor is
+/// rejected because it would either block every bet (`min=0` is the same as
+/// `None` but expressed as a number) or have no useful semantics.
+const MIN_MIN_BET_AMOUNT: i128 = 1;
+/// Upper bound for `min_bet` (Issue #161). Capped at the same magnitude as
+/// the protocol's `MAX_START_PRICE` to keep admin-tuned floors inside the
+/// same safe range as settlement-time arithmetic.
+const MAX_MIN_BET_AMOUNT: i128 = 1_000_000_000_000_000_000; // 1e18, matches MAX_START_PRICE
 /// Upper bound on the minimum-participants config to prevent unbounded gas in resolution.
 const MAX_MIN_PARTICIPANTS: u32 = 10_000;
 const DEFAULT_MAX_PRECISION_PARTICIPANTS: u32 = 1_000;
@@ -763,6 +771,63 @@ impl VirtualTokenContract {
             .unwrap_or(DEFAULT_MAX_PRECISION_PARTICIPANTS)
     }
 
+    // ─── Minimum bet floor (Issue #161) ─────────────────────────────────────
+
+    /// Sets or clears the minimum bet/prediction amount (admin only, Issue #161).
+    ///
+    /// - `None`: disables the floor; any positive amount passes the
+    ///   `_enforce_min_bet` check (this preserves the original v1 behaviour for
+    ///   existing deployments).
+    /// - `Some(v)`: any `place_bet` / `place_precision_prediction` /
+    ///   `commit_prediction` with `amount < v` fails with
+    ///   [`ContractError::InvalidBetAmount`]. The floor must lie in
+    ///   `[MIN_MIN_BET_AMOUNT, MAX_MIN_BET_AMOUNT]`; out-of-range values are
+    ///   rejected with the same error.
+    ///
+    /// NOTE: Both rejection paths reuse `InvalidBetAmount` because the
+    /// Soroban `#[contracterror]` enum is hard-limited to 50 variants by the
+    /// XDR spec (`VecM<T, 50>`); introducing a dedicated variant would push
+    /// the enum past that ceiling and cause the macro to panic with
+    /// `LengthExceedsMax` at compile time.
+    ///
+    /// Emits a `("min_bet", "updated")` event with the new value as payload so
+    /// indexers can observe admin tuning without re-reading storage.
+    pub fn set_min_bet(env: Env, min_bet: Option<i128>) -> Result<(), ContractError> {
+        Self::_require_supported_schema(&env)?;
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .ok_or(ContractError::AdminNotSet)?;
+        admin.require_auth();
+        Self::_ensure_not_paused(&env)?;
+        Self::_validate_min_bet(min_bet)?;
+
+        let key = DataKey::MinBet;
+        if let Some(v) = min_bet {
+            env.storage().persistent().set(&key, &v);
+            Self::_extend_persistent_ttl(&env, &key);
+        } else {
+            env.storage().persistent().remove(&key);
+        }
+
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("min_bet"), symbol_short!("updated")),
+            min_bet,
+        );
+
+        Ok(())
+    }
+
+    /// Returns the configured minimum bet floor (Issue #161), or `None` if
+    /// the floor is disabled.
+    pub fn get_min_bet(env: Env) -> Option<i128> {
+        let key = DataKey::MinBet;
+        Self::_extend_persistent_ttl(&env, &key);
+        env.storage().persistent().get(&key)
+    }
+
     /// Returns user statistics (wins, losses, streaks)
     pub fn get_user_stats(env: Env, user: Address) -> UserStats {
         let key = DataKey::UserStats(user);
@@ -802,6 +867,10 @@ impl VirtualTokenContract {
         if amount <= 0 {
             return Err(ContractError::InvalidBetAmount);
         }
+
+        // Enforce minimum bet floor (Issue #161) — checked early so a small
+        // spam bet never costs the user a balance read or storage write.
+        Self::_enforce_min_bet(&env, amount)?;
 
         // Enforce max stake cap (Issue #113)
         if let Some(max_stake) = env
@@ -932,6 +1001,9 @@ impl VirtualTokenContract {
             return Err(ContractError::InvalidBetAmount);
         }
 
+        // Enforce minimum bet floor (Issue #161)
+        Self::_enforce_min_bet(&env, amount)?;
+
         // Enforce max stake cap (Issue #113)
         if let Some(max_stake) = env
             .storage()
@@ -1057,6 +1129,9 @@ impl VirtualTokenContract {
         if amount <= 0 {
             return Err(ContractError::InvalidBetAmount);
         }
+
+        // Enforce minimum bet floor (Issue #161)
+        Self::_enforce_min_bet(&env, amount)?;
 
         // Enforce max stake cap
         if let Some(max_stake) = env
@@ -2599,6 +2674,38 @@ impl VirtualTokenContract {
     fn _validate_max_stake(max_amount: Option<i128>) -> Result<(), ContractError> {
         if let Some(v) = max_amount {
             if v < MIN_CAP_VALUE {
+                return Err(ContractError::InvalidBetAmount);
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates the configured minimum bet value (Issue #161). `None` is the
+    /// "disabled" sentinel and always valid; `Some(0)` is rejected because it
+    /// would block every bet (use `None` instead); values above
+    /// `MAX_MIN_BET_AMOUNT` are rejected to keep floors within the protocol's
+    /// safe arithmetic range.
+    fn _validate_min_bet(min_bet: Option<i128>) -> Result<(), ContractError> {
+        if let Some(v) = min_bet {
+            if !(MIN_MIN_BET_AMOUNT..=MAX_MIN_BET_AMOUNT).contains(&v) {
+                return Err(ContractError::InvalidBetAmount);
+            }
+        }
+        Ok(())
+    }
+
+    /// Enforces the configured minimum-bet floor (Issue #161).
+    /// Returns `InvalidBetAmount` when a positive amount is strictly below
+    /// the configured floor, and silently passes when no floor is set or
+    /// when the configured floor is at or below the amount.
+    fn _enforce_min_bet(env: &Env, amount: i128) -> Result<(), ContractError> {
+        // Read-then-bump: only touch TTL when the floor is actually configured.
+        // Avoids paying a persistent load + TTL bump on every Up/Down/Precision
+        // bet when no min_bet is set (the default state for fresh deploys).
+        let min_key = DataKey::MinBet;
+        if let Some(min) = env.storage().persistent().get::<_, i128>(&min_key) {
+            Self::_extend_persistent_ttl(env, &min_key);
+            if amount < min {
                 return Err(ContractError::InvalidBetAmount);
             }
         }
