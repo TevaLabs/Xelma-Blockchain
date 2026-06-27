@@ -88,6 +88,14 @@ pub enum DataKey {
     RecentArchivedRoundIds,
     /// Timelocked pending critical config change keyed by change kind.
     PendingConfigChange(ConfigChangeKind),
+    /// Optional protocol settlement fee in basis points (1 bp = 0.01%).
+    /// `None` (key absent) means fee disabled — no behaviour change.
+    /// Hard cap on fee is enforced at the contract layer, not by storage shape.
+    ProtocolFeeBps,
+    /// On-chain accumulated protocol fee balance in stroops (i128).
+    /// Admin withdraws via the dedicated withdrawal method; does NOT mix
+    /// into the per-user balance ledger.
+    ProtocolFeeTreasury,
 }
 
 /// Identifies which critical risk setting is pending timelocked activation.
@@ -101,6 +109,9 @@ pub enum ConfigChangeKind {
     MaxPendingWinnings = 3,
     OracleStaleThreshold = 4,
     OracleMaxDeviationBps = 5,
+    /// Optional protocol settlement fee in bps (Issue #162).
+    /// `None` disables the fee entirely, restoring pre-fee behaviour.
+    ProtocolFeeBps = 6,
 }
 
 /// Payload for a scheduled critical config change.
@@ -113,6 +124,7 @@ pub enum ConfigChangePayload {
     MaxPendingWinnings(Option<i128>),
     OracleStaleThreshold(u64),
     OracleMaxDeviationBps(Option<u32>),
+    ProtocolFeeBps(Option<u32>),
 }
 
 /// Pending timelocked config change with activation ledger for on-chain observability.

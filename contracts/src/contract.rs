@@ -46,6 +46,17 @@ const MAX_RUN_WINDOW_LEDGERS: u32 = 2_880;
 /// 100_000 bp = 1000% deviation (effectively "off", but still explicit).
 const MAX_ORACLE_DEVIATION_BPS: u32 = 100_000;
 
+// ─── Protocol fee (Issue #162) ────────────────────────────────────────────────
+/// Hard cap on the optional protocol settlement fee, in basis points
+/// (1 bp = 0.01%). 1_000 bp = 10% of the round's total pot — the maximum an
+/// admin may ever schedule via timelock. Larger values would risk turning
+/// the protocol into a de-facto extraction mechanism and are explicitly
+/// disallowed to preserve user trust and the conservation invariant.
+const MAX_PROTOCOL_FEE_BPS: u32 = 1_000;
+/// Denominator for bps math: `fee = total_pot * bps / BPS_DENOMINATOR`.
+/// Pinned to 10_000 to match the universal "1 bp = 0.01%" convention.
+const BPS_DENOMINATOR: i128 = 10_000;
+
 // ─── Storage schema versioning ───────────────────────────────────────────────
 const CURRENT_SCHEMA_VERSION: u32 = 2;
 // ─── Start-price bounds (Issue #119) ─────────────────────────────────────────
@@ -624,6 +635,97 @@ impl VirtualTokenContract {
         )
     }
 
+    // ─── Protocol fee (Issue #162) ─────────────────────────────────────────
+
+    /// Schedules a timelocked update to the optional protocol settlement fee
+    /// (admin only). Pass `None` to disable fee collection entirely
+    /// (preserves pre-issue-#162 behaviour byte-for-byte: no fee ever
+    /// collected, treasury stays at 0, no fee events emitted).
+    /// Pass `Some(bps)` to enable a fee of `bps / 10_000` (capped at
+    /// `MAX_PROTOCOL_FEE_BPS`) of the round's total pot, deducted on every
+    /// competitive settlement and routed to the on-chain treasury.
+    pub fn schedule_protocol_fee_bps(env: Env, bps: Option<u32>) -> Result<(), ContractError> {
+        Self::_require_supported_schema(&env)?;
+        Self::_validate_protocol_fee_bps(bps)?;
+        Self::_schedule_config_change(
+            &env,
+            ConfigChangeKind::ProtocolFeeBps,
+            ConfigChangePayload::ProtocolFeeBps(bps),
+        )
+    }
+
+    /// Alias for [`Self::schedule_protocol_fee_bps`]. Mirrors the
+    /// `set_max_stake` / `set_windows` naming convention.
+    pub fn set_protocol_fee_bps(env: Env, bps: Option<u32>) -> Result<(), ContractError> {
+        Self::schedule_protocol_fee_bps(env, bps)
+    }
+
+    /// Returns the configured protocol fee in bps, if enabled.
+    /// `None` (key absent) means fee disabled — no behaviour change.
+    pub fn get_protocol_fee_bps(env: Env) -> Option<u32> {
+        let key = DataKey::ProtocolFeeBps;
+        Self::_extend_persistent_ttl(&env, &key);
+        env.storage().persistent().get(&key)
+    }
+
+    /// Returns the accumulated, on-chain protocol fee treasury balance
+    /// (stroops). Starts at 0; grows monotonically with every competitive
+    /// settlement when the fee is enabled. Only the admin can drain it
+    /// via [`Self::withdraw_protocol_fee`].
+    pub fn get_protocol_fee_treasury(env: Env) -> i128 {
+        let key = DataKey::ProtocolFeeTreasury;
+        Self::_extend_persistent_ttl(&env, &key);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    /// Withdraws `amount` stroops from the protocol fee treasury to
+    /// `recipient` (admin only). The transfer uses the existing
+    /// per-user balance ledger; the recipient must already exist
+    /// (`mint_initial` first or already have a balance from prior activity).
+    /// Errors with `FeeTreasuryUnderflow` if `amount` exceeds the
+    /// accumulated treasury.
+    pub fn withdraw_protocol_fee(
+        env: Env,
+        recipient: Address,
+        amount: i128,
+    ) -> Result<i128, ContractError> {
+        Self::_require_supported_schema(&env)?;
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .ok_or(ContractError::AdminNotSet)?;
+        admin.require_auth();
+        Self::_ensure_not_paused(&env)?;
+
+        if amount <= 0 {
+            return Err(ContractError::InvalidBetAmount);
+        }
+
+        let treasury_key = DataKey::ProtocolFeeTreasury;
+        let current: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
+        let new_treasury = current
+            .checked_sub(amount)
+            .ok_or(ContractError::FeeTreasuryUnderflow)?;
+        env.storage().persistent().set(&treasury_key, &new_treasury);
+        Self::_extend_persistent_ttl(&env, &treasury_key);
+
+        // Credit recipient — reuse the existing balance helper. create a
+        // balance row if recipient has none yet (treasury recipient may
+        // not have minted).
+        let recipient_bal: i128 = Self::balance(env.clone(), recipient.clone());
+        let new_bal = Self::payout_add(recipient_bal, amount)?;
+        Self::_set_balance(&env, recipient.clone(), new_bal);
+
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("protocol"), symbol_short!("fee_withdrawn")),
+            (recipient, amount, new_treasury),
+        );
+
+        Ok(amount)
+    }
+
     /// Returns a pending timelocked config change for the given kind, if any.
     pub fn get_pending_config_change(
         env: Env,
@@ -686,13 +788,14 @@ impl VirtualTokenContract {
         }
 
         let cancelled_at = env.ledger().sequence();
+
+        env.storage().persistent().remove(&key);
+
         #[allow(deprecated)]
         env.events().publish(
             (symbol_short!("config"), symbol_short!("cancelled")),
             (kind, cancelled_at),
         );
-
-        env.storage().persistent().remove(&key);
 
         Ok(())
     }
@@ -1872,6 +1975,7 @@ impl VirtualTokenContract {
                 } else if price_went_up {
                     Self::_record_winnings_legacy(
                         env,
+                        round.round_id,
                         &positions,
                         BetSide::Up,
                         round.pool_up,
@@ -1880,6 +1984,7 @@ impl VirtualTokenContract {
                 } else if price_went_down {
                     Self::_record_winnings_legacy(
                         env,
+                        round.round_id,
                         &positions,
                         BetSide::Down,
                         round.pool_down,
@@ -1910,8 +2015,13 @@ impl VirtualTokenContract {
     }
 
     /// Legacy winnings path — reads the bulk Map blob.
+    ///
+    /// `round_id` is threaded in so that the per-loser `("outcome", "loss")`
+    /// observability event (Issue #168) emitted in the loser branch can carry
+    /// the correct round identifier without an extra storage read.
     fn _record_winnings_legacy(
         env: &Env,
+        round_id: u64,
         positions: &Map<Address, UserPosition>,
         winning_side: BetSide,
         winning_pool: i128,
@@ -1920,6 +2030,11 @@ impl VirtualTokenContract {
         if winning_pool == 0 {
             return Ok(());
         }
+
+        // Apply protocol fee (Issue #162); see `_record_winnings_indexed`.
+        let (winning_pool, losing_pool, _fee_amount) =
+            Self::_apply_protocol_fee_updown(env, round_id, winning_pool, losing_pool)?;
+
         let keys: Vec<Address> = positions.keys();
         for i in 0..keys.len() {
             if let Some(user) = keys.get(i) {
@@ -1938,6 +2053,27 @@ impl VirtualTokenContract {
                         Self::_accumulate_pending(env, user.clone(), payout)?;
                         Self::_update_stats_win(env, user)?;
                     } else {
+                        // Emit outcome loss event for UpDown loser (Issue #168).
+                        // Topic: ("outcome", "loss")
+                        // Payload: (user, round_id, mode=0=UpDown, amount, side, predicted_price=0)
+                        // `predicted_price` is fixed at 0 for UpDown since this event
+                        // field is only meaningful in Precision mode.
+                        let side_value: u32 = match position.side {
+                            BetSide::Up => 0,
+                            BetSide::Down => 1,
+                        };
+                        #[allow(deprecated)]
+                        env.events().publish(
+                            (symbol_short!("outcome"), symbol_short!("loss")),
+                            (
+                                user.clone(),
+                                round_id,
+                                0u32,
+                                position.amount,
+                                side_value,
+                                0u128,
+                            ),
+                        );
                         Self::_update_stats_loss(env, user)?;
                     }
                 }
@@ -1973,15 +2109,30 @@ impl VirtualTokenContract {
             if legacy.is_empty() {
                 return Ok(());
             }
-            return Self::_resolve_precision_legacy(env, &legacy, final_price);
+            return Self::_resolve_precision_legacy(env, round_id, &legacy, final_price);
         }
 
-        // Find minimum difference and collect all winners
+        // Find minimum difference and collect all winners.
+        //
+        // We also cache `(amount, predicted_price)` per participant during this
+        // first pass so the loser branch (which emits the `("outcome", "loss")`
+        // observability event introduced by Issue #168) does not need to fetch
+        // the same composite keys a second time. Halving the per-loser read
+        // count is material for rounds at the participant cap (1 000).
         let mut min_diff: Option<u128> = None;
         let mut winners: Vec<PrecisionPrediction> = Vec::new(env);
         let mut total_pot: i128 = 0;
+        // Per-participant snapshot of (amount, predicted_price-or-0-for-unrevealed).
+        // Indexed by the same order as `participants`; each loser can be looked
+        // up directly by its position without any extra storage access.
+        let mut participant_amounts: Vec<i128> = Vec::new(env);
+        let mut participant_prices: Vec<u128> = Vec::new(env);
+        // Per-participant winner flag, populated in lockstep with the amount /
+        // price snapshots above. Used by the loser branch to do O(N) winner
+        // detection (instead of the O(N^2) `winners.iter().any(...)` lookup).
+        // Index `i` corresponds to `participants[i]` by construction.
+        let mut is_winner_mask: Vec<bool> = Vec::new(env);
 
-        // Single pass to build winners list and total pot
         for i in 0..participants.len() {
             if let Some(user) = participants.get(i) {
                 let pred_key = DataKey::PrecisionPosition(round_id, user.clone());
@@ -1997,7 +2148,9 @@ impl VirtualTokenContract {
                     .persistent()
                     .get::<_, PrecisionCommitment>(&commit_key);
 
-                // Add amount to total pot from prediction (revealed) or commitment (unrevealed)
+                // Add amount to total pot from prediction (revealed) or commitment (unrevealed).
+                // Also snapshot the amount and (revealed-or-zero) price so the
+                // loser branch below can emit the loss event without re-reading.
                 let amount = if let Some(ref pred) = pred_opt {
                     pred.amount
                 } else if let Some(ref commit) = commitment_opt {
@@ -2005,10 +2158,20 @@ impl VirtualTokenContract {
                 } else {
                     0
                 };
+                let cached_price = pred_opt
+                    .as_ref()
+                    .map(|p| p.predicted_price)
+                    .unwrap_or(0u128);
 
                 total_pot = total_pot
                     .checked_add(amount)
                     .ok_or(ContractError::Overflow)?;
+                participant_amounts.push_back(amount);
+                participant_prices.push_back(cached_price);
+                // Default to loser; flipped to `true` only when this
+                // participant holds the currently smallest diff, and reset
+                // to `false` if a tighter minimum is found later in the pass.
+                is_winner_mask.push_back(false);
 
                 if let Some(pred) = pred_opt {
                     let diff = if pred.predicted_price >= final_price {
@@ -2025,14 +2188,22 @@ impl VirtualTokenContract {
                         None => {
                             min_diff = Some(diff);
                             winners.push_back(pred.clone());
+                            is_winner_mask.set(i, true);
                         }
                         Some(current_min) => {
                             if diff < current_min {
                                 min_diff = Some(diff);
                                 winners = Vec::new(env);
                                 winners.push_back(pred.clone());
+                                // Reset any prior winners; index `i` now holds
+                                // the sole winning prediction.
+                                for j in 0..i {
+                                    is_winner_mask.set(j, false);
+                                }
+                                is_winner_mask.set(i, true);
                             } else if diff == current_min {
                                 winners.push_back(pred.clone());
+                                is_winner_mask.set(i, true);
                             }
                         }
                     }
@@ -2046,9 +2217,13 @@ impl VirtualTokenContract {
         // Any integer remainder from the even split is assigned to that winner, making the
         // distribution fully deterministic.
         if !winners.is_empty() && total_pot > 0 {
+            // Apply protocol fee (Issue #162) before splitting the pot.
+            // Conservation invariant `distributable + fee == total_pot`.
+            let (payout_pool, _fee_amount) =
+                Self::_apply_protocol_fee_precision(env, round_id, total_pot)?;
             let winner_count = winners.len() as i128;
-            let payout_per_winner = total_pot / winner_count;
-            let remainder = total_pot % winner_count;
+            let payout_per_winner = payout_pool / winner_count;
+            let remainder = payout_pool % winner_count;
 
             // Award to each winner
             for i in 0..winners.len() {
@@ -2067,11 +2242,56 @@ impl VirtualTokenContract {
                 }
             }
 
-            // Update stats for losers
+            // Update stats and emit loss events for losers (Issue #168).
+            //
+            // The loss event payload mirrors [`Self::_record_winnings_indexed`]:
+            // for Precision mode the relevant metadata is `predicted_price`,
+            // so `side` is fixed at 0 while `mode = 1`.
+            //
+            // `stake` and `predicted_price` are read from the cached snapshot
+            // populated during the winner-detection pass above, so this loop
+            // does not need to re-read the per-user precision/commitment keys.
+            //
+            // Ordering note: the per-loser `("outcome", "loss")` event is
+            // emitted BEFORE `_update_stats_loss` is called. Tests and indexers
+            // rely on this sequence — flipping the order would change the
+            // observable on-chain event stream for a loss-less winner-loss
+            // pair.
+            //
+            // For unrevealed commitments the guess is unknowable on-chain
+            // until reveal, so `predicted_price` is published as 0 to keep the
+            // payload shape uniform across all losers.
             for i in 0..participants.len() {
                 if let Some(user) = participants.get(i) {
-                    let is_winner = winners.iter().any(|w| w.user == user);
-                    if !is_winner {
+                    // O(1) winner lookup; the mask is filled in lockstep with
+                    // `participants` so the index is always valid.
+                    let was_winner = is_winner_mask.get(i).unwrap_or(false);
+                    if !was_winner {
+                        // Snapshot-driven. By construction `participants`,
+                        // `participant_amounts`, `participant_prices` and
+                        // `is_winner_mask` are all pushed exactly once per
+                        // iteration of the winner-detection pass above, so
+                        // index drift between the two passes is impossible.
+                        // `unwrap` would surface any future drift instead of
+                        // silently publishing a 0-stake loss event.
+                        let stake = participant_amounts.get(i).unwrap();
+                        let predicted_price = participant_prices.get(i).unwrap();
+
+                        // Emit outcome loss event for Precision loser (Issue #168).
+                        // Topic: ("outcome", "loss")
+                        // Payload: (user, round_id, mode=1=Precision, amount, side=0, predicted_price)
+                        #[allow(deprecated)]
+                        env.events().publish(
+                            (symbol_short!("outcome"), symbol_short!("loss")),
+                            (
+                                user.clone(),
+                                round_id,
+                                1u32,
+                                stake,
+                                0u32,
+                                predicted_price,
+                            ),
+                        );
                         Self::_update_stats_loss(env, user)?;
                     }
                 }
@@ -2083,8 +2303,12 @@ impl VirtualTokenContract {
 
     /// Legacy precision-mode resolution path — reads the bulk Map blob.
     /// Used only as a migration fallback; new rounds use indexed per-user keys.
+    ///
+    /// `round_id` is threaded in so the per-loser `("outcome", "loss")`
+    /// observability event (Issue #168) carries the correct round id.
     fn _resolve_precision_legacy(
         env: &Env,
+        round_id: u64,
         predictions_map: &Map<Address, PrecisionPrediction>,
         final_price: u128,
     ) -> Result<(), ContractError> {
@@ -2139,9 +2363,12 @@ impl VirtualTokenContract {
         // the lexicographically-lowest Address. Any integer remainder from the even split is
         // assigned exclusively to that winner, making the distribution fully deterministic.
         if !winners.is_empty() && total_pot > 0 {
+            // Apply protocol fee (Issue #162) before splitting the pot.
+            let (payout_pool, _fee_amount) =
+                Self::_apply_protocol_fee_precision(env, round_id, total_pot)?;
             let winner_count = winners.len() as i128;
-            let payout_per_winner = total_pot / winner_count;
-            let remainder = total_pot % winner_count;
+            let payout_per_winner = payout_pool / winner_count;
+            let remainder = payout_pool % winner_count;
 
             // Award to each winner — all arithmetic checked before writing
             for i in 0..winners.len() {
@@ -2160,6 +2387,21 @@ impl VirtualTokenContract {
                 if let Some(pred) = predictions.get(i) {
                     let is_winner = winners.iter().any(|w| w.user == pred.user);
                     if !is_winner {
+                        // Emit outcome loss event for Precision loser (Issue #168).
+                        // Topic: ("outcome", "loss")
+                        // Payload: (user, round_id, mode=1=Precision, amount, side=0, predicted_price)
+                        #[allow(deprecated)]
+                        env.events().publish(
+                            (symbol_short!("outcome"), symbol_short!("loss")),
+                            (
+                                pred.user.clone(),
+                                round_id,
+                                1u32,
+                                pred.amount,
+                                0u32,
+                                pred.predicted_price,
+                            ),
+                        );
                         Self::_update_stats_loss(env, pred.user.clone())?;
                     }
                 }
@@ -2301,9 +2543,10 @@ impl VirtualTokenContract {
         let current_balance = Self::balance(env.clone(), user.clone());
         // Compute new balance before writing — all-or-nothing guarantee
         let new_balance = Self::payout_add(current_balance, pending)?;
-        Self::_set_balance(&env, user.clone(), new_balance);
-
+        
+        // Remove pending winnings before increasing balance (CEI pattern)
         env.storage().persistent().remove(&key);
+        Self::_set_balance(&env, user.clone(), new_balance);
 
         // Emit claim event
         // Topic: ("claim", "winnings")
@@ -2341,6 +2584,10 @@ impl VirtualTokenContract {
     ///
     /// Formula: payout = bet + (bet / winning_pool) * losing_pool
     /// Reads N individual position keys; no full-map deserialisation.
+    ///
+    /// Also emits a per-loser `("outcome", "loss")` event (Issue #168) so
+    /// indexers no longer need to infer losses from absence of payout
+    /// events.
     fn _record_winnings_indexed(
         env: &Env,
         round_id: u64,
@@ -2352,6 +2599,14 @@ impl VirtualTokenContract {
         if winning_pool == 0 {
             return Ok(());
         }
+
+        // Apply protocol fee (Issue #162). Conservation invariant
+        // `dist_winning + dist_losing + fee == winning + losing` always
+        // holds; in the pathological case `fee > losing_pool` the spillover
+        // is taken from `winning_pool`. Fee event already emitted inside
+        // the helper.
+        let (winning_pool, losing_pool, _fee_amount) =
+            Self::_apply_protocol_fee_updown(env, round_id, winning_pool, losing_pool)?;
 
         for i in 0..participants.len() {
             if let Some(user) = participants.get(i) {
@@ -2367,6 +2622,27 @@ impl VirtualTokenContract {
                         Self::_accumulate_pending(env, user.clone(), payout)?;
                         Self::_update_stats_win(env, user)?;
                     } else {
+                        // Emit outcome loss event for UpDown loser (Issue #168).
+                        // Topic: ("outcome", "loss")
+                        // Payload: (user, round_id, mode=0=UpDown, amount, side, predicted_price=0)
+                        // `predicted_price` is fixed at 0 for UpDown since this
+                        // field is only meaningful in Precision mode.
+                        let side_value: u32 = match position.side {
+                            BetSide::Up => 0,
+                            BetSide::Down => 1,
+                        };
+                        #[allow(deprecated)]
+                        env.events().publish(
+                            (symbol_short!("outcome"), symbol_short!("loss")),
+                            (
+                                user.clone(),
+                                round_id,
+                                0u32,
+                                position.amount,
+                                side_value,
+                                0u128,
+                            ),
+                        );
                         Self::_update_stats_loss(env, user)?;
                     }
                 }
@@ -2728,6 +3004,138 @@ impl VirtualTokenContract {
         Ok(())
     }
 
+    /// Validates a requested protocol-fee bps (Issue #162).
+    /// `None` always allowed (disables fee entirely, restoring pre-#162
+    /// byte-for-byte behaviour). `Some(0)` is rejected — only explicit `None`
+    /// is the legitimate way to express "fee disabled". `Some(bps)` must
+    /// satisfy `1 <= bps <= MAX_PROTOCOL_FEE_BPS`.
+    fn _validate_protocol_fee_bps(bps: Option<u32>) -> Result<(), ContractError> {
+        if let Some(v) = bps {
+            if v == 0 || v > MAX_PROTOCOL_FEE_BPS {
+                return Err(ContractError::InvalidProtocolFeeBps);
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads the currently-configured protocol fee in bps (Issue #162).
+    /// Bumps TTL only when the key is present (avoids extra storage writes
+    /// on the hot "fee disabled" path through every competitive settlement).
+    fn _read_protocol_fee_bps(env: &Env) -> Option<u32> {
+        let key = DataKey::ProtocolFeeBps;
+        let v: Option<u32> = env.storage().persistent().get(&key);
+        if v.is_some() {
+            Self::_extend_persistent_ttl(env, &key);
+        }
+        v
+    }
+
+    /// Credits `fee_amount` stroops to the protocol fee treasury and emits
+    /// `("protocol", "fee_collected")` (Issue #162). TTL on the treasury
+    /// key is extended on every write so the cumulative balance never
+    /// falls into archival. Payload mirrors the active bps so indexers
+    /// do not need an extra storage read.
+    fn _collect_protocol_fee(
+        env: &Env,
+        round_id: u64,
+        fee_amount: i128,
+        bps_active: Option<u32>,
+    ) -> Result<(), ContractError> {
+        if fee_amount <= 0 {
+            return Ok(());
+        }
+        let treasury_key = DataKey::ProtocolFeeTreasury;
+        let current: i128 = env
+            .storage()
+            .persistent()
+            .get(&treasury_key)
+            .unwrap_or(0);
+        let new_treasury = current
+            .checked_add(fee_amount)
+            .ok_or(ContractError::Overflow)?;
+        env.storage().persistent().set(&treasury_key, &new_treasury);
+        Self::_extend_persistent_ttl(env, &treasury_key);
+
+        let bps_value: u32 = bps_active.unwrap_or(0);
+
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("protocol"), symbol_short!("fee_collected")),
+            (round_id, fee_amount, new_treasury, bps_value),
+        );
+
+        Ok(())
+    }
+
+    /// Splits a `(winning_pool, losing_pool)` pair into the post-fee pools
+    /// and the treasury's cut, used by both UpDown settlement paths
+    /// (Issue #162). Conservation invariant
+    ///   dist_winning + dist_losing + fee == winning + losing
+    /// holds ALWAYS, even in the pathological case `fee > losing_pool`
+    /// (very thin losing-side liquidity near the bps cap): the spillover
+    /// is then deducted from `winning_pool`, so winners lose a portion
+    /// of their principal rather than the fee being silently dropped.
+    /// Behaviour is documented in `docs/EVENT_SCHEMA.md` and exercised
+    /// by `test_protocol_fee_thin_losing_pool`.
+    fn _apply_protocol_fee_updown(
+        env: &Env,
+        round_id: u64,
+        winning_pool: i128,
+        losing_pool: i128,
+    ) -> Result<(i128, i128, i128), ContractError> {
+        let bps = Self::_read_protocol_fee_bps(env);
+        if bps.is_none() {
+            return Ok((winning_pool, losing_pool, 0));
+        }
+        let bps_value = bps.unwrap();
+        let total_pot = Self::payout_add(winning_pool, losing_pool)?;
+        let fee_amount = total_pot
+            .checked_mul(bps_value as i128)
+            .ok_or(ContractError::Overflow)?
+            / BPS_DENOMINATOR;
+        if fee_amount == 0 {
+            return Ok((winning_pool, losing_pool, 0));
+        }
+        let fee_from_losing = fee_amount.min(losing_pool);
+        let fee_from_winning = fee_amount
+            .checked_sub(fee_from_losing)
+            .ok_or(ContractError::Overflow)?;
+        let dist_winning = winning_pool
+            .checked_sub(fee_from_winning)
+            .ok_or(ContractError::Overflow)?;
+        let dist_losing = losing_pool
+            .checked_sub(fee_from_losing)
+            .ok_or(ContractError::Overflow)?;
+        Self::_collect_protocol_fee(env, round_id, fee_amount, Some(bps_value))?;
+        Ok((dist_winning, dist_losing, fee_amount))
+    }
+
+    /// Splits a precision-mode `total_pot` into the distributable amount
+    /// (split among winners per the existing remainder policy) and the
+    /// treasury's cut (Issue #162). Returns `(distributable, fee_amount)`.
+    fn _apply_protocol_fee_precision(
+        env: &Env,
+        round_id: u64,
+        total_pot: i128,
+    ) -> Result<(i128, i128), ContractError> {
+        let bps = Self::_read_protocol_fee_bps(env);
+        if bps.is_none() || total_pot <= 0 {
+            return Ok((total_pot, 0));
+        }
+        let bps_value = bps.unwrap();
+        let fee_amount = total_pot
+            .checked_mul(bps_value as i128)
+            .ok_or(ContractError::Overflow)?
+            / BPS_DENOMINATOR;
+        let distributable = total_pot
+            .checked_sub(fee_amount)
+            .ok_or(ContractError::Overflow)?;
+        if fee_amount > 0 {
+            Self::_collect_protocol_fee(env, round_id, fee_amount, Some(bps_value))?;
+        }
+        Ok((distributable, fee_amount))
+    }
+
     fn _schedule_config_change(
         env: &Env,
         kind: ConfigChangeKind,
@@ -2847,6 +3255,25 @@ impl VirtualTokenContract {
                 } else {
                     env.storage().persistent().remove(&key);
                 }
+            }
+
+            (
+                ConfigChangeKind::ProtocolFeeBps,
+                ConfigChangePayload::ProtocolFeeBps(bps),
+            ) => {
+                Self::_validate_protocol_fee_bps(*bps)?;
+                let key = DataKey::ProtocolFeeBps;
+                if let Some(v) = bps {
+                    env.storage().persistent().set(&key, v);
+                    Self::_extend_persistent_ttl(env, &key);
+                } else {
+                    env.storage().persistent().remove(&key);
+                }
+                #[allow(deprecated)]
+                env.events().publish(
+                    (symbol_short!("protocol"), symbol_short!("fee_bps_set")),
+                    (bps.clone(),),
+                );
             }
             _ => return Err(ContractError::InvalidMode),
         }

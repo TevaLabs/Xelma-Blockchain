@@ -17,6 +17,7 @@ Reviewed files:
 | Contract tests | `contracts/src/tests/*.rs` | Unit/security/property/storage tests included by `contracts/src/tests/mod.rs` |
 | Bindings | `bindings/src/index.ts`, `bindings/src/parity.js`, `bindings/package.json` | Public method surface and client-facing error map |
 | Supporting docs | `README.md`, `STORAGE_DESIGN.md`, `ROUND_LIFECYCLE.md`, `MIGRATION.md` | Architecture and operational context |
+| **CEI audit** | `contracts/src/contract.rs` (all 32 mutating entrypoints) | Full Checks-Effects-Interactions ordering review; see [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md) |
 
 Out of scope:
 
@@ -111,6 +112,8 @@ Soroban-specific risk considerations:
 | SR-2026-04-010 | Medium | Mitigated | Oracle replay, stale payloads, and future-dated data. | Payload checks: `contracts/src/contract.rs:628-668`; tests in `contracts/src/tests/security.rs`. | Blocks zero price, wrong-round, stale, future, and premature oracle resolution. | Pair with accepted single-oracle risk follow-ups in SR-2026-04-004. |
 | SR-2026-04-011 | Medium | Mitigated | Mode confusion between Up/Down and Precision rounds. | Mode checks: `contracts/src/contract.rs:97-106`, `contracts/src/contract.rs:300-303`, `contracts/src/contract.rs:412-415`; tests in `contracts/src/tests/mode_tests.rs`. | Users cannot submit the wrong prediction type for a round. | No further action. |
 | SR-2026-04-012 | Medium | Mitigated | Storage write amplification from full participant maps. | Indexed storage writes: `contracts/src/contract.rs:315-344`, `contracts/src/contract.rs:427-457`; cleanup: `contracts/src/contract.rs:684-702`; design doc `STORAGE_DESIGN.md`; related commit `9855391`. | Reduces per-bet cost and avoids repeated full-map serialization. | Monitor resource usage for high-participant rounds as tracked in SR-2026-04-005. |
+| SR-2026-06-001 | Low | Mitigated | `claim_winnings`: balance was credited before `PendingWinnings` slot was removed (Interaction-before-Effect ordering). | `contracts/src/contract.rs` `claim_winnings` function; regression test `test_claim_winnings_cei_pending_cleared_after_claim` in `contracts/src/tests/cei_ordering.rs`. | Under the prior ordering, the pending winnings slot remained readable during the balance update. While Soroban's single-tenant model prevents reentrancy today, the slot removal now precedes the balance increase, eliminating any double-claim risk on future cross-contract interaction paths. | Fixed: removal of `PendingWinnings` key moved before `_set_balance` call. Full CEI audit documented in [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md). |
+| SR-2026-06-002 | Low | Mitigated | `cancel_config_change`: event was emitted before `PendingConfigChange` key was removed from storage (Interaction before Effect). | `contracts/src/contract.rs` `cancel_config_change` function; regression test `test_cancel_config_change_cei_key_removed_before_event` in `contracts/src/tests/cei_ordering.rs`. | The emitted cancellation event did not represent a fully committed state transition — the key was still present in storage at event emission time. | Fixed: `env.storage().persistent().remove(&key)` moved before `env.events().publish(...)`. Full CEI audit documented in [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md). |
 
 ## Severity Summary
 
@@ -118,8 +121,8 @@ Soroban-specific risk considerations:
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Open | 0 | 0 | 1 | 1 | 2 |
 | Accepted risk | 0 | 0 | 1 | 2 | 3 |
-| Mitigated | 0 | 3 | 4 | 0 | 7 |
-| **Total** | **0** | **3** | **6** | **3** | **12** |
+| Mitigated | 0 | 3 | 4 | 2 | 9 |
+| **Total** | **0** | **3** | **6** | **5** | **14** |
 
 ## Current Security Posture
 
@@ -165,6 +168,7 @@ Important caveat: `bindings/src/parity.js` validates public method parity, not e
 | P2 | Define oracle operations and incident response before mainnet. | Protocol/security owner (TBD) | Oracle runbook, monitoring checks, pause criteria |
 | P3 | Maintain operational monitoring for large participant rounds and benchmark cap increases. | Contract/product owner (TBD) | Participant-count policy, resource benchmark, and cap-change runbook |
 | P3 | Schedule external audit before mainnet deployment. | Maintainers (TBD) | Audit report or issue tracking external findings |
+| **Closed** | CEI ordering fixes for `claim_winnings` and `cancel_config_change` (SR-2026-06-001, SR-2026-06-002). | #195 | Merged with regression tests in `contracts/src/tests/cei_ordering.rs`; full audit in [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md). |
 
 ## Deployment Recommendation
 

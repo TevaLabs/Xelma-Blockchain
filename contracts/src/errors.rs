@@ -107,10 +107,8 @@ pub enum ContractError {
     OracleNetworkMismatch = 49,
     /// Oracle payload contract_addr does not match the current contract
     OracleContractMismatch = 50,
-    // NOTE: Soroban `#[contracterror]` XDR is hard-limited to 50 variants
-    // (`VecM<T, 50>`). Issue #161's min-bet floor enforcement reuses the
-    // existing `InvalidBetAmount` for both the runtime check in
-    // `place_bet` / `place_precision_prediction` / `commit_prediction` and
-    // the setter validation in `set_min_bet`. See contract.rs `_enforce_min_bet`
-    // and `_validate_min_bet` for context.
+    /// Protocol fee bps is outside the allowed range (must be in `1..=MAX_PROTOCOL_FEE_BPS`)
+    InvalidProtocolFeeBps = 51,
+    /// Treasury withdrawal would underflow the accumulated treasury balance
+    FeeTreasuryUnderflow = 52,
 }

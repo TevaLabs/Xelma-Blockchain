@@ -159,6 +159,15 @@ This ensures:
 - ✅ **Simple & predictable** - First predictor gets the remainder
 - ✅ **Fair distribution** - Close to equal split, minimal advantage
 
+### Oracle Operator Runbook
+
+Oracle mistakes are a top incident source. See
+[docs/ORACLE_OPERATOR_RUNBOOK.md](./docs/ORACLE_OPERATOR_RUNBOOK.md) for:
+- Payload field-by-field requirements and copy-paste templates.
+- Troubleshooting matrix for stale, future, deviation, and nonce errors.
+- Escalation steps for pause, cancel, and deviation override.
+- Operational playbooks covering both Up/Down and Precision round resolution.
+
 ### Emergency Pause and Recovery
 
 The contract includes an admin-controlled emergency pause for incidents such as oracle outages or critical bugs.
@@ -609,6 +618,81 @@ async function watchForNewRounds(contractId: string) {
 - [ ] Mainnet deployment
 - [ ] Mobile app (React Native)
 - [ ] Community features (social betting, tournaments)
+
+---
+
+## 🚀 Testnet Deployment
+
+### GitHub Actions Workflow
+
+The repository includes a controlled deployment workflow at `.github/workflows/deploy_testnet.yml` with two modes:
+
+| Mode | Trigger | Behavior |
+|------|---------|----------|
+| **Dry-run** | `workflow_dispatch` with `dry_run: true` | Builds WASM, validates config, checks secrets — **no transaction broadcast** |
+| **Deploy** | `workflow_dispatch` with `dry_run: false` | Full deployment via `scripts/deploy_testnet.sh` (restricted to maintainers) |
+
+### Required GitHub Secrets
+
+Configure these in the repository **Settings → Secrets and variables → Actions**:
+
+| Secret | Purpose |
+|--------|---------|
+| `SOROBAN_RPC_URL` | Testnet RPC endpoint (e.g. `https://soroban-testnet.stellar.org`) |
+| `SOROBAN_NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` |
+| `DEPLOYER_SECRET_KEY` | Secret key of the account paying deployment fees |
+| `SOROBAN_ADMIN_ADDRESS` | Public Stellar address of the contract admin |
+| `ORACLE_ADDRESS` | Public Stellar address of the oracle signer |
+
+### Workflow Usage
+
+1. Navigate to **Actions → Deploy Testnet** in the GitHub UI.
+2. Click **Run workflow**.
+3. Set **dry_run** to `true` for validation, `false` for actual deployment.
+4. Deployment mode requires the triggering actor to be a member of `TevaLabs/maintainers`.
+
+### Local Dry-Run
+
+Run the script locally to validate configuration without broadcasting:
+
+```bash
+export SOROBAN_RPC_URL="https://soroban-testnet.stellar.org"
+export SOROBAN_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+export DEPLOYER_SECRET_KEY="your-secret-key"
+export SOROBAN_ADMIN_ADDRESS="G..."
+export ORACLE_ADDRESS="G..."
+
+./scripts/deploy_testnet.sh --dry-run
+```
+
+### Deployment Checklist
+
+- [ ] All required secrets configured in GitHub repository
+- [ ] Deployer account funded with testnet XLM (use [Friendbot](https://friendbot.stellar.org))
+- [ ] Admin and oracle addresses are correct Stellar `G...` public keys
+- [ ] Contract builds and tests pass (`cargo test --workspace --locked`)
+- [ ] Dry-run passes with `--dry-run` flag (no errors)
+- [ ] `SOROBAN_NETWORK_PASSPHRASE` matches the target network
+- [ ] WASM hash recorded for provenance tracking
+- [ ] Post-deployment: call `initialize` with admin + oracle addresses
+- [ ] Post-deployment: configure round windows with `set_windows()`
+- [ ] Post-deployment: verify with `get_admin()` and `get_oracle()`
+
+### Deployment Script
+
+`scripts/deploy_testnet.sh` performs the following steps:
+
+1. **Build** — Compiles the contract to WASM via `cargo build`
+2. **Hash** — Computes SHA-256 of the WASM artifact for provenance
+3. **Validate** — Checks all required env vars, secrets, and paths
+4. **Deploy** — Uses the Stellar CLI to deploy the contract (skipped in dry-run)
+5. **Output** — Prints contract ID, WASM hash, network, and initialization checklist
+
+Safety guarantees:
+- Never deploys with missing secrets (fails with clear errors)
+- Never broadcasts transactions in dry-run mode
+- Non-testnet passphrase triggers a warning
+- Deployer secret key is written to a temporary identity file cleaned up on exit
 
 ---
 

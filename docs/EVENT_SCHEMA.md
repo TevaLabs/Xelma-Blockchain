@@ -99,6 +99,44 @@ Emitted when a round is settled competitively by the oracle.
 
 ---
 
+### `("outcome", "loss")`
+
+*Additive change added by Issue #168 — schema version stays at **v1**
+(additive events do not trigger a version bump per the versioning policy
+at the top of this file).*
+
+Emitted per losing participant whenever a round settles competitively
+(Issue #168).  Complements the implicit "winner" signal from pending-winnings
+accumulation and the explicit `("round", "fallback")` refund event so that
+analytics, user notifications, and indexers can detect losses without
+inferring them from the absence of payout events.
+
+The payload shape is unified across both modes; the `mode` field selects which
+metadata field is meaningful:
+
+- **UpDown mode (`mode = 0`):** `side` is the user's losing direction
+  (`0` = Up, `1` = Down). `predicted_price` is fixed at `0`.
+- **Precision mode (`mode = 1`):** `predicted_price` is the user's guess in the
+  4-decimal price scale. `side` is fixed at `0`. Participants who only
+  committed (and did not reveal) carry `predicted_price = 0` because the
+  guess is unknowable on-chain until reveal.
+
+Emitted for every participant who placed a bet/prediction and was on the
+losing side of a competitive settlement. **Not** emitted for refund paths
+(price-unchanged, one-sided pool, min-participants fallback, or admin
+cancellation) — those cases use their respective refund events instead.
+
+| Position | Field            | Type      | Description                                                              |
+|----------|------------------|-----------|--------------------------------------------------------------------------|
+| 0        | `user`           | `Address` | Address of the losing participant                                        |
+| 1        | `round_id`       | `u64`     | Round the loss occurred in                                               |
+| 2        | `mode`           | `u32`     | Round mode: `0` = UpDown, `1` = Precision                                |
+| 3        | `amount`         | `i128`    | Stake amount the user committed (in stroops); the amount they lose       |
+| 4        | `side`           | `u32`     | UpDown losing side (`0` = Up, `1` = Down). `0` for Precision mode        |
+| 5        | `predicted_price`| `u128`    | Precision guess (4 decimal places). `0` for UpDown mode or unrevealed   |
+
+---
+
 ### `("round", "cancelled")`
 
 Emitted when an admin explicitly cancels an active round. All stakes are refunded.
@@ -171,6 +209,24 @@ Emitted when the oracle records an on-chain liveness heartbeat.
 
 ## Example decode mappings
 
+### JavaScript / TypeScript example: filter for losses
+
+```typescript
+import { xdr, scValToNative } from "@stellar/stellar-sdk";
+
+function decodeOutcomeLoss(contractEvent: xdr.DiagnosticEvent) {
+  const topics = contractEvent.event().body().v0().topics();
+  const ns = scValToNative(topics[0]);
+  const action = scValToNative(topics[1]);
+  if (ns !== "outcome" || action !== "loss") return null;
+  const data = scValToNative(contractEvent.event().body().v0().data());
+  // [user, round_id, mode, amount, side, predicted_price]
+  return { type: "loss", ...data };
+}
+```
+
+---
+
 ### JavaScript / TypeScript (Stellar SDK)
 
 ```typescript
@@ -196,6 +252,70 @@ let resolved = events.iter().find(|(_, topics, _)| {
         && topics.get(1).and_then(|t| t.try_into_val(&env).ok()) == Some(symbol_short!("resolved"))
 });
 ```
+
+---
+
+## `("protocol", "fee_collected")` — Competitive-settlement fee accrual
+
+Emitted by every competitive-settlement path (UpDown indexed/legacy, Precision
+indexed/legacy) when the protocol fee is enabled (Issue #162). NOT emitted on
+refund / cancel / fallback paths — those return users' full stake and the
+treasury stays flat.
+
+| Field         | Type      | Description                                                |
+|---------------|-----------|------------------------------------------------------------|
+| `round_id`    | `u64`     | The id of the settled round.                                |
+| `fee_amount`  | `i128`    | Stroops routed to the on-chain treasury this round.         |
+| `treasury_balance` | `i128` | Cumulative treasury balance AFTER this round's credit.     |
+| `bps_active`  | `u32`     | The fee's bps that produced `fee_amount` (echoes storage).  |
+
+**Topics**: `("protocol", "fee_collected")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `_record_winnings_indexed`, `_record_winnings_legacy`,
+`_resolve_precision_mode`, `_resolve_precision_legacy`.
+
+The conservation invariant
+`Σ payout_i + fee_amount == total_pot` holds for every emission. In the
+UpDown pathological case `fee > losing_pool` (very thin losing-side
+liquidity near the bps cap) the spillover is deducted from `winning_pool`
+so the invariant still holds and winners receive only their residual
+principal — documented inline in `_apply_protocol_fee_updown`.
+
+---
+
+## `("protocol", "fee_bps_set")` — Timelocked fee schedule applied
+
+Emitted exactly once when a previously-scheduled `ProtocolFeeBps` change
+passes its `activation_ledger` and is written to storage (Issue #162).
+
+| Field   | Type          | Description                                              |
+|---------|---------------|----------------------------------------------------------|
+| `bps`   | `Option<u32>` | New fee (None = fee disabled; Some(bps) = active).       |
+
+**Topics**: `("protocol", "fee_bps_set")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `_apply_config_payload` arm for `ConfigChangeKind::ProtocolFeeBps`.
+
+---
+
+## `("protocol", "fee_withdrawn")` — Treasury drain to recipient
+
+Emitted when the admin drains accumulated fees to an on-chain recipient
+(Issue #162). Recipient receives the credited amount through the existing
+`PendingWinnings` → `claim_winnings` flow used by competitive payouts and
+refunds, so no new authorization surface is added.
+
+| Field           | Type     | Description                                              |
+|-----------------|----------|----------------------------------------------------------|
+| `recipient`     | `Address`| The credited account.                                    |
+| `amount`        | `i128`   | Stroops transferred out of the treasury this call.       |
+| `new_treasury`  | `i128`   | Treasury balance after withdrawal.                       |
+
+**Topics**: `("protocol", "fee_withdrawn")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `withdraw_protocol_fee`.
+
+---
 
 ---
 
