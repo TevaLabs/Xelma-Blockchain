@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Chaos and recovery tests for interrupted lifecycle actions (Issue #122).
 //!
 //! Each scenario models a failure-like condition or unusual execution sequence and
@@ -83,7 +84,7 @@ fn test_chaos_oracle_unavailable_cancel_and_refund() {
 
 #[test]
 fn test_chaos_double_resolve_returns_no_active_round() {
-    let (env, _cid, _admin, _oracle, client) = setup_contract();
+    let (env, contract_id, _admin, _oracle, client) = setup_contract();
 
     client.create_round(&1_0000000, &None);
 
@@ -97,6 +98,9 @@ fn test_chaos_double_resolve_returns_no_active_round() {
         timestamp: env.ledger().timestamp(),
         round_id: round.start_ledger,
         nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
     };
 
     // First resolve succeeds
@@ -135,7 +139,7 @@ fn test_chaos_bet_after_window_balance_unchanged() {
 
 #[test]
 fn test_chaos_pause_mid_round_then_unpause_resolve() {
-    let (env, _cid, _admin, _oracle, client) = setup_contract();
+    let (env, contract_id, _admin, _oracle, client) = setup_contract();
     let alice = Address::generate(&env);
     client.mint_initial(&alice);
 
@@ -164,6 +168,9 @@ fn test_chaos_pause_mid_round_then_unpause_resolve() {
         timestamp: env.ledger().timestamp(),
         round_id: round.start_ledger,
         nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     // Invariant: alice gets her stake back (only winner, no losers)
@@ -176,7 +183,7 @@ fn test_chaos_pause_mid_round_then_unpause_resolve() {
 
 #[test]
 fn test_chaos_resolve_empty_round_clean_state() {
-    let (env, _cid, _admin, _oracle, client) = setup_contract();
+    let (env, contract_id, _admin, _oracle, client) = setup_contract();
 
     client.create_round(&1_0000000, &None);
 
@@ -191,6 +198,9 @@ fn test_chaos_resolve_empty_round_clean_state() {
         timestamp: env.ledger().timestamp(),
         round_id: round.start_ledger,
         nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     // Invariant: clean state
@@ -258,3 +268,5 @@ fn test_chaos_cancel_and_restart_round_no_state_bleed() {
     // Alice's round-1 position is gone; she can place a fresh bet in round 2
     assert_eq!(client.get_user_position(&alice), None);
 }
+
+

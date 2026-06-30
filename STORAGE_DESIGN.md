@@ -20,7 +20,42 @@ the whole map. The new design stores each user's record under a composite
 | **`Position(round_id, user)`** | `UserPosition` | **NEW** — indexed UpDown bet |
 | **`PrecisionPosition(round_id, user)`** | `PrecisionPrediction` | **NEW** — indexed precision guess |
 | **`RoundParticipants(round_id)`** | `Vec<Address>` | **NEW** — ordered list for resolution iteration |
-| `Positions` / `UpDownPositions` / `PrecisionPositions` | _(legacy)_ | kept for read-only migration; never written by new code |
+| `CancelledRound(round_id)` | `true` | marker for cancelled rounds |
+| **`ArchivedRound(round_id)`** | `ArchivedRoundSummary` | **NEW** — compact post-settlement history |
+| **`RecentArchivedRoundIds`** | `Vec<u64>` | **NEW** — FIFO index for archive retention |
+
+## Archived Round Summaries
+
+After every terminal round transition (`resolve_round`, admin `cancel_round`, or
+minimum-participant fallback refund), the contract writes a compact
+`ArchivedRoundSummary` keyed by `DataKey::ArchivedRound(round_id)`.
+
+Each summary records:
+
+| Field | Meaning |
+|---|---|
+| `round_id` | Monotonic round identifier |
+| `price_start` / `price_final` | Start oracle price and settlement price (`0` when cancelled) |
+| `mode` | Up/Down or Precision |
+| `status` | `Resolved`, `Cancelled`, or `FallbackRefund` |
+| `pool_up` / `pool_down` | Final pool totals at settlement time |
+| `participant_count` | Participants recorded at settlement |
+| `settled_at_ledger` | Ledger sequence when archived |
+
+### Query API
+
+- `get_archived_round(round_id)` — direct lookup by id (returns `None` if pruned or never existed).
+- `get_recent_archived_rounds(limit)` — newest-first list; `limit = 0` returns empty.
+
+### Retention / storage growth policy
+
+The contract retains at most **`MAX_ARCHIVED_ROUNDS = 128`** summaries on-chain.
+When a new archive would exceed this cap, the **oldest** entry is removed from
+both `ArchivedRound(id)` and the `RecentArchivedRoundIds` FIFO index.
+
+This bounds persistent storage growth predictably for explorers and analytics
+without requiring full event replay. Consumers needing deeper history should
+index contract events off-chain.
 
 ## Operation cost — before vs after
 

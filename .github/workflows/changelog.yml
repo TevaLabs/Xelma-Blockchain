@@ -1,0 +1,103 @@
+name: Changelog
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        type: choice
+        options:
+          - preview
+          - publish
+        default: preview
+      version:
+        description: 'Release version (e.g. 0.2.0) — required for publish'
+        type: string
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  generate:
+    name: Generate changelog draft
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitHub CLI
+        run: gh --version
+
+      - name: Generate draft from merged PR labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x .github/scripts/generate-changelog.sh
+          VERSION="${{ github.event.inputs.version }}"
+          if [[ -z "$VERSION" ]]; then
+            VERSION="Unreleased"
+          fi
+          .github/scripts/generate-changelog.sh "$VERSION"
+          echo "--- Draft ---"
+          cat CHANGELOG.draft.md
+
+      - name: Upload preview artifact
+        if: github.event.inputs.mode == 'preview'
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog-draft
+          path: CHANGELOG.draft.md
+
+      - name: Publish release section to CHANGELOG.md
+        if: github.event.inputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [[ -z "$VERSION" ]]; then
+            echo "version input is required for publish mode" >&2
+            exit 1
+          fi
+          DATE="$(date -u +%Y-%m-%d)"
+          # Replace the [Unreleased] placeholder block with the dated release section.
+          awk -v draft="CHANGELOG.draft.md" -v ver="$VERSION" -v dt="$DATE" '
+            BEGIN {
+              while ((getline line < draft) > 0) draft_lines = draft_lines line "\n"
+              close(draft)
+            }
+            /^## \[Unreleased\]/ { skip=1; print draft_lines; print ""; next }
+            skip && /^## \[/ { skip=0 }
+            !skip { print }
+          ' CHANGELOG.md > CHANGELOG.next.md
+          mv CHANGELOG.next.md CHANGELOG.md
+          # Restore empty Unreleased stub for the next cycle.
+          cat >> CHANGELOG.md <<EOF
+
+## [Unreleased]
+
+### Added
+
+- (pending — run the changelog workflow to populate)
+
+### Fixed
+
+- (pending — run the changelog workflow to populate)
+
+### Security
+
+- (pending — run the changelog workflow to populate)
+EOF
+
+      - name: Commit published changelog
+        if: github.event.inputs.mode == 'publish'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --cached --quiet && echo "No changelog changes to commit" && exit 0
+          git commit -m "docs: publish CHANGELOG for v${{ github.event.inputs.version }}"
+          git push

@@ -1,0 +1,820 @@
+// SPDX-License-Identifier: MIT
+use soroban_sdk::{
+    symbol_short, Address, Env, Symbol,
+};
+use crate::errors::ContractError;
+use crate::types::{
+    DataKey, ConfigChangeKind, ConfigChangePayload, PendingConfigChange,
+};
+use crate::common::{
+    _extend_persistent_ttl, payout_add, _emit_config_updated,
+    _emit_action_rejected, balance, _set_balance,
+    MIN_CAP_VALUE, MAX_MIN_PARTICIPANTS, DEFAULT_MAX_PRECISION_PARTICIPANTS,
+    MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_BET_WINDOW_LEDGERS, MAX_RUN_WINDOW_LEDGERS,
+    MAX_ORACLE_DEVIATION_BPS, MAX_PROTOCOL_FEE_BPS, BPS_DENOMINATOR,
+    DEFAULT_ORACLE_STALE_THRESHOLD, MIN_ORACLE_STALE_THRESHOLD, MAX_ORACLE_STALE_THRESHOLD,
+    CONFIG_TIMELOCK_LEDGERS, DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_RUN_WINDOW_LEDGERS,
+    DEFAULT_ARCHIVE_RETENTION, MIN_ARCHIVE_RETENTION, MAX_ARCHIVE_RETENTION,
+};
+use crate::admin::{_require_supported_schema, _ensure_not_paused, _ensure_normal_mode};
+
+pub fn set_windows(env: Env, bet_ledgers: u32, run_ledgers: u32) -> Result<(), ContractError> {
+    schedule_windows(env, bet_ledgers, run_ledgers)
+}
+
+pub fn set_max_stake(env: Env, max_amount: Option<i128>) -> Result<(), ContractError> {
+    schedule_max_stake(env, max_amount)
+}
+
+pub fn get_max_stake(env: Env) -> Option<i128> {
+    let key = DataKey::MaxStake;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key)
+}
+
+pub fn set_max_user_exposure(
+    env: Env,
+    max_exposure: Option<i128>,
+) -> Result<(), ContractError> {
+    schedule_max_user_exposure(env, max_exposure)
+}
+
+pub fn get_max_user_exposure(env: Env) -> Option<i128> {
+    let key = DataKey::MaxUserRoundExposure;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key)
+}
+
+pub fn set_max_pending_winnings(
+    env: Env,
+    max_pending: Option<i128>,
+) -> Result<(), ContractError> {
+    schedule_max_pending_winnings(env, max_pending)
+}
+
+pub fn schedule_windows(
+    env: Env,
+    bet_ledgers: u32,
+    run_ledgers: u32,
+) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _validate_windows(bet_ledgers, run_ledgers)?;
+    _schedule_config_change(
+        &env,
+        ConfigChangeKind::Windows,
+        ConfigChangePayload::Windows(bet_ledgers, run_ledgers),
+    )
+}
+
+pub fn schedule_max_stake(env: Env, max_amount: Option<i128>) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _validate_max_stake(max_amount)?;
+    _schedule_config_change(
+        &env,
+        ConfigChangeKind::MaxStake,
+        ConfigChangePayload::MaxStake(max_amount),
+    )
+}
+
+pub fn schedule_max_user_exposure(
+    env: Env,
+    max_exposure: Option<i128>,
+) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _validate_max_stake(max_exposure)?;
+    _schedule_config_change(
+        &env,
+        ConfigChangeKind::MaxUserRoundExposure,
+        ConfigChangePayload::MaxUserRoundExposure(max_exposure),
+    )
+}
+
+pub fn schedule_max_pending_winnings(
+    env: Env,
+    max_pending: Option<i128>,
+) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _validate_max_stake(max_pending)?;
+    _schedule_config_change(
+        &env,
+        ConfigChangeKind::MaxPendingWinnings,
+        ConfigChangePayload::MaxPendingWinnings(max_pending),
+    )
+}
+
+pub fn schedule_oracle_stale_threshold(env: Env, seconds: u64) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _validate_oracle_stale_threshold(seconds)?;
+    _schedule_config_change(
+        &env,
+        ConfigChangeKind::OracleStaleThreshold,
+        ConfigChangePayload::OracleStaleThreshold(seconds),
+    )
+}
+
+pub fn schedule_oracle_deviation_bps(env: Env, bps: Option<u32>) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _validate_oracle_max_deviation_bps(bps)?;
+    _schedule_config_change(
+        &env,
+        ConfigChangeKind::OracleMaxDeviationBps,
+        ConfigChangePayload::OracleMaxDeviationBps(bps),
+    )
+}
+
+pub fn schedule_protocol_fee_bps(env: Env, bps: Option<u32>) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _validate_protocol_fee_bps(bps)?;
+    _schedule_config_change(
+        &env,
+        ConfigChangeKind::ProtocolFeeBps,
+        ConfigChangePayload::ProtocolFeeBps(bps),
+    )
+}
+
+pub fn set_protocol_fee_bps(env: Env, bps: Option<u32>) -> Result<(), ContractError> {
+    schedule_protocol_fee_bps(env, bps)
+}
+
+pub fn get_protocol_fee_bps(env: Env) -> Option<u32> {
+    let key = DataKey::ProtocolFeeBps;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key)
+}
+
+pub fn get_protocol_fee_treasury(env: Env) -> i128 {
+    let key = DataKey::ProtocolFeeTreasury;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key).unwrap_or(0)
+}
+
+pub fn withdraw_protocol_fee(
+    env: Env,
+    recipient: Address,
+    amount: i128,
+) -> Result<i128, ContractError> {
+    _require_supported_schema(&env)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).map_err(|e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("withdraw"), e);
+        e
+    })?;
+
+    if amount <= 0 {
+        return Err(ContractError::InvalidBetAmount);
+    }
+
+    let treasury_key = DataKey::ProtocolFeeTreasury;
+    let current: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
+    let new_treasury = current
+        .checked_sub(amount)
+        .ok_or(ContractError::FeeTreasuryUnderflow)?;
+    env.storage().persistent().set(&treasury_key, &new_treasury);
+    _extend_persistent_ttl(&env, &treasury_key);
+
+    let recipient_bal: i128 = balance(env.clone(), recipient.clone());
+    let new_bal = payout_add(recipient_bal, amount)?;
+    _set_balance(&env, recipient.clone(), new_bal);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("protocol"), symbol_short!("fee_with")),
+        (recipient, amount, new_treasury),
+    );
+
+    Ok(amount)
+}
+
+pub fn get_pending_config_change(
+    env: Env,
+    kind: ConfigChangeKind,
+) -> Option<PendingConfigChange> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PendingConfigChange(kind))
+}
+
+pub fn apply_scheduled_changes(env: Env, kind: ConfigChangeKind) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _ensure_normal_mode(&env)?;
+
+    let key = DataKey::PendingConfigChange(kind.clone());
+    let pending: PendingConfigChange = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .ok_or(ContractError::CommitmentNotFound)?;
+
+    let current_ledger = env.ledger().sequence();
+    if current_ledger < pending.activation_ledger {
+        return Err(ContractError::RoundNotEnded);
+    }
+
+    _apply_config_payload(&env, &kind, &pending.payload)?;
+    env.storage().persistent().remove(&key);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("config"), symbol_short!("applied")),
+        (kind, pending.activation_ledger),
+    );
+
+    Ok(())
+}
+
+pub fn cancel_config_change(env: Env, kind: ConfigChangeKind) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).map_err(|e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("cncl_cfg"), e);
+        e
+    })?;
+
+    let key = DataKey::PendingConfigChange(kind.clone());
+    let pending: PendingConfigChange = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .ok_or(ContractError::CommitmentNotFound)?;
+
+    if env.ledger().sequence() >= pending.activation_ledger {
+        _emit_action_rejected(
+            &env,
+            &admin,
+            symbol_short!("cncl_cfg"),
+            ContractError::RoundNotCancellable,
+        );
+        return Err(ContractError::RoundNotCancellable);
+    }
+
+    let cancelled_at = env.ledger().sequence();
+    env.storage().persistent().remove(&key);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("config"), symbol_short!("cancel")),
+        (kind, cancelled_at),
+    );
+
+    Ok(())
+}
+
+pub fn get_max_pending_winnings(env: Env) -> Option<i128> {
+    let key = DataKey::MaxPendingWinnings;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key)
+}
+
+pub fn set_min_participants(env: Env, min: Option<u32>) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).map_err(|e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("min_par"), e);
+        e
+    })?;
+
+    let key = DataKey::MinParticipants;
+    let old_min: Option<u32> = env.storage().persistent().get(&key);
+    if let Some(v) = min {
+        if v == 0 || v > MAX_MIN_PARTICIPANTS {
+            _emit_action_rejected(
+                &env,
+                &admin,
+                symbol_short!("min_par"),
+                ContractError::InvalidMinParticipants,
+            );
+            return Err(ContractError::InvalidMinParticipants);
+        }
+        env.storage().persistent().set(&key, &v);
+        _extend_persistent_ttl(&env, &key);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
+    _emit_config_updated(
+        &env,
+        ConfigChangeKind::MinParticipants,
+        ConfigChangePayload::MinParticipants(old_min),
+        ConfigChangePayload::MinParticipants(min),
+    );
+    Ok(())
+}
+
+pub fn get_min_participants(env: Env) -> Option<u32> {
+    let key = DataKey::MinParticipants;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key)
+}
+
+pub fn set_max_precision_participants(env: Env, max: u32) -> Result<(), ContractError> {
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).map_err(|e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("max_prec"), e);
+        e
+    })?;
+
+    if max == 0 || max > MAX_PRECISION_PARTICIPANTS_LIMIT {
+        _emit_action_rejected(
+            &env,
+            &admin,
+            symbol_short!("max_prec"),
+            ContractError::InvalidPrecisionParticipantCap,
+        );
+        return Err(ContractError::InvalidPrecisionParticipantCap);
+    }
+
+    let key = DataKey::MaxPrecisionParticipants;
+    let old_max: u32 = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(DEFAULT_MAX_PRECISION_PARTICIPANTS);
+    env.storage().persistent().set(&key, &max);
+    _extend_persistent_ttl(&env, &key);
+    _emit_config_updated(
+        &env,
+        ConfigChangeKind::MaxPrecisionParticipants,
+        ConfigChangePayload::MaxPrecisionParticipants(old_max),
+        ConfigChangePayload::MaxPrecisionParticipants(max),
+    );
+    Ok(())
+}
+
+pub fn get_max_precision_participants(env: Env) -> u32 {
+    let key = DataKey::MaxPrecisionParticipants;
+    _extend_persistent_ttl(&env, &key);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(DEFAULT_MAX_PRECISION_PARTICIPANTS)
+}
+
+pub fn set_mint_limit(env: Env, limit: u32) -> Result<(), ContractError> {
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).map_err(|e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("mint_lim"), e);
+        e
+    })?;
+
+    let old_limit: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::MintLimitConfig)
+        .unwrap_or(0);
+    env.storage()
+        .instance()
+        .set(&DataKey::MintLimitConfig, &limit);
+    _emit_config_updated(
+        &env,
+        ConfigChangeKind::MintLimit,
+        ConfigChangePayload::MintLimit(old_limit),
+        ConfigChangePayload::MintLimit(limit),
+    );
+    Ok(())
+}
+
+pub fn get_mint_limit(env: Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MintLimitConfig)
+        .unwrap_or(0)
+}
+
+pub fn set_archive_retention(env: Env, limit: u32) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).map_err(|e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("set_arch"), e);
+        e
+    })?;
+
+    if limit < MIN_ARCHIVE_RETENTION || limit > MAX_ARCHIVE_RETENTION {
+        _emit_action_rejected(
+            &env,
+            &admin,
+            symbol_short!("set_arch"),
+            ContractError::InvalidArchiveRetention,
+        );
+        return Err(ContractError::InvalidArchiveRetention);
+    }
+
+    let key = DataKey::ArchiveRetention;
+    let old_limit: u32 = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(DEFAULT_ARCHIVE_RETENTION);
+    env.storage().persistent().set(&key, &limit);
+    _extend_persistent_ttl(&env, &key);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("archive"), symbol_short!("retention")),
+        (limit,),
+    );
+    _emit_config_updated(
+        &env,
+        ConfigChangeKind::ArchiveRetention,
+        ConfigChangePayload::ArchiveRetention(old_limit),
+        ConfigChangePayload::ArchiveRetention(limit),
+    );
+
+    Ok(())
+}
+
+pub fn get_archive_retention(env: Env) -> u32 {
+    let key = DataKey::ArchiveRetention;
+    _extend_persistent_ttl(&env, &key);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(DEFAULT_ARCHIVE_RETENTION)
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+pub fn _validate_windows(bet_ledgers: u32, run_ledgers: u32) -> Result<(), ContractError> {
+    if bet_ledgers == 0 || run_ledgers == 0 {
+        return Err(ContractError::InvalidDuration);
+    }
+    if bet_ledgers > MAX_BET_WINDOW_LEDGERS || run_ledgers > MAX_RUN_WINDOW_LEDGERS {
+        return Err(ContractError::WindowOutOfRange);
+    }
+    if bet_ledgers >= run_ledgers {
+        return Err(ContractError::InvalidDuration);
+    }
+    Ok(())
+}
+
+pub fn _validate_max_stake(max_amount: Option<i128>) -> Result<(), ContractError> {
+    if let Some(v) = max_amount {
+        if v < MIN_CAP_VALUE {
+            return Err(ContractError::InvalidBetAmount);
+        }
+    }
+    Ok(())
+}
+
+pub fn _validate_oracle_stale_threshold(seconds: u64) -> Result<(), ContractError> {
+    if !(MIN_ORACLE_STALE_THRESHOLD..=MAX_ORACLE_STALE_THRESHOLD).contains(&seconds) {
+        return Err(ContractError::InvalidStaleThreshold);
+    }
+    Ok(())
+}
+
+pub fn _validate_oracle_max_deviation_bps(bps: Option<u32>) -> Result<(), ContractError> {
+    if let Some(v) = bps {
+        if v == 0 || v > MAX_ORACLE_DEVIATION_BPS {
+            return Err(ContractError::InvalidOracleDeviationBps);
+        }
+    }
+    Ok(())
+}
+
+pub fn _validate_protocol_fee_bps(bps: Option<u32>) -> Result<(), ContractError> {
+    if let Some(v) = bps {
+        if v == 0 || v > MAX_PROTOCOL_FEE_BPS {
+            return Err(ContractError::InvalidProtocolFeeBps);
+        }
+    }
+    Ok(())
+}
+
+pub fn _read_protocol_fee_bps(env: &Env) -> Option<u32> {
+    let key = DataKey::ProtocolFeeBps;
+    let v: Option<u32> = env.storage().persistent().get(&key);
+    if v.is_some() {
+        _extend_persistent_ttl(env, &key);
+    }
+    v
+}
+
+pub fn _collect_protocol_fee(
+    env: &Env,
+    round_id: u64,
+    fee_amount: i128,
+    bps_active: Option<u32>,
+) -> Result<(), ContractError> {
+    if fee_amount <= 0 {
+        return Ok(());
+    }
+    let treasury_key = DataKey::ProtocolFeeTreasury;
+    let current: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
+    let new_treasury = current
+        .checked_add(fee_amount)
+        .ok_or(ContractError::Overflow)?;
+    env.storage().persistent().set(&treasury_key, &new_treasury);
+    _extend_persistent_ttl(env, &treasury_key);
+
+    let bps_value: u32 = bps_active.unwrap_or(0);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("protocol"), symbol_short!("fee_coll")),
+        (round_id, fee_amount, new_treasury, bps_value),
+    );
+
+    Ok(())
+}
+
+pub fn _apply_protocol_fee_updown(
+    env: &Env,
+    round_id: u64,
+    winning_pool: i128,
+    losing_pool: i128,
+) -> Result<(i128, i128, i128), ContractError> {
+    let bps = _read_protocol_fee_bps(env);
+    if bps.is_none() {
+        return Ok((winning_pool, losing_pool, 0));
+    }
+    let bps_value = bps.unwrap();
+    let total_pot = payout_add(winning_pool, losing_pool)?;
+    let fee_amount = total_pot
+        .checked_mul(bps_value as i128)
+        .ok_or(ContractError::Overflow)?
+        / BPS_DENOMINATOR;
+    if fee_amount == 0 {
+        return Ok((winning_pool, losing_pool, 0));
+    }
+    let fee_from_losing = fee_amount.min(losing_pool);
+    let fee_from_winning = fee_amount
+        .checked_sub(fee_from_losing)
+        .ok_or(ContractError::Overflow)?;
+    let dist_winning = winning_pool
+        .checked_sub(fee_from_winning)
+        .ok_or(ContractError::Overflow)?;
+    let dist_losing = losing_pool
+        .checked_sub(fee_from_losing)
+        .ok_or(ContractError::Overflow)?;
+    _collect_protocol_fee(env, round_id, fee_amount, Some(bps_value))?;
+    Ok((dist_winning, dist_losing, fee_amount))
+}
+
+pub fn _apply_protocol_fee_precision(
+    env: &Env,
+    round_id: u64,
+    total_pot: i128,
+) -> Result<(i128, i128), ContractError> {
+    let bps = _read_protocol_fee_bps(env);
+    if bps.is_none() || total_pot <= 0 {
+        return Ok((total_pot, 0));
+    }
+    let bps_value = bps.unwrap();
+    let fee_amount = total_pot
+        .checked_mul(bps_value as i128)
+        .ok_or(ContractError::Overflow)?
+        / BPS_DENOMINATOR;
+    let distributable = total_pot
+        .checked_sub(fee_amount)
+        .ok_or(ContractError::Overflow)?;
+    if fee_amount > 0 {
+        _collect_protocol_fee(env, round_id, fee_amount, Some(bps_value))?;
+    }
+    Ok((distributable, fee_amount))
+}
+
+pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChangePayload {
+    match kind {
+        ConfigChangeKind::Windows => {
+            let bet: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::BetWindowLedgers)
+                .unwrap_or(DEFAULT_BET_WINDOW_LEDGERS);
+            let run: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::RunWindowLedgers)
+                .unwrap_or(DEFAULT_RUN_WINDOW_LEDGERS);
+            ConfigChangePayload::Windows(bet, run)
+        }
+        ConfigChangeKind::MaxStake => {
+            ConfigChangePayload::MaxStake(env.storage().persistent().get(&DataKey::MaxStake))
+        }
+        ConfigChangeKind::MaxUserRoundExposure => ConfigChangePayload::MaxUserRoundExposure(
+            env.storage()
+                .persistent()
+                .get(&DataKey::MaxUserRoundExposure),
+        ),
+        ConfigChangeKind::MaxPendingWinnings => ConfigChangePayload::MaxPendingWinnings(
+            env.storage().persistent().get(&DataKey::MaxPendingWinnings),
+        ),
+        ConfigChangeKind::OracleStaleThreshold => ConfigChangePayload::OracleStaleThreshold(
+            env.storage()
+                .persistent()
+                .get(&DataKey::OracleStaleThreshold)
+                .unwrap_or(DEFAULT_ORACLE_STALE_THRESHOLD),
+        ),
+        ConfigChangeKind::OracleMaxDeviationBps => ConfigChangePayload::OracleMaxDeviationBps(
+            env.storage()
+                .persistent()
+                .get(&DataKey::OracleMaxDeviationBps),
+        ),
+        ConfigChangeKind::ProtocolFeeBps => ConfigChangePayload::ProtocolFeeBps(
+            env.storage().persistent().get(&DataKey::ProtocolFeeBps),
+        ),
+        ConfigChangeKind::MinParticipants => ConfigChangePayload::MinParticipants(
+            env.storage().persistent().get(&DataKey::MinParticipants),
+        ),
+        ConfigChangeKind::MaxPrecisionParticipants => {
+            ConfigChangePayload::MaxPrecisionParticipants(
+                env.storage()
+                    .persistent()
+                    .get(&DataKey::MaxPrecisionParticipants)
+                    .unwrap_or(DEFAULT_MAX_PRECISION_PARTICIPANTS),
+            )
+        }
+        ConfigChangeKind::MintLimit => ConfigChangePayload::MintLimit(
+            env.storage()
+                .instance()
+                .get(&DataKey::MintLimitConfig)
+                .unwrap_or(0),
+        ),
+        ConfigChangeKind::ArchiveRetention => ConfigChangePayload::ArchiveRetention(
+            env.storage()
+                .persistent()
+                .get(&DataKey::ArchiveRetention)
+                .unwrap_or(DEFAULT_ARCHIVE_RETENTION),
+        ),
+    }
+}
+
+pub fn _schedule_config_change(
+    env: &Env,
+    kind: ConfigChangeKind,
+    payload: ConfigChangePayload,
+) -> Result<(), ContractError> {
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(env).map_err(|e| {
+        _emit_action_rejected(env, &admin, symbol_short!("sched"), e);
+        e
+    })?;
+
+    let key = DataKey::PendingConfigChange(kind.clone());
+    if env.storage().persistent().has(&key) {
+        _emit_action_rejected(
+            env,
+            &admin,
+            symbol_short!("sched"),
+            ContractError::RoundAlreadyActive,
+        );
+        return Err(ContractError::RoundAlreadyActive);
+    }
+
+    let scheduled_at_ledger = env.ledger().sequence();
+    let activation_ledger = scheduled_at_ledger
+        .checked_add(CONFIG_TIMELOCK_LEDGERS)
+        .ok_or(ContractError::Overflow)?;
+
+    let pending = PendingConfigChange {
+        payload,
+        activation_ledger,
+        scheduled_at_ledger,
+    };
+    env.storage().persistent().set(&key, &pending);
+    _extend_persistent_ttl(env, &key);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("config"), symbol_short!("sched")),
+        (kind, activation_ledger),
+    );
+
+    Ok(())
+}
+
+pub fn _apply_config_payload(
+    env: &Env,
+    kind: &ConfigChangeKind,
+    payload: &ConfigChangePayload,
+) -> Result<(), ContractError> {
+    let old_value = _current_config_payload(env, kind);
+    match (kind, payload) {
+        (ConfigChangeKind::Windows, ConfigChangePayload::Windows(bet, run)) => {
+            _validate_windows(*bet, *run)?;
+            env.storage()
+                .persistent()
+                .set(&DataKey::BetWindowLedgers, bet);
+            _extend_persistent_ttl(env, &DataKey::BetWindowLedgers);
+            env.storage()
+                .persistent()
+                .set(&DataKey::RunWindowLedgers, run);
+            _extend_persistent_ttl(env, &DataKey::RunWindowLedgers);
+            #[allow(deprecated)]
+            env.events().publish(
+                (symbol_short!("windows"), symbol_short!("updated")),
+                (*bet, *run),
+            );
+        }
+        (ConfigChangeKind::MaxStake, ConfigChangePayload::MaxStake(max)) => {
+            _validate_max_stake(*max)?;
+            let key = DataKey::MaxStake;
+            if let Some(v) = max {
+                env.storage().persistent().set(&key, v);
+                _extend_persistent_ttl(env, &key);
+            } else {
+                env.storage().persistent().remove(&key);
+            }
+        }
+        (
+            ConfigChangeKind::MaxUserRoundExposure,
+            ConfigChangePayload::MaxUserRoundExposure(max),
+        ) => {
+            _validate_max_stake(*max)?;
+            let key = DataKey::MaxUserRoundExposure;
+            if let Some(v) = max {
+                env.storage().persistent().set(&key, v);
+                _extend_persistent_ttl(env, &key);
+            } else {
+                env.storage().persistent().remove(&key);
+            }
+        }
+        (
+            ConfigChangeKind::MaxPendingWinnings,
+            ConfigChangePayload::MaxPendingWinnings(max),
+        ) => {
+            _validate_max_stake(*max)?;
+            let key = DataKey::MaxPendingWinnings;
+            if let Some(v) = max {
+                env.storage().persistent().set(&key, v);
+                _extend_persistent_ttl(env, &key);
+            } else {
+                env.storage().persistent().remove(&key);
+            }
+        }
+        (
+            ConfigChangeKind::OracleStaleThreshold,
+            ConfigChangePayload::OracleStaleThreshold(seconds),
+        ) => {
+            _validate_oracle_stale_threshold(*seconds)?;
+            let key = DataKey::OracleStaleThreshold;
+            env.storage().persistent().set(&key, seconds);
+            _extend_persistent_ttl(env, &key);
+        }
+        (
+            ConfigChangeKind::OracleMaxDeviationBps,
+            ConfigChangePayload::OracleMaxDeviationBps(bps),
+        ) => {
+            _validate_oracle_max_deviation_bps(*bps)?;
+            let key = DataKey::OracleMaxDeviationBps;
+            if let Some(v) = bps {
+                env.storage().persistent().set(&key, v);
+                _extend_persistent_ttl(env, &key);
+            } else {
+                env.storage().persistent().remove(&key);
+            }
+        }
+        (ConfigChangeKind::ProtocolFeeBps, ConfigChangePayload::ProtocolFeeBps(bps)) => {
+            _validate_protocol_fee_bps(*bps)?;
+            let key = DataKey::ProtocolFeeBps;
+            if let Some(v) = bps {
+                env.storage().persistent().set(&key, v);
+                _extend_persistent_ttl(env, &key);
+            } else {
+                env.storage().persistent().remove(&key);
+            }
+            #[allow(deprecated)]
+            env.events().publish(
+                (symbol_short!("protocol"), symbol_short!("fee_bps")),
+                (bps.clone(),),
+            );
+        }
+        _ => return Err(ContractError::InvalidMode),
+    }
+    _emit_config_updated(env, kind.clone(), old_value, payload.clone());
+    Ok(())
+}

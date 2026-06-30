@@ -24,3 +24,5 @@ bindings/dist/
 # OS
 .DS_Store
 Thumbs.db
+CLAUDE.md
+plan.md

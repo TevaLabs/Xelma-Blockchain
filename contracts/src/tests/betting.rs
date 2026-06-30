@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: MIT
 //! Tests for bet placement and validation.
 
+use super::config_helpers::{apply_max_stake, apply_max_user_exposure};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
 use crate::types::BetSide;
@@ -261,7 +263,7 @@ fn test_bet_exceeds_max_stake_fails() {
     client.mint_initial(&user);
 
     // Set max stake to 50
-    client.set_max_stake(&Some(50_0000000i128));
+    apply_max_stake(&env, &client, Some(50_0000000i128));
     client.create_round(&1_0000000, &None);
 
     // Exactly at cap — should succeed
@@ -287,7 +289,7 @@ fn test_bet_at_max_stake_boundary_succeeds() {
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
     client.mint_initial(&user);
-    client.set_max_stake(&Some(100_0000000i128));
+    apply_max_stake(&env, &client, Some(100_0000000i128));
     client.create_round(&1_0000000, &None);
 
     // Exactly at cap — must succeed
@@ -310,8 +312,8 @@ fn test_bet_no_max_stake_cap_disabled() {
     client.mint_initial(&user);
 
     // Set cap then disable it
-    client.set_max_stake(&Some(50_0000000i128));
-    client.set_max_stake(&None);
+    apply_max_stake(&env, &client, Some(50_0000000i128));
+    apply_max_stake(&env, &client, None);
 
     client.create_round(&1_0000000, &None);
 
@@ -333,7 +335,7 @@ fn test_exposure_cap_exceeded_fails() {
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
     client.mint_initial(&user);
-    client.set_max_user_exposure(&Some(80_0000000i128));
+    apply_max_user_exposure(&env, &client, Some(80_0000000i128));
     client.create_round(&1_0000000, &None);
 
     let result = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
@@ -353,7 +355,7 @@ fn test_exposure_cap_at_boundary_succeeds() {
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
     client.mint_initial(&user);
-    client.set_max_user_exposure(&Some(100_0000000i128));
+    apply_max_user_exposure(&env, &client, Some(100_0000000i128));
     client.create_round(&1_0000000, &None);
 
     // Exactly at cap — must succeed
@@ -374,8 +376,140 @@ fn test_get_max_stake_returns_configured_value() {
     client.initialize(&admin, &oracle);
 
     assert_eq!(client.get_max_stake(), None);
-    client.set_max_stake(&Some(200_0000000i128));
+    apply_max_stake(&env, &client, Some(200_0000000i128));
     assert_eq!(client.get_max_stake(), Some(200_0000000i128));
-    client.set_max_stake(&None);
+    apply_max_stake(&env, &client, None);
     assert_eq!(client.get_max_stake(), None);
 }
+
+#[test]
+fn test_get_round_pool_stats_no_active_round() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    assert_eq!(client.get_round_pool_stats(), None);
+}
+
+#[test]
+fn test_get_round_pool_stats_empty_updown_pool() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.create_round(&1_0000000, &None);
+
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(stats.total_up_stake, 0);
+    assert_eq!(stats.total_down_stake, 0);
+    assert_eq!(stats.up_participant_count, 0);
+    assert_eq!(stats.down_participant_count, 0);
+    assert_eq!(stats.up_stake_ratio_bps, 0);
+    assert_eq!(stats.down_stake_ratio_bps, 0);
+    assert_eq!(stats.precision_total_stake, 0);
+    assert_eq!(stats.precision_participant_count, 0);
+}
+
+#[test]
+fn test_get_round_pool_stats_partial_updown_pool() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &200_0000000, &BetSide::Up);
+
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(stats.total_up_stake, 300_0000000);
+    assert_eq!(stats.total_down_stake, 0);
+    assert_eq!(stats.up_participant_count, 2);
+    assert_eq!(stats.down_participant_count, 0);
+    assert_eq!(stats.up_stake_ratio_bps, 10_000);
+    assert_eq!(stats.down_stake_ratio_bps, 0);
+}
+
+#[test]
+fn test_get_round_pool_stats_full_updown_pool() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&carol);
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &200_0000000, &BetSide::Down);
+    client.place_bet(&carol, &300_0000000, &BetSide::Down);
+
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    let round = client.get_active_round().expect("active round");
+    assert_eq!(stats.total_up_stake, round.pool_up);
+    assert_eq!(stats.total_down_stake, round.pool_down);
+    assert_eq!(stats.up_participant_count, 1);
+    assert_eq!(stats.down_participant_count, 2);
+    assert_eq!(stats.up_stake_ratio_bps, 1_666);
+    assert_eq!(stats.down_stake_ratio_bps, 8_333);
+}
+
+#[test]
+fn test_get_round_pool_stats_precision_pool() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.create_round(&1_0000000, &Some(1));
+    client.place_precision_prediction(&alice, &125_0000000, &1_1000000);
+    client.commit_prediction(
+        &bob,
+        &soroban_sdk::BytesN::from_array(&env, &[7; 32]),
+        &75_0000000,
+    );
+
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(stats.total_up_stake, 0);
+    assert_eq!(stats.total_down_stake, 0);
+    assert_eq!(stats.up_participant_count, 0);
+    assert_eq!(stats.down_participant_count, 0);
+    assert_eq!(stats.up_stake_ratio_bps, 0);
+    assert_eq!(stats.down_stake_ratio_bps, 0);
+    assert_eq!(stats.precision_total_stake, 200_0000000);
+    assert_eq!(stats.precision_participant_count, 2);
+    assert_eq!(stats.precision_prediction_count, 1);
+    assert_eq!(stats.precision_commitment_count, 1);
+    assert_eq!(stats.precision_revealed_count, 0);
+}
+
+

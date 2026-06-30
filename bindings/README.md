@@ -13,37 +13,6 @@ soroban contract bindings ts \
 ```
 
 The network passphrase and contract ID are exported from [index.ts](./src/index.ts) in the `networks` constant. If you are the one who generated this library and you know that this contract is also deployed to other networks, feel free to update `networks` with other valid options. This will help your contract consumers use this library more easily.
-## Regenerating from Latest Contract ABI
-
-This library is automatically generated from the latest Stellar contract ABI. To regenerate the bindings after updating the contract:
-
-1. Build the latest WASM contract:
-  ```bash
-  cd ../contracts
-  cargo build --target wasm32-unknown-unknown --release
-  ```
-
-2. Generate new TypeScript bindings from the WASM:
-  ```bash
-  cd ../
-  stellar contract bindings typescript --wasm target/wasm32-unknown-unknown/release/hello_world.wasm --output-dir bindings/src --overwrite
-  ```
-
-3. Build and verify the TypeScript:
-  ```bash
-  cd bindings
-  npm install
-  npm run build
-  ```
-
-## API Features
-
-The generated bindings include full type definitions for:
-
-- **Round Modes**: UpDown (price direction) and Precision (exact price prediction)
-- **Methods**: `place_bet`, `predict_price`, `place_precision_prediction`, `set_windows`, `resolve_round`, and more
-- **Types**: `Round`, `RoundMode`, `PrecisionPrediction`, `UserStats`, `BetSide`, and complete error mappings
-- **All current contract error codes**: AlreadyInitialized through RoundAlreadyActive (20 total errors)
 
 # To publish or not to publish
 
@@ -80,21 +49,109 @@ const contract = new Contract({
 })
 
 contract.|
-# Release Policy
+```
 
-The `@tevalabs/xelma-bindings` package follows a formal release process to ensure reliability and ABI parity with the smart contracts.
+As long as your editor is configured to show JavaScript/TypeScript documentation, you can pause your typing at that `|` to get a list of all exports and inline-documentation for each. It exports a separate [async](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function) function for each method in the smart contract, with documentation for each generated from the comments the contract's author included in the original source code.
 
-## Versioning
-This package adheres to [Semantic Versioning (SemVer)](https://semver.org/):
-- **Major**: Breaking changes in the API or underlying contract structure.
-- **Minor**: New contract methods or features.
-- **Patch**: Backward-compatible bug fixes or internal improvements.
+# Decode contract errors
 
-## Publish Guard
-To ensure quality, every publication includes a mandatory **Publish Guard**:
-1. **Compilation**: TypeScript must compile without errors (`npm run build`).
-2. **ABI Parity**: Automated check ensuring the TS bindings match the contract methods (`npm run test:parity`).
-3. **Changelog**: A `CHANGELOG.md` entry is required for every released version.
+When a transaction fails, the contract returns a `u32` error code. Use the helpers
+below to translate that code into a structured result or a user-facing string
+suitable for wallet UX.
 
-## Releasing
-Releases are managed via the **Release Bindings** workflow in GitHub Actions, which validates the package before any publication (including dry-runs).
+```ts
+import { decodeContractError, formatContractError } from "bindings"
+
+// Structured result for programmatic handling
+const decoded = decodeContractError(4)
+if (decoded) {
+  console.log(`Error ${decoded.code}: ${decoded.variant} — ${decoded.message}`)
+  // => "Error 4: UnauthorizedAdmin — UnauthorizedAdmin"
+}
+
+// One-liner for display in a wallet or bot
+console.log(formatContractError(9) ?? "Unknown error")
+// => "InsufficientBalance (code 9)"
+```
+
+Use `decodeContractError` to surface contextual information in your wallet or
+bot, and fall back to `"Unknown contract error (code N)"` for codes that the
+current bindings do not yet recognise.
+
+# High-level helpers
+
+The `@xelma/bindings/helpers` module provides typed convenience wrappers
+around the generated client for common wallet flows.
+
+## `mintIfNeeded`
+
+Checks a user's vXLM balance and mints initial tokens if the balance is zero.
+One-time per user (enforced by the contract).
+
+```ts
+import { mintIfNeeded } from "@xelma/bindings/helpers"
+
+const { minted, balance } = await mintIfNeeded(client, "GABCDEF123...")
+if (minted) {
+  console.log(`Minted initial tokens. Balance: ${balance}`)
+}
+```
+
+## `placeBetChecked`
+
+Places a bet after running pre-flight validation:
+1. Contract is not paused
+2. An active round exists
+3. User has sufficient balance
+
+Throws typed exceptions for known failure modes.
+
+```ts
+import { placeBetChecked } from "@xelma/bindings/helpers"
+
+try {
+  const tx = await placeBetChecked(client, {
+    user: "GABCDEF123...",
+    amount: 500_000_000n,   // 50 vXLM (7-digit precision)
+    side: { tag: "Up", values: undefined },
+  })
+  console.log("Bet placed!")
+} catch (err) {
+  if (err instanceof ContractPausedError) {
+    console.log("Betting is paused right now.")
+  } else if (err instanceof InsufficientBalanceError) {
+    console.log("Not enough vXLM — try minting first.")
+  } else if (err instanceof NoActiveRoundError) {
+    console.log("No round is currently active.")
+  } else {
+    console.error("Unexpected error:", err)
+  }
+}
+```
+
+## `claimIfPending`
+
+Checks for pending winnings and claims them if any exist.
+
+```ts
+import { claimIfPending } from "@xelma/bindings/helpers"
+
+const { claimed, amount } = await claimIfPending(client, "GABCDEF123...")
+if (claimed) {
+  console.log(`Claimed ${amount} vXLM`)
+}
+```
+
+## Error reference
+
+| Exception                  | Contract code | Meaning                          |
+|----------------------------|---------------|----------------------------------|
+| `InsufficientBalanceError` | 9             | Not enough vXLM to place bet     |
+| `NoActiveRoundError`       | 7             | No round is currently active     |
+| `ContractPausedError`      | 22            | Contract paused for maintenance  |
+| `AlreadyBetError`          | 10            | User already bet in this round   |
+| `StakeExceedsMaxError`     | 28            | Bet exceeds the max stake cap    |
+| `ExposureCapExceededError` | 29            | User exposure exceeds round cap  |
+
+All typed exceptions extend `XelmaError` (which extends `Error`), so you
+can catch specific types or the base class.

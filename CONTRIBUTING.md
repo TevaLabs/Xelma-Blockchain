@@ -36,6 +36,73 @@ sent back for detail before they are picked up.
    - `cd bindings && npm ci && npm run build`
    - `cd bindings && npm run test:parity` (ABI drift check; mirrors the CI `bindings-test` job)
 
+Before opening a PR, consult [`docs/CONTRIBUTOR_TASK_MATRIX.md`](./docs/CONTRIBUTOR_TASK_MATRIX.md) for task-type-specific test and evidence requirements.
+
+## Optional pre-commit hooks
+
+This repository ships an optional pre-commit hook configuration to catch trivial
+issues before push. Hooks are **opt-in** — CI remains the source of truth.
+
+### Install
+
+```bash
+pip install pre-commit   # or your package manager
+pre-commit install
+```
+
+After install, hooks run automatically on `git commit`. They execute:
+
+1. `cargo fmt --check` — formatting guard
+2. `cargo clippy --all-targets --all-features -- -D warnings` — targeted lint
+3. `cargo test --lib` — quick test subset (unit + internal tests, no integration/runtime)
+
+### Opt-out for a single commit
+
+```bash
+git commit --no-verify
+```
+
+### Remove entirely
+
+```bash
+pre-commit uninstall
+```
+
+### Installer script
+
+```bash
+git clone https://github.com/TevaLabs/Xelma-Blockchain
+cd Xelma-Blockchain
+pip install pre-commit
+pre-commit install
+```
+## Snapshot Tests
+
+The project uses storage-snapshot golden files (`contracts/test_snapshots/`) to detect
+unintentional changes to contract state, event emissions, and error behavior.
+
+### When snapshots should change
+
+- You modified contract logic, storage keys, event payloads, or error variants.
+- You made non-semantic refactors that still cause snapshot output to differ (rare).
+
+### When snapshots should NOT change
+
+- Your change is in an unrelated module, test infrastructure, or documentation.
+- CI reports snapshot drift that you did not intend — investigate before regenerating.
+
+### Updating snapshots
+
+After an intentional behavior change, regenerate golden files from the repo root:
+
+```bash
+./scripts/update_snapshots.sh
+```
+
+Then review the diff, run the full suite, and commit the updated snapshots alongside
+your logic change. See [`contracts/test_snapshots/README.md`](./contracts/test_snapshots/README.md)
+for a step-by-step guide.
+
 ## Security Checks (local)
 
 The CI `security-audit` job runs two checks that maintainers and contributors can reproduce locally.
@@ -44,7 +111,8 @@ The CI `security-audit` job runs two checks that maintainers and contributors ca
 
 ```bash
 # Install once
-cargo install cargo-audit --locked
+# Install once (pin matches CI CARGO_AUDIT_VERSION in .github/workflows/ci.yml)
+cargo install cargo-audit --version 0.22.2 --locked
 
 # Run from the repo root
 cargo audit --deny warnings
@@ -74,6 +142,28 @@ as warnings that are surfaced in the audit job output; errors `-D` will fail the
 > **Note**: These lints are stricter than the standard `cargo clippy -- -D warnings` run in
 > the `rust-test` job. It is normal for code that passes standard clippy to have findings here.
 > Fix or document each finding before merging contract changes.
+
+## Code Coverage
+
+Before opening a PR, verify that critical contract paths remain covered:
+
+```bash
+# Install cargo-llvm-cov (one-time)
+cargo install cargo-llvm-cov
+
+# Generate coverage for the workspace
+cargo llvm-cov --all-features --workspace --locked
+```
+
+To view a detailed HTML report:
+
+```bash
+cargo llvm-cov --all-features --workspace --html --output-dir coverage-report --locked
+# Open coverage-report/html/index.html in a browser
+```
+
+CI enforces a 90% line-coverage threshold on `contracts/src/contract.rs` and
+80% overall workspace coverage.
 
 ## Canonical Contract Crate
 

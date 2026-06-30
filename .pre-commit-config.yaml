@@ -1,0 +1,20 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt-check
+        name: cargo fmt --check
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+      - id: cargo-clippy
+        name: cargo clippy (fast, targeted)
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-test-quick
+        name: cargo test --lib (quick subset)
+        entry: cargo test --lib --
+        language: system
+        types: [rust]
+        pass_filenames: false

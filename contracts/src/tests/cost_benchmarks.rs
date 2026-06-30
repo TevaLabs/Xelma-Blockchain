@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Gas/cost benchmark baselines with regression guardrails (Issue #121).
 //!
 //! These benchmarks measure the host CPU-instruction and memory cost of each
@@ -6,7 +7,7 @@
 //! features evolve.
 //!
 //! Paths covered: `create_round`, `place_bet`, `place_precision_prediction`
-//! (precision submit), `resolve_round`, and `claim_winnings`.
+//! (precision submit), `resolve_round`, `claim_winnings`, and bounded paginated reads.
 //!
 //! ## Baselines and tolerances
 //!
@@ -65,10 +66,17 @@ fn measure<T>(env: &Env, f: impl FnOnce() -> T) -> (u64, u64, T) {
 }
 
 fn report(label: &str, cpu: u64, mem: u64) {
-    std::println!("[bench] {label:<24} cpu={cpu:>12} mem={mem:>12}");
+    std::println!("[cost-benchmark] name={label} cpu_instructions={cpu} memory_bytes={mem}");
+    std::println!("| `{label}` | `{cpu}` | `{mem}` |");
 }
 
-fn setup() -> (Env, Address, Address, VirtualTokenContractClient<'static>) {
+fn setup() -> (
+    Env,
+    Address,
+    Address,
+    Address,
+    VirtualTokenContractClient<'static>,
+) {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(VirtualTokenContract, ());
@@ -76,12 +84,12 @@ fn setup() -> (Env, Address, Address, VirtualTokenContractClient<'static>) {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
-    (env, admin, oracle, client)
+    (env, contract_id, admin, oracle, client)
 }
 
 #[test]
 fn bench_cost_create_round() {
-    let (env, _admin, _oracle, client) = setup();
+    let (env, _cid, _admin, _oracle, client) = setup();
     let (cpu, mem, _) = measure(&env, || client.create_round(&1_0000000u128, &None));
     report("create_round", cpu, mem);
     assert!(
@@ -96,7 +104,7 @@ fn bench_cost_create_round() {
 
 #[test]
 fn bench_cost_place_bet() {
-    let (env, _admin, _oracle, client) = setup();
+    let (env, _cid, _admin, _oracle, client) = setup();
     let alice = Address::generate(&env);
     client.mint_initial(&alice);
     client.create_round(&1_0000000u128, &None);
@@ -111,7 +119,7 @@ fn bench_cost_place_bet() {
 
 #[test]
 fn bench_cost_precision_submit() {
-    let (env, _admin, _oracle, client) = setup();
+    let (env, _cid, _admin, _oracle, client) = setup();
     let alice = Address::generate(&env);
     client.mint_initial(&alice);
     client.create_round(&1_0000000u128, &Some(1)); // Precision mode
@@ -130,7 +138,7 @@ fn bench_cost_precision_submit() {
 
 #[test]
 fn bench_cost_resolve_round() {
-    let (env, _admin, _oracle, client) = setup();
+    let (env, contract_id, _admin, _oracle, client) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     client.mint_initial(&alice);
@@ -146,6 +154,9 @@ fn bench_cost_resolve_round() {
         timestamp: env.ledger().timestamp(),
         round_id: round.start_ledger,
         nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_round", cpu, mem);
@@ -161,7 +172,7 @@ fn bench_cost_resolve_round() {
 
 #[test]
 fn bench_cost_claim_winnings() {
-    let (env, _admin, _oracle, client) = setup();
+    let (env, contract_id, _admin, _oracle, client) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     client.mint_initial(&alice);
@@ -177,6 +188,9 @@ fn bench_cost_claim_winnings() {
         timestamp: env.ledger().timestamp(),
         round_id: round.start_ledger,
         nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     let (cpu, mem, claimed) = measure(&env, || client.claim_winnings(&alice));
@@ -185,3 +199,56 @@ fn bench_cost_claim_winnings() {
     assert!(cpu <= CLAIM_CPU_MAX, "claim_winnings CPU regression: {cpu}");
     assert!(mem <= CLAIM_MEM_MAX, "claim_winnings MEM regression: {mem}");
 }
+
+#[test]
+fn bench_cost_get_updown_positions_page() {
+    let (env, _cid, _admin, _oracle, client) = setup();
+    client.create_round(&1_0000000u128, &None);
+    for i in 0..10 {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        let side = if i % 2 == 0 {
+            BetSide::Up
+        } else {
+            BetSide::Down
+        };
+        client.place_bet(&user, &10_0000000, &side);
+    }
+
+    let (cpu, mem, page) = measure(&env, || client.get_updown_positions_page(&0, &10));
+    report("get_updown_positions_page", cpu, mem);
+    assert_eq!(page.len(), 10);
+    assert!(
+        cpu <= TX_CPU_BUDGET,
+        "get_updown_positions_page CPU regression: {cpu}"
+    );
+    assert!(
+        mem <= TX_MEM_BUDGET,
+        "get_updown_positions_page MEM regression: {mem}"
+    );
+}
+
+#[test]
+fn bench_cost_get_precision_predictions_page() {
+    let (env, _cid, _admin, _oracle, client) = setup();
+    client.create_round(&1_0000000u128, &Some(1));
+    for i in 0..10u128 {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        client.predict_price(&user, &(1_0000000 + i), &10_0000000);
+    }
+
+    let (cpu, mem, page) = measure(&env, || client.get_precision_predictions_page(&0, &10));
+    report("get_precision_predictions_page", cpu, mem);
+    assert_eq!(page.len(), 10);
+    assert!(
+        cpu <= TX_CPU_BUDGET,
+        "get_precision_predictions_page CPU regression: {cpu}"
+    );
+    assert!(
+        mem <= TX_MEM_BUDGET,
+        "get_precision_predictions_page MEM regression: {mem}"
+    );
+}
+
+

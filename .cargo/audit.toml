@@ -1,0 +1,12 @@
+# cargo-audit configuration for CI (`cargo audit --deny warnings`).
+# See CONTRIBUTING.md for local reproduction steps.
+
+[advisories]
+# Transitive proc-macro deps pulled in by soroban-sdk / ark-* crates.
+# We cannot replace them directly; upstream Soroban SDK controls the lockfile.
+ignore = [
+    # RUSTSEC-2024-0388: derivative unmaintained (ark-ec, ark-ff via soroban-env-host)
+    "RUSTSEC-2024-0388",
+    # RUSTSEC-2024-0436: paste unmaintained (ark-ff via soroban-env-host)
+    "RUSTSEC-2024-0436",
+]

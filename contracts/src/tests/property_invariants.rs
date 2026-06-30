@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Property-based tests for payout invariants.
 //!
 //! These tests exercise randomized scenarios to ensure core invariants such as:
@@ -97,6 +98,9 @@ proptest! {
             timestamp: env.ledger().timestamp(),
             round_id: 0,
             nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+        confidence: None,
         });
 
         let alice_pending = client.get_pending_winnings(&alice);
@@ -210,6 +214,9 @@ proptest! {
             timestamp: env.ledger().timestamp(),
             round_id: 0,
             nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+        confidence: None,
         });
 
         let alice_pending = client.get_pending_winnings(&alice);
@@ -272,3 +279,5 @@ proptest! {
         });
     }
 }
+
+
