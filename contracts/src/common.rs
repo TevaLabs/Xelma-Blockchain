@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: MIT
-use soroban_sdk::{
-    symbol_short, Address, Env, Symbol, Vec,
-};
 use crate::errors::ContractError;
-use crate::types::{DataKey, ConfigChangeKind, ConfigChangePayload, RoundPhase, Round};
+use crate::types::{ConfigChangeKind, ConfigChangePayload, DataKey, Round, RoundPhase};
+use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
-// ─── Economic control limits ─────────────────────────────────────────────────
+// â”€â”€â”€ Economic control limits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 pub const MIN_CAP_VALUE: i128 = 1;
 pub const MAX_MIN_PARTICIPANTS: u32 = 10_000;
 pub const DEFAULT_MAX_PRECISION_PARTICIPANTS: u32 = 1_000;
 pub const MAX_PRECISION_PARTICIPANTS_LIMIT: u32 = 10_000;
 pub const MAX_PAGE_SIZE: u32 = 100;
 
-// ─── Oracle heartbeat limits ──────────────────────────────────────────────────
+// â”€â”€â”€ Oracle heartbeat limits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 pub const DEFAULT_ORACLE_STALE_THRESHOLD: u64 = 3_600; // 1 hour
 pub const MIN_ORACLE_STALE_THRESHOLD: u64 = 60; // 1 minute
 pub const MAX_ORACLE_STALE_THRESHOLD: u64 = 86_400; // 24 hours
@@ -22,19 +20,19 @@ pub const DEFAULT_RUN_WINDOW_LEDGERS: u32 = 12;
 pub const MAX_BET_WINDOW_LEDGERS: u32 = 1_440;
 pub const MAX_RUN_WINDOW_LEDGERS: u32 = 2_880;
 
-// ─── Oracle deviation guardrails ─────────────────────────────────────────────
+// â”€â”€â”€ Oracle deviation guardrails â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 pub const MAX_ORACLE_DEVIATION_BPS: u32 = 100_000;
 
-// ─── Protocol fee ────────────────────────────────────────────────
+// â”€â”€â”€ Protocol fee â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 pub const MAX_PROTOCOL_FEE_BPS: u32 = 1_000;
 pub const BPS_DENOMINATOR: i128 = 10_000;
 
-// ─── Storage schema versioning ───────────────────────────────────────────────
+// â”€â”€â”€ Storage schema versioning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 pub const CURRENT_SCHEMA_VERSION: u32 = 3;
-// ─── Start-price bounds ─────────────────────────────────────────
+// â”€â”€â”€ Start-price bounds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 pub const MIN_START_PRICE: u128 = 1;
 pub const MAX_START_PRICE: u128 = 1_000_000_000_000_000_000;
-// ─── Storage TTL Lifecycle Limits ──────────────────────────────
+// â”€â”€â”€ Storage TTL Lifecycle Limits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 pub const TTL_BUMP_THRESHOLD: u32 = 17_280; // ~1 day at 5-second ledgers
 pub const TTL_BUMP_AMOUNT: u32 = 518_400; // ~30 days at 5-second ledgers
 
@@ -105,7 +103,6 @@ pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(),
 }
 
 pub fn _emit_action_rejected(env: &Env, actor: &Address, action: Symbol, reason: ContractError) {
-    std::println!("_emit_action_rejected called: actor={:?}, action={:?}, reason={:?}", actor, action, reason);
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("action"), symbol_short!("rejct")),

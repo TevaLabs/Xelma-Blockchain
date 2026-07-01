@@ -14,6 +14,24 @@ use soroban_sdk::{
 };
 use std::string::ToString;
 
+fn payout_outcome_events(env: &Env) -> std::vec::Vec<(u64, u32, Address, i128, u32)> {
+    env.events()
+        .all()
+        .iter()
+        .filter_map(|event| {
+            let (_contract, topics, data) = event;
+            if topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("payout"))
+                && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("outcome"))
+            {
+                Some(data.clone().try_into_val(env).unwrap())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 #[test]
 fn test_resolve_round_price_unchanged() {
     let env = Env::default();
@@ -1203,6 +1221,186 @@ fn test_round_resolved_event_emitted() {
         resolved_event.is_some(),
         "Round resolved event should be emitted"
     );
+}
+
+#[test]
+fn test_updown_resolution_emits_participant_payout_outcomes() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.create_round(&1_0000000, &None);
+    let round_id = client.get_last_round_id();
+
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &50_0000000, &BetSide::Down);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+    });
+
+    let outcomes = payout_outcome_events(&env);
+
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes
+        .iter()
+        .any(|(event_round_id, mode, user, gross_payout, outcome_type)| {
+            *event_round_id == round_id
+                && *mode == 0
+                && user == &alice
+                && *gross_payout == 150_0000000
+                && *outcome_type == 1
+        }));
+    assert!(outcomes
+        .iter()
+        .any(|(event_round_id, mode, user, gross_payout, outcome_type)| {
+            *event_round_id == round_id
+                && *mode == 0
+                && user == &bob
+                && *gross_payout == 0
+                && *outcome_type == 0
+        }));
+}
+
+#[test]
+fn test_unchanged_price_resolution_emits_refund_outcomes() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.create_round(&1_0000000, &None);
+    let round_id = client.get_last_round_id();
+
+    client.place_bet(&alice, &75_0000000, &BetSide::Up);
+    client.place_bet(&bob, &25_0000000, &BetSide::Down);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 1_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+    });
+
+    let outcomes = payout_outcome_events(&env);
+
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes
+        .iter()
+        .any(|(event_round_id, mode, user, gross_payout, outcome_type)| {
+            *event_round_id == round_id
+                && *mode == 0
+                && user == &alice
+                && *gross_payout == 75_0000000
+                && *outcome_type == 2
+        }));
+    assert!(outcomes
+        .iter()
+        .any(|(event_round_id, mode, user, gross_payout, outcome_type)| {
+            *event_round_id == round_id
+                && *mode == 0
+                && user == &bob
+                && *gross_payout == 25_0000000
+                && *outcome_type == 2
+        }));
+}
+
+#[test]
+fn test_precision_resolution_emits_participant_payout_outcomes() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&charlie);
+    client.create_round(&2000, &Some(1));
+    let round_id = client.get_last_round_id();
+
+    client.place_precision_prediction(&alice, &100_0000000, &2297);
+    client.place_precision_prediction(&bob, &150_0000000, &2300);
+    client.place_precision_prediction(&charlie, &50_0000000, &2500);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 2298,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+    });
+
+    let outcomes = payout_outcome_events(&env);
+
+    assert_eq!(outcomes.len(), 3);
+    assert!(outcomes
+        .iter()
+        .any(|(event_round_id, mode, user, gross_payout, outcome_type)| {
+            *event_round_id == round_id
+                && *mode == 1
+                && user == &alice
+                && *gross_payout == 300_0000000
+                && *outcome_type == 1
+        }));
+    assert!(outcomes
+        .iter()
+        .any(|(event_round_id, mode, user, gross_payout, outcome_type)| {
+            *event_round_id == round_id
+                && *mode == 1
+                && user == &bob
+                && *gross_payout == 0
+                && *outcome_type == 0
+        }));
+    assert!(outcomes
+        .iter()
+        .any(|(event_round_id, mode, user, gross_payout, outcome_type)| {
+            *event_round_id == round_id
+                && *mode == 1
+                && user == &charlie
+                && *gross_payout == 0
+                && *outcome_type == 0
+        }));
 }
 
 #[test]

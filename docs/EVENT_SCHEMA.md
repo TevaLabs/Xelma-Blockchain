@@ -99,6 +99,26 @@ Emitted when a round is settled competitively by the oracle.
 
 ---
 
+### `("payout", "outcome")`
+
+Emitted once per participant during round resolution after that participant's settlement
+outcome is known. Indexers can use these events to reconstruct the complete participant-level
+result of a round without replaying contract storage reads.
+
+| Position | Field          | Type      | Description                                               |
+|----------|----------------|-----------|-----------------------------------------------------------|
+| 0        | `round_id`     | `u64`     | Round that produced the participant outcome               |
+| 1        | `mode`         | `u32`     | Round mode: `0` = UpDown, `1` = Precision                 |
+| 2        | `user`         | `Address` | Participant address                                       |
+| 3        | `gross_payout` | `i128`    | Amount credited to pending winnings, in stroops           |
+| 4        | `outcome_type` | `u32`     | `0` = loss, `1` = win, `2` = refund                       |
+
+`gross_payout` is `0` for losses. For refunds, it equals the participant's refunded stake.
+For wins, it equals the full pending payout credited by the resolver, including returned
+stake and any profit share.
+
+---
+
 ### `("outcome", "loss")`
 
 *Additive change added by Issue #168 — schema version stays at **v1**
