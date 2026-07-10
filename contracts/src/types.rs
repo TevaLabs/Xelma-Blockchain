@@ -85,6 +85,8 @@ pub enum DataKey {
     MaxUserRoundExposure,
     /// Maximum pending winnings allowed per account (None = unlimited)
     MaxPendingWinnings,
+    /// Minimum bet amount enforced for all bets; `None` means disabled.
+    MinBet,
     /// Marker for a cancelled round: round_id → true
     CancelledRound(u64),
     /// Per-round consumed oracle nonce: (round_id, nonce) → true.

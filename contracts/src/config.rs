@@ -5,10 +5,10 @@ use crate::common::{
     payout_add, BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS, DEFAULT_ARCHIVE_RETENTION,
     DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_CLOSE_BUFFER_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS,
     DEFAULT_ORACLE_STALE_THRESHOLD, DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION,
-    MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_MIN_PARTICIPANTS,
+    MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_MIN_BET_AMOUNT, MAX_MIN_PARTICIPANTS,
     MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PRECISION_PARTICIPANTS_LIMIT,
     MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE,
-    MIN_ORACLE_STALE_THRESHOLD,
+    MIN_MIN_BET_AMOUNT, MIN_ORACLE_STALE_THRESHOLD,
 };
 use crate::errors::ContractError;
 use crate::types::{ConfigChangeKind, ConfigChangePayload, DataKey, PendingConfigChange};
@@ -340,6 +340,49 @@ pub fn set_min_participants(env: Env, min: Option<u32>) -> Result<(), ContractEr
 
 pub fn get_min_participants(env: Env) -> Option<u32> {
     let key = DataKey::MinParticipants;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key)
+}
+
+pub fn set_min_bet(env: Env, min_bet: Option<i128>) -> Result<(), ContractError> {
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("min_bet"), e);
+    })?;
+
+    let key = DataKey::MinBet;
+    if let Some(v) = min_bet {
+        if !(MIN_MIN_BET_AMOUNT..=MAX_MIN_BET_AMOUNT).contains(&v) {
+            _emit_action_rejected(
+                &env,
+                &admin,
+                symbol_short!("min_bet"),
+                ContractError::InvalidBetAmount,
+            );
+            return Err(ContractError::InvalidBetAmount);
+        }
+        env.storage().persistent().set(&key, &v);
+        _extend_persistent_ttl(&env, &key);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("config"), symbol_short!("min_bet")),
+        (min_bet,),
+    );
+
+    Ok(())
+}
+
+pub fn get_min_bet(env: Env) -> Option<i128> {
+    let key = DataKey::MinBet;
     _extend_persistent_ttl(&env, &key);
     env.storage().persistent().get(&key)
 }

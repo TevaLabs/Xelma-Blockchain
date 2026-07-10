@@ -608,6 +608,14 @@ impl VirtualTokenContract {
         config::get_archive_retention(env)
     }
 
+    pub fn set_min_bet(env: Env, min_bet: Option<i128>) -> Result<(), ContractError> {
+        config::set_min_bet(env, min_bet)
+    }
+
+    pub fn get_min_bet(env: Env) -> Option<i128> {
+        config::get_min_bet(env)
+    }
+
     pub fn set_close_buffer_ledgers(env: Env, buffer_ledgers: u32) -> Result<(), ContractError> {
         config::set_close_buffer_ledgers(env, buffer_ledgers)
     }

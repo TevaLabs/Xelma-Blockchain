@@ -6,6 +6,8 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 // ─── Economic control limits ─────────────────────────────────────────────────
 pub const MIN_CAP_VALUE: i128 = 1;
 pub const MAX_MIN_PARTICIPANTS: u32 = 10_000;
+pub const MIN_MIN_BET_AMOUNT: i128 = 1;
+pub const MAX_MIN_BET_AMOUNT: i128 = 1_000_000_000_000_000_000; // 1e18, matches MAX_START_PRICE
 pub const DEFAULT_MAX_PRECISION_PARTICIPANTS: u32 = 1_000;
 pub const MAX_PRECISION_PARTICIPANTS_LIMIT: u32 = 10_000;
 pub const MAX_PAGE_SIZE: u32 = 100;
