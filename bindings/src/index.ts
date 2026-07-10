@@ -66,7 +66,7 @@ export type BetSide = {tag: "Up", values: void} | {tag: "Down", values: void};
  * Legacy single-key maps (`UpDownPositions`, `PrecisionPositions`) are kept for
  * backward-compatible reads during a migration window; they are no longer written.
  */
-export type DataKey = {tag: "Balance", values: readonly [string]} | {tag: "Admin", values: void} | {tag: "Oracle", values: void} | {tag: "SchemaVersion", values: void} | {tag: "ActiveRound", values: void} | {tag: "Positions", values: void} | {tag: "UpDownPositions", values: void} | {tag: "PrecisionPositions", values: void} | {tag: "PendingWinnings", values: readonly [string]} | {tag: "UserStats", values: readonly [string]} | {tag: "Paused", values: void} | {tag: "BetWindowLedgers", values: void} | {tag: "RunWindowLedgers", values: void} | {tag: "LastRoundId", values: void} | {tag: "Position", values: readonly [u64, string]} | {tag: "PrecisionPosition", values: readonly [u64, string]} | {tag: "PrecisionCommitment", values: readonly [u64, string]} | {tag: "RoundParticipants", values: readonly [u64]} | {tag: "MaxStake", values: void} | {tag: "MaxUserRoundExposure", values: void} | {tag: "MaxPendingWinnings", values: void} | {tag: "CancelledRound", values: readonly [u64]} | {tag: "ConsumedOracleNonce", values: readonly [u64, u64]} | {tag: "MinParticipants", values: void} | {tag: "OracleHeartbeat", values: void} | {tag: "OracleStaleThreshold", values: void} | {tag: "MaxPrecisionParticipants", values: void} | {tag: "OracleMaxDeviationBps", values: void} | {tag: "OracleDeviationOverrideArmed", values: void} | {tag: "ArchivedRound", values: readonly [u64]} | {tag: "RecentArchivedRoundIds", values: void} | {tag: "PendingConfigChange", values: readonly [ConfigChangeKind]};
+export type DataKey = {tag: "Balance", values: readonly [string]} | {tag: "Admin", values: void} | {tag: "Oracle", values: void} | {tag: "SchemaVersion", values: void} | {tag: "ActiveRound", values: void} | {tag: "Positions", values: void} | {tag: "UpDownPositions", values: void} | {tag: "PrecisionPositions", values: void} | {tag: "PendingWinnings", values: readonly [string]} | {tag: "UserStats", values: readonly [string]} | {tag: "Paused", values: void} | {tag: "BetWindowLedgers", values: void} | {tag: "RunWindowLedgers", values: void} | {tag: "LastRoundId", values: void} | {tag: "Position", values: readonly [u64, string]} | {tag: "PrecisionPosition", values: readonly [u64, string]} | {tag: "PrecisionCommitment", values: readonly [u64, string]} | {tag: "RoundParticipants", values: readonly [u64]} | {tag: "MaxStake", values: void} | {tag: "MaxUserRoundExposure", values: void} | {tag: "MaxPendingWinnings", values: void} | {tag: "CancelledRound", values: readonly [u64]} | {tag: "ConsumedOracleNonce", values: readonly [u64, u64]} | {tag: "MinParticipants", values: void} | {tag: "OracleHeartbeat", values: void} | {tag: "OracleStaleThreshold", values: void} | {tag: "MaxPrecisionParticipants", values: void} | {tag: "OracleMaxDeviationBps", values: void} | {tag: "OracleDeviationOverrideArmed", values: void} | {tag: "ArchivedRound", values: readonly [u64]} | {tag: "RecentArchivedRoundIds", values: void} | {tag: "MinBet", values: void} | {tag: "PendingConfigChange", values: readonly [ConfigChangeKind]};
 
 /**
  * Round mode for prediction type
@@ -1017,6 +1017,19 @@ export interface Client {
   get_archive_retention: (options?: MethodOptions) => Promise<AssembledTransaction<u32>>
   set_close_buffer_ledgers: ({buffer_ledgers}: {buffer_ledgers: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
   get_close_buffer_ledgers: (options?: MethodOptions) => Promise<AssembledTransaction<u32>>
+
+  /**
+   * Construct and simulate a set_min_bet transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Sets the minimum bet amount (admin only). Pass `None` to disable the floor.
+   */
+  set_min_bet: ({min_bet}: {min_bet: Option<i128>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a get_min_bet transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Returns the configured minimum bet amount, if set.
+   */
+  get_min_bet: (options?: MethodOptions) => Promise<AssembledTransaction<Option<i128>>>
+
   get_round_pool_stats: (options?: MethodOptions) => Promise<AssembledTransaction<Option<RoundPoolStats>>>
   get_user_archived_participation: ({user, round_id}: {user: string, round_id: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Option<UserRoundOutcome>>>
 
@@ -1116,7 +1129,9 @@ export class Client extends ContractClient {
         "AAAAAAAAAEpSZXR1cm5zIHRoZSBjb25maWd1cmVkIFByZWNpc2lvbiBwYXJ0aWNpcGFudCBjYXAsIG9yIHRoZSBkZWZhdWx0IGlmIHVuc2V0LgAAAAAAHmdldF9tYXhfcHJlY2lzaW9uX3BhcnRpY2lwYW50cwAAAAAAAAAAAAEAAAAE",
         "AAAAAAAAAyVSZXR1cm5zIGEgZGV0ZXJtaW5pc3RpYyBzbGljZSBvZiBQcmVjaXNpb24tbW9kZSBwcmVkaWN0aW9ucyBmb3IgdGhlCmFjdGl2ZSByb3VuZCwgb3JkZXJlZCBieSBhc2NlbmRpbmcgcGFydGljaXBhbnQgYWRkcmVzcyAodGhlIHNhbWUKY2Fub25pY2FsIG9yZGVyIHVzZWQgaW50ZXJuYWxseSBmb3IgcGF5b3V0LXJlbWFpbmRlciBhc3NpZ25tZW50KS4KCmBvZmZzZXRgIGlzIHRoZSB6ZXJvLWJhc2VkIGluZGV4IGludG8gdGhlIG9yZGVyZWQgcGFydGljaXBhbnQgbGlzdC4KYGxpbWl0YCBpcyB0aGUgbWF4aW11bSBudW1iZXIgb2YgZW50cmllcyB0byByZXR1cm4gYW5kIGlzIGNhcHBlZCBhdApgTUFYX1BBR0VfU0laRWAgdG8gYm91bmQgZ2FzL3JlYWQgY29zdHMgcmVnYXJkbGVzcyBvZiBjYWxsZXIgaW5wdXQuCgpSZXR1cm5zIGFuIGVtcHR5IGBWZWNgIGlmIHRoZXJlIGlzIG5vIGFjdGl2ZSByb3VuZCwgaWYgYG9mZnNldGAgaXMKYmV5b25kIHRoZSBudW1iZXIgb2YgYXZhaWxhYmxlIGVudHJpZXMsIG9yIGlmIGBsaW1pdGAgaXMgemVybyDigJQgdGhpcwppcyBub3QgYW4gZXJyb3IgY29uZGl0aW9uLCBtYXRjaGluZyBzdGFuZGFyZCBwYWdpbmF0aW9uIHNlbWFudGljcwooYXNraW5nIHBhc3QgdGhlIGVuZCBvZiBhIGxpc3QgeWllbGRzIGFuIGVtcHR5IHBhZ2UsIG5vdCBhIGZhdWx0KS4KClRoaXMgZG9lcyBub3QgcmVwbGFjZSBbYFNlbGY6OmdldF9wcmVjaXNpb25fcHJlZGljdGlvbnNgXSwgd2hpY2gKcmVtYWlucyBhdmFpbGFibGUgdW5jaGFuZ2VkIGZvciBmdWxsLXNldCByZWFkcyBvbiBzbWFsbCByb3VuZHMuAAAAAAAAHmdldF9wcmVjaXNpb25fcHJlZGljdGlvbnNfcGFnZQAAAAAAAgAAAAAAAAAGb2Zmc2V0AAAAAAAEAAAAAAAAAAVsaW1pdAAAAAAAAAQAAAABAAAD6gAAB9AAAAATUHJlY2lzaW9uUHJlZGljdGlvbgA=",
         "AAAAAAAAALBTZXRzIHRoZSBtYXhpbXVtIHBhcnRpY2lwYW50IGNvdW50IGZvciBQcmVjaXNpb24gcm91bmRzIChhZG1pbiBvbmx5KS4KVGhlIHZhbHVlIG11c3QgYmUgaW4gdGhlIHJhbmdlIDEuLj0xMF8wMDAuIFVuc2V0IGNvbnRyYWN0cyB1c2UgdGhlCnByb3RvY29sIGRlZmF1bHQgb2YgMV8wMDAgcGFydGljaXBhbnRzLgAAAB5zZXRfbWF4X3ByZWNpc2lvbl9wYXJ0aWNpcGFudHMAAAAAAAEAAAAAAAAAA21heAAAAAAEAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAANQ29udHJhY3RFcnJvcgAAAA==",
-        "AAAAAAAAAElTY2hlZHVsZXMgYSB0aW1lbG9ja2VkIHVwZGF0ZSB0byB0aGUgb3JhY2xlIHN0YWxlIHRocmVzaG9sZCAoYWRtaW4gb25seSkuAAAAAAAAH3NjaGVkdWxlX29yYWNsZV9zdGFsZV90aHJlc2hvbGQAAAAAAQAAAAAAAAAHc2Vjb25kcwAAAAAGAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAANQ29udHJhY3RFcnJvcgAAAA==" ]),
+        "AAAAAAAAAElTY2hlZHVsZXMgYSB0aW1lbG9ja2VkIHVwZGF0ZSB0byB0aGUgb3JhY2xlIHN0YWxlIHRocmVzaG9sZCAoYWRtaW4gb25seSkuAAAAAAAAH3NjaGVkdWxlX29yYWNsZV9zdGFsZV90aHJlc2hvbGQAAAAAAQAAAAAAAAAHc2Vjb25kcwAAAAAGAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAANQ29udHJhY3RFcnJvcgAAAA==",
+        "AAAAAAAAAElTZXRzIHRoZSBtaW5pbXVtIGJldCBhbW91bnQgKGFkbWluIG9ubHkpLiBQYXNzIE5vbmUgdG8gZGlzYWJsZSB0aGUgZmxvb3IuAAAAAAAAC3NldF9taW5fYmV0AAAAAAEAAAAAAAAAB21pbl9iZXQAAAAD6AAAAAsAAAABAAAD6QAAAAIAAAAD",
+        "AAAAAAAAADJSZXR1cm5zIHRoZSBjb25maWd1cmVkIG1pbmltdW0gYmV0IGFtb3VudCwgaWYgc2V0LgAAAAAAC2dldF9taW5fYmV0AAAAAAAAAAABAAAD6AAAAAs=" ]),
       options
     )
   }
@@ -1207,6 +1222,8 @@ export class Client extends ContractClient {
         get_archive_retention: this.txFromJSON<u32>,
         set_close_buffer_ledgers: this.txFromJSON<Result<void>>,
         get_close_buffer_ledgers: this.txFromJSON<u32>,
+        set_min_bet: this.txFromJSON<Result<void>>,
+        get_min_bet: this.txFromJSON<Option<i128>>,
         get_round_pool_stats: this.txFromJSON<Option<RoundPoolStats>>,
         get_user_archived_participation: this.txFromJSON<Option<UserRoundOutcome>>
   }

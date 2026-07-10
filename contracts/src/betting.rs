@@ -261,11 +261,7 @@ pub fn place_precision_prediction(
     }
 
     // Enforce min bet floor (Issue #161)
-    if let Some(min_bet) = env
-        .storage()
-        .persistent()
-        .get::<_, i128>(&DataKey::MinBet)
-    {
+    if let Some(min_bet) = env.storage().persistent().get::<_, i128>(&DataKey::MinBet) {
         if amount < min_bet {
             return Err(ContractError::InvalidBetAmount);
         }
@@ -394,11 +390,7 @@ pub fn commit_prediction(
     }
 
     // Enforce min bet floor (Issue #161)
-    if let Some(min_bet) = env
-        .storage()
-        .persistent()
-        .get::<_, i128>(&DataKey::MinBet)
-    {
+    if let Some(min_bet) = env.storage().persistent().get::<_, i128>(&DataKey::MinBet) {
         if amount < min_bet {
             return Err(ContractError::InvalidBetAmount);
         }
