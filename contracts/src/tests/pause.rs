@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Tests for emergency pause and recovery controls.
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
@@ -99,6 +100,7 @@ fn test_mutations_fail_while_paused() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
     assert_eq!(resolve_result, Err(Ok(ContractError::ContractPaused)));
 
@@ -107,7 +109,73 @@ fn test_mutations_fail_while_paused() {
 }
 
 #[test]
-fn test_mint_initial_fails_while_paused() {
+fn test_protocol_health_paused() {
+    let env = Env::default();
+    let (client, _cid, _admin, _oracle) = setup_contract(&env);
+
+    // Not paused → status depends on other state; pause to verify status_code=1
+    client.pause_contract();
+
+    let health = client.get_protocol_health();
+    assert!(health.paused);
+    assert_eq!(health.status_code, 1); // PAUSED
+}
+
+#[test]
+fn test_protocol_health_not_paused_healthy() {
+    let env = Env::default();
+    let (client, _contract_id, _admin, _oracle) = setup_contract(&env);
+    let user = Address::generate(&env);
+
+    // With oracle heartbeat active + no active round → NO_ACTIVE_ROUND
+    env.ledger().with_mut(|li| {
+        li.timestamp = 100;
+    });
+    client.update_oracle_heartbeat(&0u32);
+
+    let health = client.get_protocol_health();
+    assert!(!health.paused);
+    assert!(health.oracle_live);
+    assert!(!health.has_active_round);
+    assert_eq!(health.status_code, 4); // NO_ACTIVE_ROUND
+
+    // Create round → should become HEALTHY (betting phase)
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &None);
+
+    let health = client.get_protocol_health();
+    assert!(!health.paused);
+    assert!(health.oracle_live);
+    assert!(health.has_active_round);
+    assert_eq!(health.active_round_phase, 1); // betting
+    assert_eq!(health.status_code, 0); // HEALTHY
+}
+
+#[test]
+fn test_protocol_health_oracle_stale() {
+    let env = Env::default();
+    let (client, _cid, _admin, _oracle) = setup_contract(&env);
+
+    // Heartbeat at t=0
+    env.ledger().with_mut(|li| {
+        li.timestamp = 0;
+    });
+    client.update_oracle_heartbeat(&0u32);
+
+    // Advance past threshold
+    env.ledger().with_mut(|li| {
+        li.timestamp = 4000;
+    });
+
+    let health = client.get_protocol_health();
+    assert!(!health.paused);
+    assert!(!health.oracle_live);
+    assert_eq!(health.oracle_status, 0); // stored as active, but stale
+    assert_eq!(health.status_code, 2); // ORACLE_STALE
+}
+
+#[test]
+fn test_protocol_health_mint_initial_fails_while_paused() {
     let env = Env::default();
     let (client, _cid, _admin, _oracle) = setup_contract(&env);
     let user = Address::generate(&env);

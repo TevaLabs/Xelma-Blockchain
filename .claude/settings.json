@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"exit: $?\")",
+      "Bash(cargo build *)",
+      "Bash(rustup toolchain *)",
+      "Bash(rustc --version)",
+      "Bash(rustup update *)",
+      "Bash(awk '/fn _extend_persistent_ttl/,/impl VirtualTokenContract/')",
+      "Bash(awk '{n=gsub\\(/{/,\"{\"\\); m=gsub\\(/}/,\"}\"\\); bal+=n-m} END{print \"brace balance \\(0=ok\\):\", bal}' contracts/src/contract.rs)"
+    ]
+  }
+}

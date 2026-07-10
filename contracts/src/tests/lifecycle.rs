@@ -1,8 +1,9 @@
+// SPDX-License-Identifier: MIT
 //! Tests for round creation and full round lifecycle scenarios.
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKey, OraclePayload, Round};
+use crate::types::{BetSide, DataKey, OraclePayload, Round, RoundArchiveStatus, RoundMode};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -190,6 +191,7 @@ fn test_full_round_lifecycle() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     // Round should be cleared
@@ -275,6 +277,7 @@ fn test_multiple_rounds_lifecycle() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
     client.claim_winnings(&alice);
 
@@ -311,6 +314,7 @@ fn test_multiple_rounds_lifecycle() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     let stats = client.get_user_stats(&alice);
@@ -437,6 +441,7 @@ fn test_resolve_round_fails_without_oracle_auth() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
     assert!(result.is_err());
 }
@@ -521,6 +526,7 @@ fn test_round_created_event_includes_mode() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     client.create_round(&1_0000000, &Some(1));
@@ -718,7 +724,7 @@ fn test_cancel_round_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("cancelled"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("cancel"))
     });
     assert!(
         cancel_event.is_some(),
@@ -782,4 +788,189 @@ fn test_cancel_round_full_refund_equals_pool() {
         total_refunded, total_pool,
         "Total refunds must equal total pool"
     );
+}
+
+#[test]
+fn test_cross_round_mode_alternation() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    // ────────── ROUND 1: Up/Down mode ──────────
+    client.create_round(&1_0000000, &Some(0));
+    let round1 = client.get_active_round().unwrap();
+    assert_eq!(round1.round_id, 1);
+    assert_eq!(round1.mode, RoundMode::UpDown);
+
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &50_0000000, &BetSide::Down);
+
+    // No Precision keys should exist for this round
+    env.as_contract(&contract_id, || {
+        let key = DataKey::PrecisionPosition(round1.round_id, alice.clone());
+        assert!(!env.storage().persistent().has(&key));
+    });
+
+    // Resolve — UP wins (price 1.5 > 1.0)
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round1.end_ledger;
+    });
+    client.resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round1.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+    });
+
+    assert_eq!(client.get_active_round(), None);
+
+    // Verify Up/Down position keys cleared after resolve
+    env.as_contract(&contract_id, || {
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKey::Position(round1.round_id, alice.clone())));
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKey::Position(round1.round_id, bob.clone())));
+    });
+
+    // Verify archived summary for round 1
+    let a1 = client.get_archived_round(&round1.round_id).unwrap();
+    assert_eq!(a1.mode, RoundMode::UpDown);
+    assert_eq!(a1.status, RoundArchiveStatus::Resolved);
+    assert_eq!(a1.round_id, 1);
+
+    // Claim winnings: Alice 100 + (100/100)*50 = 150, Bob loses 50
+    assert_eq!(client.claim_winnings(&alice), 150_0000000);
+    assert_eq!(client.claim_winnings(&bob), 0);
+
+    // ────────── ROUND 2: Precision mode ──────────
+    client.create_round(&2_0000000, &Some(1));
+    let round2 = client.get_active_round().unwrap();
+    assert_eq!(round2.round_id, 2);
+    assert_eq!(round2.mode, RoundMode::Precision);
+
+    client.place_precision_prediction(&alice, &100_0000000, &2297);
+    client.place_precision_prediction(&bob, &150_0000000, &2300);
+
+    // No Up/Down position keys should exist for round 2
+    env.as_contract(&contract_id, || {
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKey::Position(round2.round_id, alice.clone())));
+    });
+
+    // Resolve at 2298 — Alice closest (diff 1) wins entire pot
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round2.end_ledger;
+    });
+    client.resolve_round(&OraclePayload {
+        price: 2298,
+        timestamp: env.ledger().timestamp(),
+        round_id: round2.start_ledger,
+        nonce: 2u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+    });
+
+    assert_eq!(client.get_active_round(), None);
+
+    // Verify Precision position keys cleared after resolve
+    env.as_contract(&contract_id, || {
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKey::PrecisionPosition(round2.round_id, alice.clone())));
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKey::PrecisionPosition(round2.round_id, bob.clone())));
+    });
+
+    // Verify archived summary for round 2
+    let a2 = client.get_archived_round(&round2.round_id).unwrap();
+    assert_eq!(a2.mode, RoundMode::Precision);
+    assert_eq!(a2.round_id, 2);
+
+    // Claim: Alice wins full pot (100 + 150 = 250)
+    assert_eq!(client.claim_winnings(&alice), 250_0000000);
+    assert_eq!(client.claim_winnings(&bob), 0);
+
+    // ────────── ROUND 3: Up/Down mode again ──────────
+    client.create_round(&3_0000000, &Some(0));
+    let round3 = client.get_active_round().unwrap();
+    assert_eq!(round3.round_id, 3);
+    assert_eq!(round3.mode, RoundMode::UpDown);
+
+    client.place_bet(&alice, &200_0000000, &BetSide::Down);
+    client.place_bet(&bob, &100_0000000, &BetSide::Up);
+
+    // No stale Precision keys from round 2 should remain
+    env.as_contract(&contract_id, || {
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKey::PrecisionPosition(round2.round_id, bob.clone())));
+    });
+
+    // Resolve — DOWN wins (price 2.5 < 3.0)
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round3.end_ledger;
+    });
+    client.resolve_round(&OraclePayload {
+        price: 2_5000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round3.start_ledger,
+        nonce: 3u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+    });
+
+    assert_eq!(client.get_active_round(), None);
+
+    // Verify Up/Down position keys cleared for round 3
+    env.as_contract(&contract_id, || {
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKey::Position(round3.round_id, alice.clone())));
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKey::Position(round3.round_id, bob.clone())));
+    });
+
+    // Verify archived summary for round 3
+    let a3 = client.get_archived_round(&round3.round_id).unwrap();
+    assert_eq!(a3.mode, RoundMode::UpDown);
+    assert_eq!(a3.status, RoundArchiveStatus::Resolved);
+    assert_eq!(a3.round_id, 3);
+
+    // Claim: Alice 200 + (200/200)*100 = 300, Bob loses 100
+    assert_eq!(client.claim_winnings(&alice), 300_0000000);
+    assert_eq!(client.claim_winnings(&bob), 0);
+
+    // Final balance verification
+    // Alice: 1000 - 100(R1) + 150 - 100(R2) + 250 - 200(R3) + 300 = 1300
+    assert_eq!(client.balance(&alice), 1300_0000000);
+    // Bob:   1000 - 50(R1) + 0 - 150(R2) + 0 - 100(R3) + 0 = 700
+    assert_eq!(client.balance(&bob), 700_0000000);
 }

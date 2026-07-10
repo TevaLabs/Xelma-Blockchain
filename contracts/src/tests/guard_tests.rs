@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Tests for the single-active-round invariant guard (assert_no_active_round).
 //!
 //! Success path: no active round → create_round proceeds, storage updated.
@@ -71,6 +72,7 @@ fn test_guard_passes_after_round_resolved() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     assert!(client.get_active_round().is_none());

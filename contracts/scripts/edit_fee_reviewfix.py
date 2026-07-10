@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Address material reviewer findings for Issue #162:
 
   1. Reorder `test_protocol_fee_schedule_validation_rejects_zero_and_over_cap`

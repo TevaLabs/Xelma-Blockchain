@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Tests for storage TTL rent policy enforcement (Issue #142).
 
 use super::config_helpers::apply_max_stake;

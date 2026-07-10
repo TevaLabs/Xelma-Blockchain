@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
 use soroban_sdk::{contracttype, Address, BytesN};
@@ -9,6 +10,31 @@ use soroban_sdk::{contracttype, Address, BytesN};
 pub enum RoundMode {
     UpDown = 0,    // Simple up/down predictions
     Precision = 1, // Exact price predictions (Legends mode)
+}
+
+/// Runtime mode for the contract lifecycle
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum RuntimeMode {
+    Normal = 0,
+    ClaimsOnly = 1,
+    FullyPaused = 2,
+}
+
+/// Lifecycle phase of an active round, derived from ledger windows.
+///
+/// Semantics (given `start_ledger`, `bet_end_ledger`, `end_ledger`):
+/// - `Betting`: `ledger < bet_end_ledger` — bets and precision predictions accepted
+/// - `Running`: `bet_end_ledger ≤ ledger < end_ledger` — reveal window (precision)
+/// - `Resolvable`: `ledger ≥ end_ledger` — round may be settled via oracle payload
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+#[repr(u32)]
+pub enum RoundPhase {
+    Betting = 1,
+    Running = 2,
+    Resolvable = 3,
 }
 
 /// Storage keys for contract data
@@ -43,6 +69,7 @@ pub enum DataKey {
     Paused,
     BetWindowLedgers,
     RunWindowLedgers,
+    CloseBufferLedgers,
     LastRoundId,
     /// Per-user UpDown position: (round_id, address) → UserPosition
     Position(u64, Address),
@@ -71,21 +98,26 @@ pub enum DataKey {
     OracleStaleThreshold,
     /// Maximum participants accepted in a Precision round; unset = protocol default
     MaxPrecisionParticipants,
-    /// Minimum bet/prediction amount (inclusive lower bound).
-    /// If unset, the min-bet floor is disabled and any positive bet is accepted.
-    /// Uses for both `place_bet` (UpDown mode) and `place_precision_prediction`
-    /// / `commit_prediction` (Precision mode).
-    MinBet,
     /// Oracle max deviation threshold in basis points (1 bp = 0.01%).
     /// If unset, deviation guardrails are disabled.
     OracleMaxDeviationBps,
     /// One-shot admin override allowing the next settlement to bypass deviation checks.
     /// Automatically cleared after use.
     OracleDeviationOverrideArmed,
+    /// Minimum oracle confidence threshold in basis points (0–10000).
+    /// If unset, confidence guardrails are disabled.
+    OracleMinConfidenceBps,
+    /// When true, payloads with missing confidence are rejected in strict mode.
+    OracleStrictMode,
     /// Compact post-settlement summary keyed by round id for historical queries.
     ArchivedRound(u64),
     /// Ordered round ids for archive retention (oldest at index 0).
     RecentArchivedRoundIds,
+    /// Per-user outcome record for a specific archived round (round_id, user).
+    /// Persisted at settlement for user history queries without event replay.
+    UserRoundOutcome(u64, Address),
+    /// Marker written by migrate_schema_v2_to_v3 to prove the migration ran.
+    MigratedToV3,
     /// Timelocked pending critical config change keyed by change kind.
     PendingConfigChange(ConfigChangeKind),
     /// Optional protocol settlement fee in basis points (1 bp = 0.01%).
@@ -96,6 +128,16 @@ pub enum DataKey {
     /// Admin withdraws via the dedicated withdrawal method; does NOT mix
     /// into the per-user balance ledger.
     ProtocolFeeTreasury,
+    /// Per-ledger mint counter: wraps the explicit ledger sequence number.
+    LedgerMintCounter(u32),
+    /// Mint limit configuration: maximum number of mints allowed per ledger.
+    MintLimitConfig,
+    /// Pending two-step oracle rotation proposal with expiry.
+    OracleRotationProposal,
+    /// Configurable archive retention limit: maximum number of ArchivedRound entries
+    /// retained on-chain before the oldest are pruned (FIFO). If unset, the protocol
+    /// default is used.
+    ArchiveRetention,
 }
 
 /// Identifies which critical risk setting is pending timelocked activation.
@@ -112,6 +154,11 @@ pub enum ConfigChangeKind {
     /// Optional protocol settlement fee in bps (Issue #162).
     /// `None` disables the fee entirely, restoring pre-fee behaviour.
     ProtocolFeeBps = 6,
+    MinParticipants = 7,
+    MaxPrecisionParticipants = 8,
+    MintLimit = 9,
+    ArchiveRetention = 10,
+    CloseBufferLedgers = 11,
 }
 
 /// Payload for a scheduled critical config change.
@@ -125,6 +172,11 @@ pub enum ConfigChangePayload {
     OracleStaleThreshold(u64),
     OracleMaxDeviationBps(Option<u32>),
     ProtocolFeeBps(Option<u32>),
+    MinParticipants(Option<u32>),
+    MaxPrecisionParticipants(u32),
+    MintLimit(u32),
+    ArchiveRetention(u32),
+    CloseBufferLedgers(u32),
 }
 
 /// Pending timelocked config change with activation ledger for on-chain observability.
@@ -198,6 +250,10 @@ pub struct OraclePayload {
     /// Contract address this payload is intended for.
     /// Validated against `env.current_contract_address()` to prevent cross-contract replay.
     pub contract_addr: Address,
+    /// Optional confidence score from the price feed (0–10000 bps, where 10000 = 100%).
+    /// When `None`, the payload is treated as a legacy submission.
+    /// When strict mode is enabled, `None` is rejected.
+    pub confidence: Option<u32>,
 }
 
 /// Oracle liveness record, updated by the oracle service on each heartbeat call.
@@ -222,6 +278,30 @@ pub struct Round {
     pub mode: RoundMode,     // Round mode: UpDown (0) or Precision (1)
 }
 
+/// Aggregated active-round pool composition for frontend transparency.
+///
+/// Up/Down rounds populate the up/down pools, counts, and stake ratios.
+/// Precision rounds populate the precision totals and participant counters while
+/// leaving side-specific Up/Down fields at zero. Ratios are basis points of
+/// the mode's total visible stake (10_000 = 100%).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoundPoolStats {
+    pub round_id: u64,
+    pub mode: RoundMode,
+    pub total_up_stake: i128,
+    pub total_down_stake: i128,
+    pub up_participant_count: u32,
+    pub down_participant_count: u32,
+    pub up_stake_ratio_bps: u32,
+    pub down_stake_ratio_bps: u32,
+    pub precision_total_stake: i128,
+    pub precision_participant_count: u32,
+    pub precision_prediction_count: u32,
+    pub precision_commitment_count: u32,
+    pub precision_revealed_count: u32,
+}
+
 /// Terminal outcome recorded when a round leaves the active state.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -233,6 +313,62 @@ pub enum RoundArchiveStatus {
     Cancelled = 1,
     /// Settlement aborted due to insufficient participants; stakes refunded.
     FallbackRefund = 2,
+}
+
+/// Composite protocol health status returned by `get_protocol_health`.
+///
+/// Designed for operators to poll a single endpoint instead of stitching
+/// together multiple read-only calls.
+///
+/// ## Status code → alert severity mapping
+///
+/// | code | label           | severity | meaning                                   |
+/// |------|-----------------|----------|-------------------------------------------|
+/// | 0    | HEALTHY         | none     | All subsystems nominal                    |
+/// | 1    | PAUSED          | critical | Contract is emergency-paused               |
+/// | 2    | ORACLE_STALE    | warning  | Oracle heartbeat is stale or offline      |
+/// | 3    | ROUND_STALE     | warning  | Round is past its end ledger but unresolved|
+/// | 4    | NO_ACTIVE_ROUND | info     | No round currently active (idle protocol) |
+/// | 5    | MULTIPLE_ISSUES | critical | Two or more issues detected simultaneously|
+///
+/// ## Phase codes (`active_round_phase`)
+///
+/// | phase | meaning                                           |
+/// |-------|---------------------------------------------------|
+/// | 0     | No active round                                   |
+/// | 1     | Betting open (`ledger < bet_end_ledger`)           |
+/// | 2     | Running / reveal window (`bet_end_ledger ≤ ledger < end_ledger`) |
+/// | 3     | Resolvable (`ledger ≥ end_ledger`)                |
+///
+/// ## Oracle status codes (`oracle_status`)
+///
+/// | code | meaning                                |
+/// |------|----------------------------------------|
+/// | 0    | Active (healthy heartbeat)             |
+/// | 1    | Degraded (heartbeat marked degraded)   |
+/// | 2    | Offline (heartbeat marked offline)     |
+/// | 3    | Unknown (no heartbeat record stored)   |
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProtocolHealthStatus {
+    /// Whether the contract is emergency-paused (`Paused == true`)
+    pub paused: bool,
+    /// Whether the oracle heartbeat is non-stale and not offline
+    pub oracle_live: bool,
+    /// Raw oracle heartbeat status (0=active, 1=degraded, 2=offline, 3=unknown)
+    pub oracle_status: u32,
+    /// Whether a round is currently active
+    pub has_active_round: bool,
+    /// Current round phase (0=no_round, 1=betting, 2=running, 3=resolvable)
+    pub active_round_phase: u32,
+    /// On-chain storage schema version
+    pub schema_version: u32,
+    /// Ledger sequence at which this health snapshot was taken
+    pub ledger_sequence: u32,
+    /// Ledger timestamp at which this health snapshot was taken
+    pub ledger_timestamp: u64,
+    /// Composite status code (see mapping table above)
+    pub status_code: u32,
 }
 
 /// Compact historical round summary persisted after resolve or cancel.
@@ -251,4 +387,121 @@ pub struct ArchivedRoundSummary {
     pub pool_down: i128,
     pub participant_count: u32,
     pub settled_at_ledger: u32,
+}
+
+/// Pending two-step oracle rotation proposal.
+///
+/// The admin proposes a new oracle address with a timestamp-based expiry window.
+/// After `expires_at` (ledger timestamp) the proposal is stale and acceptance
+/// is rejected until the admin submits a fresh proposal.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct OracleRotationProposal {
+    pub new_oracle: Address,
+    pub proposed_at: u64,
+    pub expires_at: u64,
+}
+
+/// Global status of the protocol, returned by `get_protocol_status`.
+///
+/// Designed for frontend state machines that need a single, stable code
+/// instead of combining multiple boolean flags.
+///
+/// ## Status codes
+///
+/// | value | variant      | description                                                             |
+/// |-------|--------------|-------------------------------------------------------------------------|
+/// | 0     | `Active`     | Not paused; a round is currently active (bets open or running).          |
+/// | 1     | `Paused`     | Emergency-paused by the admin; no mutations accepted except unpause.     |
+/// | 2     | `ClaimsOnly` | Not paused; no active round. Only `claim_winnings` is meaningful.        |
+///
+/// ## Transition rules
+///
+/// - `ClaimsOnly` → `Active` when `create_round()` succeeds.
+/// - `Active` → `ClaimsOnly` when `resolve_round()` or `cancel_round()` completes.
+/// - Any state → `Paused` when `pause_contract()` is called.
+/// - `Paused` → `Active` when `unpause_contract()` is called *and* an active round still exists.
+/// - `Paused` → `ClaimsOnly` when `unpause_contract()` is called *and* no active round exists.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+#[repr(u32)]
+pub enum ProtocolStatus {
+    /// The contract is not paused and has a currently active round.
+    Active = 0,
+    /// The contract is emergency-paused by the admin.
+    Paused = 1,
+    /// The contract is not paused, but no round is active.
+    /// Mutating actions are limited to claiming pending winnings.
+    ClaimsOnly = 2,
+}
+
+/// Status of a specific round, returned by `get_round_status(round_id)`.
+///
+/// Queries a round by its monotonic `round_id`. Covers all lifecycle
+/// stages from creation through terminal settlement.
+///
+/// ## Status codes
+///
+/// | value | variant          | description                                                                      |
+/// |-------|------------------|-----------------------------------------------------------------------------------|
+/// | 0     | `Unknown`        | Round does not exist or has been pruned from the on-chain archive.               |
+/// | 1     | `Betting`        | Round is active; bets and predictions accepted (`ledger < bet_end_ledger`).      |
+/// | 2     | `Running`        | Betting closed; reveal window open (`bet_end_ledger ≤ ledger < end_ledger`).    |
+/// | 3     | `AwaitingResolve`| Round ended; awaiting oracle settlement (`ledger ≥ end_ledger`).                |
+/// | 4     | `Resolved`       | Oracle settled the round; pot distributed to winners.                            |
+/// | 5     | `Cancelled`      | Admin cancelled the round; all stakes refunded.                                  |
+/// | 6     | `FallbackRefund` | Insufficient participants at settlement; all stakes refunded.                    |
+///
+/// ## Transition rules
+///
+/// - `Unknown` → `Betting` when `create_round()` succeeds.
+/// - `Betting` → `Running` when `ledger ≥ bet_end_ledger` (derived; no on-chain write).
+/// - `Running` → `AwaitingResolve` when `ledger ≥ end_ledger` (derived; no on-chain write).
+/// - `{Betting | Running | AwaitingResolve}` → `Cancelled` when `cancel_round()` is called.
+/// - `AwaitingResolve` → `Resolved` when `resolve_round()` settles with enough participants.
+/// - `AwaitingResolve` → `FallbackRefund` when `resolve_round()` finds fewer than `min_participants`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+#[repr(u32)]
+pub enum RoundStatus {
+    /// Round does not exist or has been pruned from the on-chain archive.
+    Unknown = 0,
+    /// Round is active; bets and predictions accepted (`ledger < bet_end_ledger`).
+    Betting = 1,
+    /// Betting is closed; reveal window is open (`bet_end_ledger ≤ ledger < end_ledger`).
+    Running = 2,
+    /// Round has ended and is waiting for oracle settlement (`ledger ≥ end_ledger`).
+    AwaitingResolve = 3,
+    /// Oracle settled the round normally; pot distributed to winners.
+    Resolved = 4,
+    /// Admin cancelled the round; all stakes refunded.
+    Cancelled = 5,
+    /// Settlement triggered but insufficient participants; all stakes refunded.
+    FallbackRefund = 6,
+}
+
+/// Terminal outcome persisted per user per archived round.
+///
+/// Allows `get_user_archived_participation` to answer profile/history
+/// queries without replaying the full event stream.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+#[repr(u32)]
+pub enum UserOutcomeType {
+    Win = 0,
+    Loss = 1,
+    Refund = 2,
+    Cancel = 3,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserRoundOutcome {
+    pub user: Address,
+    pub round_mode: u32,
+    pub prediction_side: u32,
+    pub predicted_price: u128,
+    pub stake: i128,
+    pub payout: i128,
+    pub outcome: UserOutcomeType,
 }

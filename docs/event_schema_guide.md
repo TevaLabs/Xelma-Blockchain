@@ -76,6 +76,19 @@ Emitted when a new user claims their one-time initial allocation.
 * **Topics:** `("mint", "initial")`
 * **Payload:** `(user: Address, amount: i128)`
 
+### 11. Forensic Round Summary
+Emitted when a round is resolved, cancelled, or refunded. Contains compact settlement data.
+* **Topics:** `("round", "summary")`
+* **Payload:** `(round_id: u64, mode: u32, price_start: u128, price_final: u128, participant_count: u32, total_pot: i128, status: u32)`
+  * `mode`: `0` for `UpDown`, `1` for `Precision`
+  * `status`: `0` for `Resolved`, `1` for `Cancelled`, `2` for `FallbackRefund`
+
+### 12. Runtime Mode Transition
+Emitted when the contract's emergency runtime mode is changed by the admin.
+* **Topics:** `("mode", "transition")`
+* **Payload:** `(old_mode: u32, new_mode: u32)`
+  * `mode`: `0` for `Normal`, `1` for `ClaimsOnly`, `2` for `FullyPaused`
+
 ## Section: Protocol fee events (Issue #162)
 
 The optional protocol fee introduces a new top-level event namespace

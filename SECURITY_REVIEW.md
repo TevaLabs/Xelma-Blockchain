@@ -172,9 +172,22 @@ Important caveat: `bindings/src/parity.js` validates public method parity, not e
 
 ## Deployment Recommendation
 
-Proceed with testnet/integration usage after assigning owners for the open items. Do not treat the current state as mainnet-ready until:
+Proceed with testnet/integration usage after assigning owners for the open items. Do not treat the state as mainnet-ready until:
 
 1. SR-2026-04-001 is closed.
 2. Oracle operations and pause response are documented.
 3. Maintainers decide whether to fix or explicitly accept SR-2026-04-002.
 4. An external audit is completed for any production-value deployment.
+
+## Pre-Merge Security Review Checklist
+
+To maintain code security and guard against regressions in payout logic, access control, and oracle validation paths, every pull request affecting the smart contracts must pass the [Pre-Merge Security Checklist](.github/PULL_REQUEST_TEMPLATE.md). 
+
+This checklist enforces verification across five critical contract risk categories:
+1. **Authentication & Access Control** (proper `require_auth()` gating)
+2. **Safe Arithmetic & Overflow Protection** (use of checked math and specialized safe helpers)
+3. **Lifecycle & State Transitions** (runtime mode validation, invariants)
+4. **Event Emission & Observability** (forensic round summaries, canonical events)
+5. **Tests & Verification** (coverage of successful and failing paths)
+
+Additionally, any PR modifying critical paths (e.g. payout, resolution, or claim methods) requires an explicit note and description of mitigations for any potential new failure modes.

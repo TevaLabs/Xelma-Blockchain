@@ -1,9 +1,10 @@
+// SPDX-License-Identifier: MIT
 //! Tests for configurable betting and execution windows.
 
 use super::config_helpers::apply_windows;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, OraclePayload};
+use crate::types::{BetSide, OraclePayload, RoundPhase};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, Env, IntoVal,
@@ -182,6 +183,59 @@ fn test_set_windows_does_not_mutate_state_on_validation_failure() {
 }
 
 #[test]
+fn test_set_close_buffer_ledgers_rejects_out_of_range() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    let result = client.try_set_close_buffer_ledgers(&(MAX_BET_WINDOW_LEDGERS + 1));
+    assert_eq!(result, Err(Ok(ContractError::WindowOutOfRange)));
+}
+
+#[test]
+fn test_close_buffer_rejects_bets_in_final_window() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 0;
+    });
+
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user_a);
+    client.mint_initial(&user_b);
+
+    apply_windows(&env, &client, 6, 12);
+    client.set_close_buffer_ledgers(&2);
+    client.create_round(&1_0000000, &None);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 3;
+    });
+    client.place_bet(&user_a, &50_0000000, &BetSide::Up);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 4;
+    });
+    let result = client.try_place_bet(&user_b, &50_0000000, &BetSide::Down);
+    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+}
+
+#[test]
 fn test_create_round_uses_configured_windows() {
     let env = Env::default();
     env.ledger().with_mut(|li| {
@@ -329,6 +383,7 @@ fn test_resolution_only_allowed_after_run_ledgers() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
     assert_eq!(result, Err(Ok(ContractError::RoundNotEnded)));
 
@@ -345,6 +400,7 @@ fn test_resolution_only_allowed_after_run_ledgers() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     // Round should be cleared
@@ -453,7 +509,7 @@ fn test_create_round_rejects_zero_start_price() {
     client.initialize(&admin, &oracle);
 
     let result = client.try_create_round(&0u128, &None);
-    assert_eq!(result, Err(Ok(ContractError::StartPriceTooLow)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidStartPrice)));
 }
 
 #[test]
@@ -469,7 +525,7 @@ fn test_create_round_rejects_price_above_max() {
 
     // MAX_START_PRICE = 1_000_000_000_000_000_000; one above must fail
     let result = client.try_create_round(&1_000_000_000_000_000_001u128, &None);
-    assert_eq!(result, Err(Ok(ContractError::StartPriceTooHigh)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidStartPrice)));
 }
 
 #[test]
@@ -493,4 +549,78 @@ fn test_create_round_accepts_boundary_prices() {
     // Maximum allowed price
     client.create_round(&1_000_000_000_000_000_000u128, &None);
     assert!(client.get_active_round().is_some());
+}
+
+#[test]
+fn test_get_round_phase_no_active_round() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    let result = client.try_get_round_phase();
+    assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
+}
+
+#[test]
+fn test_get_round_phase_boundary_ledgers() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+    });
+
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    apply_windows(&env, &client, 10, 20);
+    client.create_round(&1_0000000u128, &None);
+
+    // start=100, bet_end=110, end=120
+    env.ledger().with_mut(|li| li.sequence_number = 109);
+    assert_eq!(client.get_round_phase(), RoundPhase::Betting);
+
+    env.ledger().with_mut(|li| li.sequence_number = 110);
+    assert_eq!(client.get_round_phase(), RoundPhase::Running);
+
+    env.ledger().with_mut(|li| li.sequence_number = 119);
+    assert_eq!(client.get_round_phase(), RoundPhase::Running);
+
+    env.ledger().with_mut(|li| li.sequence_number = 120);
+    assert_eq!(client.get_round_phase(), RoundPhase::Resolvable);
+}
+
+#[test]
+fn test_get_round_phase_default_windows() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 50;
+    });
+
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.create_round(&1_0000000u128, &None);
+
+    // default: bet_end=56, end=62
+    env.ledger().with_mut(|li| li.sequence_number = 55);
+    assert_eq!(client.get_round_phase(), RoundPhase::Betting);
+
+    env.ledger().with_mut(|li| li.sequence_number = 56);
+    assert_eq!(client.get_round_phase(), RoundPhase::Running);
+
+    env.ledger().with_mut(|li| li.sequence_number = 62);
+    assert_eq!(client.get_round_phase(), RoundPhase::Resolvable);
 }

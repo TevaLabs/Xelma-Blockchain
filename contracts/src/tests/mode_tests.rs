@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Tests for round mode flag and separate prediction storage.
 
 use super::config_helpers::{apply_max_stake, apply_max_user_exposure, apply_windows};
@@ -453,6 +454,7 @@ fn test_predict_price_valid_scales() {
                 nonce: 1u64,
                 network_id: env.ledger().network_id(),
                 contract_addr: contract_id.clone(),
+                confidence: None,
             });
         }
 
@@ -493,11 +495,11 @@ fn test_predict_price_invalid_scale() {
 
     // Try to predict with price exceeding max scale (> 9999.9999)
     let result = client.try_predict_price(&user, &100_000_000, &100_0000000);
-    assert_eq!(result, Err(Ok(ContractError::InvalidPriceScale)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
 
     // Try with extremely large value
     let result = client.try_predict_price(&user, &999_999_999_999, &100_0000000);
-    assert_eq!(result, Err(Ok(ContractError::InvalidPriceScale)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
 }
 
 #[test]
@@ -625,6 +627,7 @@ fn test_all_events_for_updown_round() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     let events = env.events().all();
@@ -745,6 +748,7 @@ fn test_all_events_for_precision_round() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     let events = env.events().all();
@@ -933,10 +937,7 @@ fn test_custom_precision_participant_cap_boundary_and_over_cap() {
     client.place_precision_prediction(&user2, &100_0000000, &2298u128);
 
     let result = client.try_place_precision_prediction(&user3, &100_0000000, &2299u128);
-    assert_eq!(
-        result,
-        Err(Ok(ContractError::PrecisionParticipantCapExceeded))
-    );
+    assert_eq!(result, Err(Ok(ContractError::PrecisionCapExceeded)));
     assert_eq!(client.balance(&user3), 1000_0000000);
     assert!(client.get_user_precision_prediction(&user3).is_none());
 }
@@ -954,13 +955,10 @@ fn test_set_max_precision_participants_validation() {
     client.initialize(&admin, &oracle);
 
     let zero = client.try_set_max_precision_participants(&0u32);
-    assert_eq!(zero, Err(Ok(ContractError::InvalidPrecisionParticipantCap)));
+    assert_eq!(zero, Err(Ok(ContractError::InvalidPrecisionCap)));
 
     let too_high = client.try_set_max_precision_participants(&10_001u32);
-    assert_eq!(
-        too_high,
-        Err(Ok(ContractError::InvalidPrecisionParticipantCap))
-    );
+    assert_eq!(too_high, Err(Ok(ContractError::InvalidPrecisionCap)));
 
     client.set_max_precision_participants(&3u32);
     assert_eq!(client.get_max_precision_participants(), 3u32);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Overflow boundary tests for payout arithmetic in claim_winnings and helpers.
 //!
 //! Each test targets a specific arithmetic branch:
@@ -44,6 +45,7 @@ fn resolve_updown(
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 }
 
@@ -176,6 +178,7 @@ fn test_record_winnings_mul_overflow_returns_payout_overflow() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     assert_eq!(result, Err(Ok(ContractError::PayoutOverflow)));
@@ -214,6 +217,7 @@ fn test_record_refunds_overflow_returns_payout_overflow() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
 
     assert_eq!(result, Err(Ok(ContractError::PayoutOverflow)));
@@ -272,6 +276,7 @@ fn test_pending_winnings_cap_enforced_on_refund() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
     assert_eq!(result, Err(Ok(ContractError::PendingWinningsCapExceeded)));
 
@@ -309,6 +314,7 @@ fn test_pending_winnings_cap_enforced_on_winnings() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        confidence: None,
     });
     assert_eq!(result, Err(Ok(ContractError::PendingWinningsCapExceeded)));
 }

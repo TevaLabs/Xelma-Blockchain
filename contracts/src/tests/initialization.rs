@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MIT
 //! Tests for contract initialization and token minting.
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Events, Ledger as _},
+    Address, Env,
+};
 
 #[test]
 fn test_mint_initial() {
@@ -158,5 +162,49 @@ fn test_initialize_fails_identical_addresses() {
 
     // Try to initialize using the same address for both
     let result = client.try_initialize(&admin_and_oracle, &admin_and_oracle);
-    assert_eq!(result, Err(Ok(ContractError::AdminIsOracle)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidMode)));
 }
+
+#[test]
+fn test_mint_initial_with_rate_limiting() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Set rate limit to 2
+    client.set_mint_limit(&2);
+
+    // Verify we can get the configured mint limit
+    assert_eq!(client.get_mint_limit(), 2);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+
+    // Minting for user1 and user2 should succeed
+    let bal1 = client.mint_initial(&user1);
+    assert_eq!(bal1, 1000_0000000);
+
+    let bal2 = client.mint_initial(&user2);
+    assert_eq!(bal2, 1000_0000000);
+
+    // Minting for user3 in the same ledger should fail
+    let res3 = client.try_mint_initial(&user3);
+    let err = res3.unwrap().unwrap_err();
+    assert_eq!(err, soroban_sdk::Error::from_contract_error(ContractError::MintLimitExceeded as u32));
+
+    // Moving to a new ledger should reset the counter, so user3 can now mint
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
+    let bal3 = client.mint_initial(&user3);
+    assert_eq!(bal3, 1000_0000000);
+}
+

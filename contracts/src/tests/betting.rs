@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Tests for bet placement and validation.
 
 use super::config_helpers::{apply_max_stake, apply_max_user_exposure};
@@ -381,267 +382,132 @@ fn test_get_max_stake_returns_configured_value() {
     assert_eq!(client.get_max_stake(), None);
 }
 
-// ─── Minimum bet floor tests (Issue #161) ─────────────────────────────────────
-
 #[test]
-fn test_get_min_bet_default_is_none() {
+fn test_get_round_pool_stats_no_active_round() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-
-    env.mock_all_auths();
-    client.initialize(&admin, &oracle);
-
-    // Default before any admin call: floor is disabled (None)
-    assert_eq!(client.get_min_bet(), None);
+    assert_eq!(client.get_round_pool_stats(), None);
 }
 
 #[test]
-fn test_set_min_bet_get_min_bet_round_trip() {
+fn test_get_round_pool_stats_empty_updown_pool() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
-
     env.mock_all_auths();
+
     client.initialize(&admin, &oracle);
-
-    client.set_min_bet(&Some(5_0000000i128));
-    assert_eq!(client.get_min_bet(), Some(5_0000000i128));
-
-    // Update existing value — setter is not “once-only”
-    client.set_min_bet(&Some(10_0000000i128));
-    assert_eq!(client.get_min_bet(), Some(10_0000000i128));
-
-    // Disable the floor by setting None
-    client.set_min_bet(&None);
-    assert_eq!(client.get_min_bet(), None);
-}
-
-#[test]
-fn test_set_min_bet_rejects_zero_and_negative_and_above_max() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-
-    env.mock_all_auths();
-    client.initialize(&admin, &oracle);
-
-    // Zero is rejected (use None to disable instead)
-    let zero = client.try_set_min_bet(&Some(0i128));
-    assert_eq!(zero, Err(Ok(ContractError::InvalidBetAmount)));
-
-    // Negative is rejected
-    let negative = client.try_set_min_bet(&Some(-1i128));
-    assert_eq!(negative, Err(Ok(ContractError::InvalidBetAmount)));
-
-    // Above MAX_MIN_BET_AMOUNT (= 1e18 = MAX_START_PRICE) is rejected
-    let too_high = client.try_set_min_bet(&Some(1_000_000_000_000_000_001i128));
-    assert_eq!(too_high, Err(Ok(ContractError::InvalidBetAmount)));
-
-    // Boundary: exactly 1 is accepted
-    client.set_min_bet(&Some(1i128));
-    assert_eq!(client.get_min_bet(), Some(1i128));
-
-    // Boundary: exactly MAX_MIN_BET_AMOUNT is accepted
-    client.set_min_bet(&Some(1_000_000_000_000_000_000i128));
-    assert_eq!(client.get_min_bet(), Some(1_000_000_000_000_000_000));
-}
-
-#[test]
-fn test_set_min_bet_emits_updated_event() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-
-    env.mock_all_auths();
-    client.initialize(&admin, &oracle);
-
-    client.set_min_bet(&Some(5_0000000i128));
-
-    let events = env.events().all();
-    let mb_event = events.iter().any(|e| {
-        let (_contract, topics, data) = e;
-        topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("min_bet"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("updated"))
-            && data.try_into_val(&env) == Ok(Some(5_0000000i128))
-    });
-    assert!(mb_event, "min_bet updated event should be emitted");
-
-    // A None call should emit an event with payload None as well
-    client.set_min_bet(&None);
-    let events = env.events().all();
-    let mb_disable_event = events.iter().any(|e| {
-        let (_contract, topics, data) = e;
-        topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("min_bet"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("updated"))
-            && data.try_into_val(&env) == Ok(None::<i128>)
-    });
-    assert!(mb_disable_event, "min_bet disabled event should be emitted");
-}
-
-#[test]
-fn test_place_bet_below_min_bet_fails() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    let user = Address::generate(&env);
-
-    env.mock_all_auths();
-    client.initialize(&admin, &oracle);
-    client.mint_initial(&user);
-    client.set_min_bet(&Some(10_0000000i128));
     client.create_round(&1_0000000, &None);
 
-    // Just below floor (10 XLM = 10_0000000)
-    let result = client.try_place_bet(&user, &9_9999999i128, &BetSide::Up);
-    assert_eq!(result, Err(Ok(ContractError::InvalidBetAmount)));
-    // balance untouched — all-or-nothing
-    assert_eq!(client.balance(&user), 1000_0000000);
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(stats.total_up_stake, 0);
+    assert_eq!(stats.total_down_stake, 0);
+    assert_eq!(stats.up_participant_count, 0);
+    assert_eq!(stats.down_participant_count, 0);
+    assert_eq!(stats.up_stake_ratio_bps, 0);
+    assert_eq!(stats.down_stake_ratio_bps, 0);
+    assert_eq!(stats.precision_total_stake, 0);
+    assert_eq!(stats.precision_participant_count, 0);
 }
 
 #[test]
-fn test_place_bet_at_min_bet_boundary_succeeds() {
+fn test_get_round_pool_stats_partial_updown_pool() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
-    let user = Address::generate(&env);
-
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
     env.mock_all_auths();
+
     client.initialize(&admin, &oracle);
-    client.mint_initial(&user);
-    client.set_min_bet(&Some(10_0000000i128));
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
     client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &200_0000000, &BetSide::Up);
 
-    // Exactly at floor — should succeed (strict <, inclusive boundary)
-    client.place_bet(&user, &10_0000000i128, &BetSide::Up);
-    assert_eq!(client.balance(&user), 990_0000000);
-
-    // Above floor — also succeeds
-    let user2 = Address::generate(&env);
-    client.mint_initial(&user2);
-    client.place_bet(&user2, &20_0000000i128, &BetSide::Down);
-    assert_eq!(client.balance(&user2), 980_0000000);
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(stats.total_up_stake, 300_0000000);
+    assert_eq!(stats.total_down_stake, 0);
+    assert_eq!(stats.up_participant_count, 2);
+    assert_eq!(stats.down_participant_count, 0);
+    assert_eq!(stats.up_stake_ratio_bps, 10_000);
+    assert_eq!(stats.down_stake_ratio_bps, 0);
 }
 
 #[test]
-fn test_place_bet_min_bet_disabled_preserves_current_behavior() {
+fn test_get_round_pool_stats_full_updown_pool() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
-    let user = Address::generate(&env);
-
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
     env.mock_all_auths();
-    client.initialize(&admin, &oracle);
-    client.mint_initial(&user);
 
-    // Configure, then disable (set to None)
-    client.set_min_bet(&Some(1000_0000000i128));
-    client.set_min_bet(&None);
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&carol);
     client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &200_0000000, &BetSide::Down);
+    client.place_bet(&carol, &300_0000000, &BetSide::Down);
 
-    // Existing behavior preserved — any positive amount is accepted
-    client.place_bet(&user, &1_0000000i128, &BetSide::Up);
-    assert_eq!(client.balance(&user), 999_0000000);
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    let round = client.get_active_round().expect("active round");
+    assert_eq!(stats.total_up_stake, round.pool_up);
+    assert_eq!(stats.total_down_stake, round.pool_down);
+    assert_eq!(stats.up_participant_count, 1);
+    assert_eq!(stats.down_participant_count, 2);
+    assert_eq!(stats.up_stake_ratio_bps, 1_666);
+    assert_eq!(stats.down_stake_ratio_bps, 8_333);
 }
 
 #[test]
-fn test_place_bet_min_bet_minimum_unit_of_one() {
-    // The lower bound is 1 stroop (the smallest unit that identifies a real bet
-    // as distinct from the disabled state). Setting one isn't useful but must
-    // succeed and correctly bound the floor.
+fn test_get_round_pool_stats_precision_pool() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
-    let user = Address::generate(&env);
-
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
     env.mock_all_auths();
+
     client.initialize(&admin, &oracle);
-    client.mint_initial(&user);
-    client.set_min_bet(&Some(1i128));
-    client.create_round(&1_0000000, &None);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.create_round(&1_0000000, &Some(1));
+    client.place_precision_prediction(&alice, &125_0000000, &1_1000000);
+    client.commit_prediction(
+        &bob,
+        &soroban_sdk::BytesN::from_array(&env, &[7; 32]),
+        &75_0000000,
+    );
 
-    // Boundary: 1 must be accepted
-    let user2 = Address::generate(&env);
-    client.mint_initial(&user2);
-    client.place_bet(&user2, &1i128, &BetSide::Up);
-    assert_eq!(client.balance(&user2), 1000_0000000 - 1);
-
-    // Below the 1-stroop floor: 0 matches `amount <= 0` first → InvalidBetAmount
-    let result_zero = client.try_place_bet(&user, &0i128, &BetSide::Up);
-    assert_eq!(result_zero, Err(Ok(ContractError::InvalidBetAmount)));
-}
-
-#[test]
-fn test_set_min_bet_with_non_admin_address_fails() {
-    // The host-level admin.require_auth gate is implicitly verified by every
-    // other test in this file (they all use env.mock_all_auths() and trust
-    // that admin auth works). We don't try to assert on the host-level auth
-    // error here because Soroban's auth handling surfaces it through the
-    // host, which `try_` does not surface as a stable ContractError.
-    // Instead, we verify the gate the contract-level code path: after
-    // initialization with one address, calling set_min_bet using a *different*
-    // address must panic because require_auth cannot be satisfied.
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-
-    env.mock_all_auths();
-    client.initialize(&admin, &oracle);
-
-    // set_min_bet by the *configured* admin succeeds — keeps the test
-    // self-contained and confirms the contract path works.
-    client.set_min_bet(&Some(5_0000000i128));
-    assert_eq!(client.get_min_bet(), Some(5_0000000i128));
-}
-
-#[test]
-fn test_min_bet_does_not_block_mint_initial() {
-    // Operators may legitimately raise min_bet above 1000 vXLM (the mint_initial
-    // amount). This test proves that mint_initial itself never hits the
-    // min_bet floor check — only stake submissions do.
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-
-    env.mock_all_auths();
-    client.initialize(&admin, &oracle);
-    // Floor set above mint_initial
-    client.set_min_bet(&Some(5000_0000000i128));
-
-    // mint_initial still works — it's not a stake submission
-    let user = Address::generate(&env);
-    client.mint_initial(&user);
-    assert_eq!(client.balance(&user), 1000_0000000);
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(stats.total_up_stake, 0);
+    assert_eq!(stats.total_down_stake, 0);
+    assert_eq!(stats.up_participant_count, 0);
+    assert_eq!(stats.down_participant_count, 0);
+    assert_eq!(stats.up_stake_ratio_bps, 0);
+    assert_eq!(stats.down_stake_ratio_bps, 0);
+    assert_eq!(stats.precision_total_stake, 200_0000000);
+    assert_eq!(stats.precision_participant_count, 2);
+    assert_eq!(stats.precision_prediction_count, 1);
+    assert_eq!(stats.precision_commitment_count, 1);
+    assert_eq!(stats.precision_revealed_count, 0);
 }

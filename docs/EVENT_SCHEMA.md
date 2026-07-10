@@ -99,6 +99,26 @@ Emitted when a round is settled competitively by the oracle.
 
 ---
 
+### `("payout", "outcome")`
+
+Emitted once per participant during round resolution after that participant's settlement
+outcome is known. Indexers can use these events to reconstruct the complete participant-level
+result of a round without replaying contract storage reads.
+
+| Position | Field          | Type      | Description                                               |
+|----------|----------------|-----------|-----------------------------------------------------------|
+| 0        | `round_id`     | `u64`     | Round that produced the participant outcome               |
+| 1        | `mode`         | `u32`     | Round mode: `0` = UpDown, `1` = Precision                 |
+| 2        | `user`         | `Address` | Participant address                                       |
+| 3        | `gross_payout` | `i128`    | Amount credited to pending winnings, in stroops           |
+| 4        | `outcome_type` | `u32`     | `0` = loss, `1` = win, `2` = refund                       |
+
+`gross_payout` is `0` for losses. For refunds, it equals the participant's refunded stake.
+For wins, it equals the full pending payout credited by the resolver, including returned
+stake and any profit share.
+
+---
+
 ### `("outcome", "loss")`
 
 *Additive change added by Issue #168 — schema version stays at **v1**
@@ -163,6 +183,23 @@ All stakes are refunded; no competitive settlement occurs.
 
 ---
 
+### `("round", "summary")`
+
+Emitted when a round is resolved, cancelled, or refunded. Contains compact settlement data.
+
+| Position | Field               | Type   | Description                                                           |
+|----------|---------------------|--------|-----------------------------------------------------------------------|
+| 0        | `round_id`          | `u64`  | Round identifier                                                      |
+| 1        | `mode`              | `u32`  | Round mode: `0` = UpDown, `1` = Precision                             |
+| 2        | `price_start`       | `u128` | Opening price at round start (4 dec.)                                 |
+| 3        | `price_final`       | `u128` | Settlement price (or `0` for administrative cancellation) (4 dec.)    |
+| 4        | `participant_count` | `u32`  | Total unique user participants in the round                           |
+| 5        | `total_pot`         | `i128` | Total accumulated round pot (in stroops)                              |
+| 6        | `status`            | `u32`  | Round status: `0` = Resolved, `1` = Cancelled, `2` = FallbackRefund   |
+
+---
+
+
 ### `("claim", "winnings")`
 
 Emitted when a user successfully claims pending winnings.
@@ -185,6 +222,23 @@ Emitted when a new user mints their one-time initial vXLM allocation.
 
 ---
 
+
+### `("config", "updated")`
+
+Emitted for every admin configuration mutation when a value is actually written, including immediate setters and timelocked changes when they are applied. This is the canonical audit event for reconstructing configuration history from events alone.
+
+| Position | Field       | Type                  | Description                                      |
+|----------|-------------|-----------------------|--------------------------------------------------|
+| 0        | `kind`      | `ConfigChangeKind`    | Configuration key that changed.                  |
+| 1        | `old_value` | `ConfigChangePayload` | Value observed immediately before the mutation.  |
+| 2        | `new_value` | `ConfigChangePayload` | Value written by the mutation.                   |
+
+Example payload for a windows update: `(Windows, Windows(6, 12), Windows(10, 20))`.
+
+`ConfigChangeKind` values currently include `Windows`, `MaxStake`, `MaxUserRoundExposure`, `MaxPendingWinnings`, `OracleStaleThreshold`, `OracleMaxDeviationBps`, `ProtocolFeeBps`, `MinParticipants`, `MaxPrecisionParticipants`, `MintLimit`, and `ArchiveRetention`.
+
+---
+
 ### `("windows", "updated")`
 
 Emitted when the admin reconfigures the bet and run window lengths.
@@ -196,7 +250,35 @@ Emitted when the admin reconfigures the bet and run window lengths.
 
 ---
 
-### `("oracle", "heartbeat")`
+#### `("action", "rejct")` — Diagnostic rejected-action event (Issue #196)
+
+Emitted when a privileged action (admin or oracle) is rejected due to an
+auth failure, paused contract, invalid state, or validation error. Enables
+operators to diagnose failed privileged transactions from on-chain events
+without relying on off-chain error logs.
+
+**Privacy**: the payload contains only the `actor` Address, an `action`
+Symbol, and a numeric `reason` code (a `ContractError` variant). No
+personally identifiable information, financial amounts, or internal state
+is exposed. Operators can match reason codes against the `ContractError`
+enum variants in `contracts/src/errors.rs`.
+
+| Position | Field    | Type      | Description                                                        |
+|----------|----------|-----------|--------------------------------------------------------------------|
+| 0        | `actor`  | `Address` | Address of the authenticated caller whose action was rejected       |
+| 1        | `action` | `Symbol`  | Short name of the privileged action (e.g. `"create"`, `"resolve"`) |
+| 2        | `reason` | `u32`     | Numeric error code matching a `ContractError` variant               |
+
+**Example action symbols**: `"create"`, `"resolve"`, `"cancel"`, `"migrate"`,
+`"withdraw"`, `"hbeat"`, `"arm_ovr"`, `"set_arch"`, `"sched"`,
+`"cncl_cfg"`, `"min_par"`, `"max_prec"`, `"mint_lim"`.
+
+**Reason codes** are the integer values of `ContractError` — see
+`contracts/src/errors.rs`.
+
+---
+
+## `("oracle", "heartbeat")`
 
 Emitted when the oracle records an on-chain liveness heartbeat.
 
@@ -204,6 +286,15 @@ Emitted when the oracle records an on-chain liveness heartbeat.
 |----------|-------------|-------|--------------------------------------------------------------|
 | 0        | `timestamp` | `u64` | Unix epoch seconds when the heartbeat was recorded on-chain  |
 | 1        | `status`    | `u32` | Oracle status: `0` = active, `1` = degraded, `2` = offline  |
+
+### `("mode", "transition")`
+
+Emitted when the contract's emergency runtime mode is changed by the admin.
+
+| Position | Field      | Type  | Description                                                         |
+|----------|------------|-------|---------------------------------------------------------------------|
+| 0        | `old_mode` | `u32` | Previous runtime mode: `0` = Normal, `1` = ClaimsOnly, `2` = Paused |
+| 1        | `new_mode` | `u32` | New runtime mode: `0` = Normal, `1` = ClaimsOnly, `2` = Paused      |
 
 ---
 

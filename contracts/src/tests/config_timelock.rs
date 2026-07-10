@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Tests for timelocked critical config changes (governance safety).
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
@@ -362,7 +363,7 @@ fn test_protocol_fee_timelock_full_cycle() {
             let (_contract, topics, _data) = e;
             topics.len() == 2
                 && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("protocol"))
-                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("fee_bps_set"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("fee_bps"))
         })
         .count();
     assert!(ev_count >= 1, "fee_bps_set event must be emitted on apply");
