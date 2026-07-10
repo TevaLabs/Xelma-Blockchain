@@ -1662,3 +1662,101 @@ fn test_min_bet_does_not_apply_to_updown_when_round_is_precision() {
     // balance untouched
     assert_eq!(client.balance(&user), 1000_0000000);
 }
+
+#[test]
+fn test_set_min_bet_validation_rejects_zero() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Zero is rejected because it blocks every bet (use None instead)
+    let result = client.try_set_min_bet(&Some(0i128));
+    assert_eq!(result, Err(Ok(ContractError::InvalidBetAmount)));
+
+    // get_min_bet should still be None since set failed
+    assert_eq!(client.get_min_bet(), None);
+}
+
+#[test]
+fn test_set_min_bet_validation_rejects_negative() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Negative values are outside the valid range
+    let result = client.try_set_min_bet(&Some(-100i128));
+    assert_eq!(result, Err(Ok(ContractError::InvalidBetAmount)));
+
+    // Extreme negative
+    let result = client.try_set_min_bet(&Some(-999_999_999_999_999_999i128));
+    assert_eq!(result, Err(Ok(ContractError::InvalidBetAmount)));
+}
+
+#[test]
+fn test_set_min_bet_validation_rejects_too_large() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Value above MAX_MIN_BET_AMOUNT (1e18) is rejected
+    let result = client.try_set_min_bet(&Some(1_000_000_000_000_000_001i128));
+    assert_eq!(result, Err(Ok(ContractError::InvalidBetAmount)));
+
+    // At the max boundary should succeed
+    client.set_min_bet(&Some(1_000_000_000_000_000_000i128));
+    assert_eq!(client.get_min_bet(), Some(1_000_000_000_000_000_000i128));
+
+    // Clear it back
+    client.set_min_bet(&None);
+    assert_eq!(client.get_min_bet(), None);
+}
+
+#[test]
+fn test_set_min_bet_none_clears_floor() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Initial state: no floor
+    assert_eq!(client.get_min_bet(), None);
+
+    // Set a floor
+    client.set_min_bet(&Some(100_0000000i128));
+    assert_eq!(client.get_min_bet(), Some(100_0000000i128));
+
+    // Clear the floor
+    client.set_min_bet(&None);
+    assert_eq!(client.get_min_bet(), None);
+
+    // Verify a small bet now succeeds after floor removed
+    client.mint_initial(&admin);
+    client.create_round(&1_0000000, &Some(1));
+    client.place_precision_prediction(&admin, &1_0000000i128, &2297u128);
+    // Bet went through — floor was cleared
+    let prediction = client.get_user_precision_prediction(&admin).unwrap();
+    assert_eq!(prediction.amount, 1_0000000i128);
+}

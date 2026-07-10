@@ -96,6 +96,53 @@ fn test_event_coverage_direct_config_setters_emit_audit_event() {
 }
 
 #[test]
+fn test_event_coverage_set_min_bet() {
+    let (env, _, _, _, client) = setup();
+
+    // Set a min_bet floor
+    client.set_min_bet(&Some(50_0000000i128));
+
+    let events = env.events().all();
+    let min_bet_event = events
+        .iter()
+        .rev()
+        .find(|e| {
+            let (_contract, topics, _data) = e;
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("config"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("min_bet"))
+        })
+        .expect("set_min_bet event should exist");
+
+    let (_contract, _topics, data) = min_bet_event;
+    assert_eq!(
+        data.try_into_val(&env),
+        Ok((Some(50_0000000i128),))
+    );
+
+    // Clear min_bet
+    client.set_min_bet(&None);
+
+    let events = env.events().all();
+    let clear_event = events
+        .iter()
+        .rev()
+        .find(|e| {
+            let (_contract, topics, _data) = e;
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("config"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("min_bet"))
+        })
+        .expect("clear min_bet event should exist");
+
+    let (_contract, _topics, data) = clear_event;
+    assert_eq!(
+        data.try_into_val(&env),
+        Ok((Option::<i128>::None,))
+    );
+}
+
+#[test]
 fn test_event_coverage_timelocked_config_apply_emits_audit_event() {
     let (env, _, _, _, client) = setup();
 

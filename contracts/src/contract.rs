@@ -949,38 +949,6 @@ impl VirtualTokenContract {
         Ok(())
     }
 
-    /// Validates the configured minimum bet value (Issue #161). `None` is the
-    /// "disabled" sentinel and always valid; `Some(0)` is rejected because it
-    /// would block every bet (use `None` instead); values above
-    /// `MAX_MIN_BET_AMOUNT` are rejected to keep floors within the protocol's
-    /// safe arithmetic range.
-    fn _validate_min_bet(min_bet: Option<i128>) -> Result<(), ContractError> {
-        if let Some(v) = min_bet {
-            if !(MIN_MIN_BET_AMOUNT..=MAX_MIN_BET_AMOUNT).contains(&v) {
-                return Err(ContractError::InvalidBetAmount);
-            }
-        }
-        Ok(())
-    }
-
-    /// Enforces the configured minimum-bet floor (Issue #161).
-    /// Returns `InvalidBetAmount` when a positive amount is strictly below
-    /// the configured floor, and silently passes when no floor is set or
-    /// when the configured floor is at or below the amount.
-    fn _enforce_min_bet(env: &Env, amount: i128) -> Result<(), ContractError> {
-        // Read-then-bump: only touch TTL when the floor is actually configured.
-        // Avoids paying a persistent load + TTL bump on every Up/Down/Precision
-        // bet when no min_bet is set (the default state for fresh deploys).
-        let min_key = DataKey::MinBet;
-        if let Some(min) = env.storage().persistent().get::<_, i128>(&min_key) {
-            Self::_extend_persistent_ttl(env, &min_key);
-            if amount < min {
-                return Err(ContractError::InvalidBetAmount);
-            }
-        }
-        Ok(())
-    }
-
     fn _validate_oracle_stale_threshold(seconds: u64) -> Result<(), ContractError> {
         if !(MIN_ORACLE_STALE_THRESHOLD..=MAX_ORACLE_STALE_THRESHOLD).contains(&seconds) {
             return Err(ContractError::InvalidDuration);
