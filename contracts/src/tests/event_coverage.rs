@@ -115,10 +115,7 @@ fn test_event_coverage_set_min_bet() {
         .expect("set_min_bet event should exist");
 
     let (_contract, _topics, data) = min_bet_event;
-    assert_eq!(
-        data.try_into_val(&env),
-        Ok((Some(50_0000000i128),))
-    );
+    assert_eq!(data.try_into_val(&env), Ok((Some(50_0000000i128),)));
 
     // Clear min_bet
     client.set_min_bet(&None);
@@ -136,10 +133,7 @@ fn test_event_coverage_set_min_bet() {
         .expect("clear min_bet event should exist");
 
     let (_contract, _topics, data) = clear_event;
-    assert_eq!(
-        data.try_into_val(&env),
-        Ok((Option::<i128>::None,))
-    );
+    assert_eq!(data.try_into_val(&env), Ok((Option::<i128>::None,)));
 }
 
 #[test]
