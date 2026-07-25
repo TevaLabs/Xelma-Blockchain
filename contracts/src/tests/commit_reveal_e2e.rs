@@ -55,7 +55,7 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    Address, Bytes, BytesN, Env,
+    Address, Bytes, BytesN, Env, IntoVal,
 };
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
@@ -836,4 +836,312 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
         INITIAL_BALANCE * 2,
         "mixed reveal must conserve minted supply"
     );
+}
+
+// ─── Commit-fee tests (Issue #283) ──────────────────────────────────────────
+
+/// Default commit fee is 0 — backward-compatible behaviour unchanged.
+#[test]
+fn test_commit_fee_default_is_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+
+    assert_eq!(client.get_commit_fee(), 0);
+}
+
+/// Commit without fee charges only the stake amount (backward-compatible).
+#[test]
+fn test_commit_no_fee_deducts_only_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+    client.create_round(&ROUND_START_PRICE, &Some(1));
+
+    let price: u128 = 2297;
+    let salt = test_salt(&env, 51);
+    let hash = make_commitment(&env, price, &salt);
+
+    // Default fee is 0 — only ALICE_BET deducted
+    client.commit_prediction(&user, &hash, &ALICE_BET);
+    assert_eq!(client.balance(&user), INITIAL_BALANCE - ALICE_BET);
+    assert_eq!(client.get_protocol_fee_treasury(), 0);
+}
+
+/// Setting a commit fee charges it on commit and collects into treasury.
+#[test]
+fn test_commit_fee_charged_and_collected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+
+    // Set commit fee to 10_0000000 stroops
+    let commit_fee: i128 = 10_0000000;
+    client.set_commit_fee(&Some(commit_fee));
+    assert_eq!(client.get_commit_fee(), commit_fee);
+
+    client.create_round(&ROUND_START_PRICE, &Some(1));
+
+    let price: u128 = 2297;
+    let salt = test_salt(&env, 52);
+    let hash = make_commitment(&env, price, &salt);
+
+    // Commit: stake + fee deducted
+    let total_charge = ALICE_BET + commit_fee;
+    client.commit_prediction(&user, &hash, &ALICE_BET);
+    assert_eq!(client.balance(&user), INITIAL_BALANCE - total_charge);
+
+    // Fee collected in treasury
+    assert_eq!(client.get_protocol_fee_treasury(), commit_fee);
+}
+
+/// Multiple users each pay the commit fee; treasury accumulates.
+#[test]
+fn test_commit_fee_accumulates_across_users() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    let commit_fee: i128 = 5_0000000;
+    client.set_commit_fee(&Some(commit_fee));
+    client.create_round(&ROUND_START_PRICE, &Some(1));
+
+    let salt_a = test_salt(&env, 53);
+    let salt_b = test_salt(&env, 54);
+    client.commit_prediction(
+        &alice,
+        &make_commitment(&env, ALICE_PRICE, &salt_a),
+        &ALICE_BET,
+    );
+    client.commit_prediction(&bob, &make_commitment(&env, BOB_PRICE, &salt_b), &BOB_BET);
+
+    // Treasury accumulates 2 × commit_fee
+    assert_eq!(client.get_protocol_fee_treasury(), commit_fee * 2);
+
+    // Each user deducted stake + fee
+    assert_eq!(
+        client.balance(&alice),
+        INITIAL_BALANCE - ALICE_BET - commit_fee
+    );
+    assert_eq!(client.balance(&bob), INITIAL_BALANCE - BOB_BET - commit_fee);
+}
+
+/// Insufficient balance for commit fee → InsufficientBalance.
+#[test]
+fn test_commit_fee_insufficient_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+
+    // Set fee to more than minted balance
+    client.set_commit_fee(&Some(2000_0000000i128));
+    client.create_round(&ROUND_START_PRICE, &Some(1));
+
+    let price: u128 = 2297;
+    let salt = test_salt(&env, 55);
+    let hash = make_commitment(&env, price, &salt);
+
+    let result = client.try_commit_prediction(&user, &hash, &ALICE_BET);
+    assert_eq!(result, Err(Ok(ContractError::InsufficientBalance)));
+
+    // Balance unchanged because check happened before deduction
+    assert_eq!(client.balance(&user), INITIAL_BALANCE);
+    assert_eq!(client.get_protocol_fee_treasury(), 0);
+}
+
+/// Disabling the commit fee (set to None) restores no-fee behaviour.
+#[test]
+fn test_commit_fee_disabled_restores_no_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+
+    // Set and then disable
+    client.set_commit_fee(&Some(10_0000000i128));
+    assert_eq!(client.get_commit_fee(), 10_0000000);
+
+    client.set_commit_fee(&None);
+    assert_eq!(client.get_commit_fee(), 0);
+
+    client.create_round(&ROUND_START_PRICE, &Some(1));
+
+    let price: u128 = 2297;
+    let salt = test_salt(&env, 56);
+    let hash = make_commitment(&env, price, &salt);
+
+    client.commit_prediction(&user, &hash, &ALICE_BET);
+    // Only stake deducted, no fee
+    assert_eq!(client.balance(&user), INITIAL_BALANCE - ALICE_BET);
+    assert_eq!(client.get_protocol_fee_treasury(), 0);
+}
+
+/// Zero commit fee (Some(0)) is equivalent to no fee.
+#[test]
+fn test_commit_fee_zero_is_no_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+
+    // Explicit zero
+    client.set_commit_fee(&Some(0));
+    assert_eq!(client.get_commit_fee(), 0);
+
+    client.create_round(&ROUND_START_PRICE, &Some(1));
+
+    let price: u128 = 2297;
+    let salt = test_salt(&env, 57);
+    let hash = make_commitment(&env, price, &salt);
+
+    client.commit_prediction(&user, &hash, &ALICE_BET);
+    assert_eq!(client.balance(&user), INITIAL_BALANCE - ALICE_BET);
+    assert_eq!(client.get_protocol_fee_treasury(), 0);
+}
+
+/// Commit fee is charged on commit and collected into treasury.
+/// Verifies treasury accounting; event coverage for ("commit", "fee")
+/// lives in event_coverage.rs.
+#[test]
+fn test_commit_fee_collected_into_treasury() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+
+    let commit_fee: i128 = 10_0000000;
+    client.set_commit_fee(&Some(commit_fee));
+    client.create_round(&ROUND_START_PRICE, &Some(1));
+
+    assert_eq!(client.get_commit_fee(), commit_fee);
+
+    let price: u128 = 2297;
+    let salt = test_salt(&env, 58);
+    let hash = make_commitment(&env, price, &salt);
+    client.commit_prediction(&user, &hash, &ALICE_BET);
+
+    // Treasury balance proves fee was collected
+    assert_eq!(client.get_protocol_fee_treasury(), commit_fee);
+
+    // Balance deduction includes fee
+    assert_eq!(
+        client.balance(&user),
+        INITIAL_BALANCE - ALICE_BET - commit_fee
+    );
+}
+
+/// Non-admin cannot set commit fee — requires admin authorization.
+#[test]
+fn test_commit_fee_set_non_admin_rejected() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    // Initialize with explicit admin auth only
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (&admin, &oracle).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin, &oracle);
+
+    // Try to set commit fee without admin auth — should fail
+    let result = client.try_set_commit_fee(&Some(5_0000000i128));
+    assert!(result.is_err());
+
+    // Verify fee was not set
+    assert_eq!(client.get_commit_fee(), 0);
+}
+
+/// Admin can set commit fee (happy path — auth is provided).
+#[test]
+fn test_commit_fee_set_by_admin_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+
+    let fee: i128 = 10_0000000;
+    client.set_commit_fee(&Some(fee));
+    assert_eq!(client.get_commit_fee(), fee);
+}
+
+/// Commit fee must be non-negative.
+#[test]
+fn test_commit_fee_negative_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+
+    let result = client.try_set_commit_fee(&Some(-1i128));
+    assert_eq!(result, Err(Ok(ContractError::InvalidBetAmount)));
 }

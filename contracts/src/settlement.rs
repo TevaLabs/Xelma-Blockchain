@@ -845,6 +845,26 @@ pub fn _resolve_precision_mode(
                 }
             }
         }
+    } else if total_pot > 0 {
+        // All-unrevealed: refund every participant's stake
+        for i in 0..participants.len() {
+            if let Some(user) = participants.get(i) {
+                let stake = participant_amounts.get(i).unwrap();
+                let predicted_price = participant_prices.get(i).unwrap();
+                _accumulate_pending(env, user.clone(), stake)?;
+                _persist_user_outcome(
+                    env,
+                    round_id,
+                    1,
+                    &user,
+                    2,
+                    predicted_price,
+                    stake,
+                    stake,
+                    UserOutcomeType::Refund,
+                );
+            }
+        }
     }
 
     Ok(fee_amount)
@@ -963,6 +983,24 @@ pub fn _resolve_precision_legacy(
                         UserOutcomeType::Loss,
                     );
                 }
+            }
+        }
+    } else if total_pot > 0 {
+        // All-unrevealed: refund every participant's stake
+        for i in 0..predictions.len() {
+            if let Some(pred) = predictions.get(i) {
+                _accumulate_pending(env, pred.user.clone(), pred.amount)?;
+                _persist_user_outcome(
+                    env,
+                    round_id,
+                    1,
+                    &pred.user,
+                    2,
+                    pred.predicted_price,
+                    pred.amount,
+                    pred.amount,
+                    UserOutcomeType::Refund,
+                );
             }
         }
     }

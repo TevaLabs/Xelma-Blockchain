@@ -608,6 +608,14 @@ impl VirtualTokenContract {
         config::get_close_buffer_ledgers(env)
     }
 
+    pub fn set_commit_fee(env: Env, amount: Option<i128>) -> Result<(), ContractError> {
+        config::set_commit_fee(env, amount)
+    }
+
+    pub fn get_commit_fee(env: Env) -> i128 {
+        config::get_commit_fee(env)
+    }
+
     /// Creates a new prediction round (admin only)
     pub fn create_round(
         env: Env,

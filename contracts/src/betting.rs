@@ -472,7 +472,19 @@ pub fn commit_prediction(
     }
 
     let user_balance = balance(env.clone(), user.clone());
-    if user_balance < amount {
+
+    // Read optional commit fee (default 0 = disabled, backward-compatible)
+    let commit_fee: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::CommitFee)
+        .unwrap_or(0);
+
+    let total_charge = amount
+        .checked_add(commit_fee)
+        .ok_or(ContractError::Overflow)?;
+
+    if user_balance < total_charge {
         return Err(ContractError::InsufficientBalance);
     }
 
@@ -483,11 +495,16 @@ pub fn commit_prediction(
         return Err(ContractError::AlreadyBet);
     }
 
-    // Deduct balance
+    // Deduct balance (amount + optional commit fee)
     let new_balance = user_balance
-        .checked_sub(amount)
+        .checked_sub(total_charge)
         .ok_or(ContractError::Overflow)?;
     _set_balance(&env, user.clone(), new_balance);
+
+    // Collect optional commit fee into treasury
+    if commit_fee > 0 {
+        crate::config::_collect_commit_fee(&env, &user, round.round_id, commit_fee)?;
+    }
 
     // Store commitment
     let commitment = PrecisionCommitment {
@@ -512,7 +529,7 @@ pub fn commit_prediction(
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("commit"), symbol_short!("predict")),
-        (user, round.round_id, hash, amount),
+        (user, round.round_id, hash, amount, commit_fee),
     );
 
     Ok(())

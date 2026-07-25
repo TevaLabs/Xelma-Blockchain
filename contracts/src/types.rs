@@ -138,6 +138,9 @@ pub enum DataKey {
     /// retained on-chain before the oldest are pruned (FIFO). If unset, the protocol
     /// default is used.
     ArchiveRetention,
+    /// Optional sealed-bid commit fee in stroops (i128), charged once per commit.
+    /// `None` (key absent) or `Some(0)` means fee disabled — backward-compatible.
+    CommitFee,
 }
 
 /// Identifies which critical risk setting is pending timelocked activation.
