@@ -27,6 +27,7 @@ mod rotation;
 // mod resolution; // upstream bug: duplicate type imports
 mod security;
 mod simulate_tests;
+mod state_machine;
 mod storage_benchmarks;
 mod ttl_tests;
 mod windows;
