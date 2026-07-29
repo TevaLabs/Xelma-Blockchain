@@ -101,6 +101,7 @@ fn test_protocol_status_claims_only_after_resolve() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        confidence: None,
     };
     client.resolve_round(&payload);
 
@@ -184,6 +185,7 @@ fn test_round_status_full_lifecycle() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        confidence: None,
     };
     client.resolve_round(&payload);
 
@@ -261,6 +263,7 @@ fn test_round_status_fallback_refund() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        confidence: None,
     };
     client.resolve_round(&payload);
 

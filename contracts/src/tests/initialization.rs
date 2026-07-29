@@ -166,6 +166,90 @@ fn test_initialize_fails_identical_addresses() {
 }
 
 #[test]
+fn test_epoch_mint_budget_enforced() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Set epoch budget to 2000 vXLM (2 mints worth)
+    client.set_epoch_mint_budget(&2000_0000000);
+
+    assert_eq!(client.get_epoch_mint_budget(), 2000_0000000);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+
+    // First two mints should succeed (1000 each = 2000 total)
+    let bal1 = client.mint_initial(&user1);
+    assert_eq!(bal1, 1000_0000000);
+
+    let bal2 = client.mint_initial(&user2);
+    assert_eq!(bal2, 1000_0000000);
+
+    // Third mint should fail - epoch budget exhausted
+    let res3 = client.try_mint_initial(&user3);
+    let err = res3.unwrap().unwrap_err();
+    assert_eq!(err, soroban_sdk::Error::from_contract_error(ContractError::EpochBudgetExceeded as u32));
+
+    // Verify existing users' balances are still accessible
+    assert_eq!(client.balance(&user1), 1000_0000000);
+    assert_eq!(client.balance(&user2), 1000_0000000);
+
+    // Moving to the next epoch should reset the budget
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1440;
+    });
+
+    let bal3 = client.mint_initial(&user3);
+    assert_eq!(bal3, 1000_0000000);
+}
+
+#[test]
+fn test_epoch_mint_budget_zero_disabled() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Budget defaults to 0 (disabled)
+    assert_eq!(client.get_epoch_mint_budget(), 0);
+
+    // Multiple mints should all succeed with no budget
+    for _ in 0..5 {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+    }
+}
+
+#[test]
+fn test_epoch_mint_budget_setter_rejects_negative() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    let result = client.try_set_epoch_mint_budget(&(-100));
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_mint_initial_with_rate_limiting() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());

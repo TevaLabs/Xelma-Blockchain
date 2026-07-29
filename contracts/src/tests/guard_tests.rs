@@ -7,7 +7,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{DataKey, OraclePayload, Round};
+use crate::types::{DataKeyCore, DataKeyScoped, OraclePayload, Round};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, Env,
@@ -106,7 +106,7 @@ fn test_guard_failure_path_active_round_exists() {
     let existing_round: Round = env.as_contract(&contract_id, || {
         env.storage()
             .persistent()
-            .get(&DataKey::ActiveRound)
+            .get(&DataKeyCore::ActiveRound)
             .unwrap()
     });
     let last_round_id_before = client.get_last_round_id();
@@ -121,7 +121,7 @@ fn test_guard_failure_path_active_round_exists() {
     let round_after: Round = env.as_contract(&contract_id, || {
         env.storage()
             .persistent()
-            .get(&DataKey::ActiveRound)
+            .get(&DataKeyCore::ActiveRound)
             .unwrap()
     });
     assert_eq!(round_after.round_id, existing_round.round_id);

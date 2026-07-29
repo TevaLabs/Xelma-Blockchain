@@ -142,6 +142,25 @@ if (claimed) {
 }
 ```
 
+## `simulateBet`
+
+Simulates a bet without broadcasting to estimate resource fees and decode errors.
+
+```ts
+import { simulateBet } from "@xelma/bindings/helpers"
+
+const { simulated, minResourceFee, error } = await simulateBet(client, {
+  user: "GABCDEF123...",
+  amount: 500_000_000n,
+  side: { tag: "Up", values: undefined },
+})
+if (simulated) {
+  console.log(`Estimated min resource fee: ${minResourceFee}`)
+} else {
+  console.error("Simulation failed:", error)
+}
+```
+
 ## Error reference
 
 | Exception                  | Contract code | Meaning                          |
@@ -152,6 +171,7 @@ if (claimed) {
 | `AlreadyBetError`          | 10            | User already bet in this round   |
 | `StakeExceedsMaxError`     | 28            | Bet exceeds the max stake cap    |
 | `ExposureCapExceededError` | 29            | User exposure exceeds round cap  |
+| `NoRoundTemplateError`     | 65            | No round template configured     |
 
 All typed exceptions extend `XelmaError` (which extends `Error`), so you
 can catch specific types or the base class.

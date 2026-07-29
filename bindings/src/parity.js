@@ -147,6 +147,10 @@ if (errorsDrift.length > 0) {
 }
 
 if (failed) {
+    console.error("\n💡 To resolve parity drift:");
+    console.error("  1. Update bindings/src/index.ts and bindings/src/helpers.ts to include missing methods and error codes.");
+    console.error("  2. Run `npm run test:parity` to verify alignment.");
+    console.error("  3. Consult CONTRIBUTING.md for contract and SDK binding release guidelines.");
     process.exit(1);
 } else {
     process.exit(0);

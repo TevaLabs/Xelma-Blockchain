@@ -568,6 +568,10 @@ async function watchForNewRounds(contractId: string) {
 - `initialize(admin, oracle)` - One-time contract setup
 - `create_round(start_price, mode)` - Start new betting round (mode: 0=Up/Down, 1=Precision)
 - `set_windows(bet_ledgers, run_ledgers)` - Configure round timing windows
+- `set_round_template(start_price, mode)` - Store the blueprint used by `create_next_from_template`
+- `clear_round_template()` - Remove the configured round template
+- `create_next_from_template()` - Create the next round from the stored template (fails if a round is already active or no template is set)
+- `reset_leaderboard_season()` - Archive the active leaderboard season's rankings and advance to the next season
 
 ### Oracle Functions:
 - `resolve_round(payload)` - Resolve round and trigger payouts (requires `OraclePayload` with price, timestamp, and round ID)
@@ -581,6 +585,12 @@ async function watchForNewRounds(contractId: string) {
 - `get_max_precision_participants()` - Check the active Precision participant cap
 - `get_precision_predictions()` - View all predictions in current Precision round
 - `get_updown_positions()` - View all positions in current Up/Down round
+- `get_round_template()` - View the configured round template, if any
+- `get_leaderboard_by_wins(offset, limit)` / `get_leaderboard_by_streak(offset, limit)` - Paginated lifetime (all-time) leaderboards, independent of seasons
+- `get_current_season_id()` - Id of the currently-active leaderboard season (default 1)
+- `get_season_user_stats(season_id, user)` - A user's win/loss/streak stats scoped to one season (active or archived)
+- `get_season_leaderboard_by_wins(season_id, offset, limit)` / `get_season_leaderboard_by_streak(season_id, offset, limit)` - Paginated season-scoped leaderboards; transparently served live for the active season or from the frozen archive for a past one
+- `get_season_archive(season_id)` - The frozen snapshot of a past season's final rankings
 
 ---
 
@@ -833,6 +843,7 @@ Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Bloc
 - **[Bindings Guide](./bindings/README.md)** - TypeScript integration guide
 - **[Wallet Error Guide](./docs/WALLET_ERROR_GUIDE.md)** - Mapping of contract error codes to UI messages
 - **[Test Suite](./contracts/src/tests/)** - Comprehensive test examples
+- **[Demo Scenarios](./docs/DEMO.md)** - Scripted Up-win, Down-win, and Precision-tie demos with end-state assertions
 
 ---
 

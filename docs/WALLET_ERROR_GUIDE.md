@@ -39,9 +39,8 @@ This guide maps each smart‑contract error defined in `contracts/src/errors.rs`
 | `0x20` | 32 | StartPriceTooHigh | Start price exceeds the maximum allowed value | "Start price too high."
 | `0x21` | 33 | OracleNonceReused | Oracle payload nonce was already consumed for this round (replay) | "Oracle nonce reused."
 | `0x22` | 34 | InsufficientParticipants | Round has fewer participants than the configured minimum for competitive settlement | "Insufficient participants."
-| `0x23` | 35 | InvalidMinParticipants | Minimum participants value is out of valid range (must be 1–10000) | "Invalid min participants."
-| `0x24` | 36 | InvalidOracleStatus | Oracle heartbeat status is out of range (must be 0, 1, or 2) | "Invalid oracle status."
-| `0x25` | 37 | InvalidStaleThreshold | Oracle stale threshold is out of valid range (must be 60–86400 seconds) | "Invalid stale threshold."
+| `0x23` | 35 | InvalidMinParticipants | Minimum participants value is out of valid range (must be 1–10000) | "Invalid min participants."| `0x24` | 36 | InvalidOracleStatus | Oracle heartbeat status is out of range (must be 0, 1, or 2) | "Invalid oracle status." |
+| `0x42` | 66 | OracleNotLive | Oracle heartbeat is not live and strict mode blocks settlement | "Oracle heartbeat not live." | `0x25` | 37 | InvalidStaleThreshold | Oracle stale threshold is out of valid range (must be 60–86400 seconds) | "Invalid stale threshold."
 | `0x26` | 38 | InvalidOracleDeviationBps | Oracle max deviation bps is invalid (must be > 0) | "Invalid oracle deviation BPS."
 | `0x27` | 39 | OracleDeviationExceeded | Oracle final price deviates beyond configured threshold | "Oracle deviation exceeded."
 | `0x28` | 40 | UnsupportedSchemaVersion | Stored schema version is unknown or unsupported by this contract build | "Unsupported schema version."
@@ -55,6 +54,7 @@ This guide maps each smart‑contract error defined in `contracts/src/errors.rs`
 | `0x30` | 48 | InvalidPrecisionParticipantCap | Precision participant cap is out of range (must be 1–10000) | "Invalid precision participant cap."
 | `0x3f` | 63 | InvalidCommitment | Commitment hash is malformed (e.g. all-zero placeholder) | "Invalid commitment hash."
 | `0x40` | 64 | InvalidSalt | Reveal salt fails minimum entropy rules | "Invalid reveal salt."
+| `0x41` | 65 | NoRoundTemplate | No round template configured | "No round template."
 
 ## Integration Walkthroughs
 ### 1. Handling errors in a Freighter wallet

@@ -99,3 +99,10 @@ jobs:
           name: deployed-wasm
           path: target/wasm32v1-none/release/xelma_contract.wasm
           retention-days: 7
+
+      - name: Deployment Summary & Runbook Link
+        if: always()
+        run: |
+          echo "### 🚀 Deployment Summary & Checklist" >> $GITHUB_STEP_SUMMARY
+          echo "Mode: **${{ github.event.inputs.dry_run == 'true' && 'DRY RUN' || 'DEPLOY' }}**" >> $GITHUB_STEP_SUMMARY
+          echo "Refer to [docs/DEPLOYMENT_RUNBOOK.md](https://github.com/TevaLabs/Xelma-Blockchain/blob/main/docs/DEPLOYMENT_RUNBOOK.md) for post-deployment initialization, health checks, and incident response playbook." >> $GITHUB_STEP_SUMMARY

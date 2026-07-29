@@ -228,10 +228,138 @@ fn test_close_buffer_rejects_bets_in_final_window() {
     });
     client.place_bet(&user_a, &50_0000000, &BetSide::Up);
 
+    // Close buffer freezes at ledger 4 (bet_end=6, close_buffer=2)
     env.ledger().with_mut(|li| {
         li.sequence_number = 4;
     });
     let result = client.try_place_bet(&user_b, &50_0000000, &BetSide::Down);
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
+
+    // At bet_end_ledger, the error should be RoundEnded
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 6;
+    });
+    let result = client.try_place_bet(&user_b, &50_0000000, &BetSide::Down);
+    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+}
+
+#[test]
+fn test_close_buffer_distinct_error_boundary() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 0;
+    });
+
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    let user_c = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user_a);
+    client.mint_initial(&user_b);
+    client.mint_initial(&user_c);
+
+    // bet_end=6, close_buffer=3, close_ledger=3
+    apply_windows(&env, &client, 6, 12);
+    client.set_close_buffer_ledgers(&3);
+    client.create_round(&1_0000000, &None);
+
+    // Ledger 2: before close buffer — bets accepted
+    env.ledger().with_mut(|li| li.sequence_number = 2);
+    client.place_bet(&user_a, &50_0000000, &BetSide::Up);
+
+    // Ledger 3: at close buffer edge — BettingClosed
+    env.ledger().with_mut(|li| li.sequence_number = 3);
+    let result = client.try_place_bet(&user_b, &50_0000000, &BetSide::Down);
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
+
+    // Ledger 5: still in buffer zone — BettingClosed
+    env.ledger().with_mut(|li| li.sequence_number = 5);
+    let result = client.try_place_bet(&user_b, &50_0000000, &BetSide::Down);
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
+
+    // Ledger 6: at bet_end_ledger — RoundEnded
+    env.ledger().with_mut(|li| li.sequence_number = 6);
+    let result = client.try_place_bet(&user_c, &50_0000000, &BetSide::Down);
+    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+}
+
+#[test]
+fn test_close_buffer_precision_prediction_distinct_error() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 0;
+    });
+
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+
+    apply_windows(&env, &client, 6, 12);
+    client.set_close_buffer_ledgers(&2);
+    client.create_round(&1_0000000, &Some(1));
+
+    // Ledger 4: close buffer freezes — BettingClosed for precision
+    env.ledger().with_mut(|li| li.sequence_number = 4);
+    let result = client.try_place_precision_prediction(&user, &50_0000000, &2297);
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
+
+    // Ledger 6: bet window ended — RoundEnded
+    env.ledger().with_mut(|li| li.sequence_number = 6);
+    let result = client.try_place_precision_prediction(&user, &50_0000000, &2297);
+    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+}
+
+#[test]
+fn test_close_buffer_commit_prediction_distinct_error() {
+    use soroban_sdk::BytesN;
+
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 0;
+    });
+
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+
+    apply_windows(&env, &client, 6, 12);
+    client.set_close_buffer_ledgers(&2);
+    client.create_round(&1_0000000, &Some(1));
+
+    let hash = BytesN::from_array(&env, &[7; 32]);
+
+    // Ledger 4: close buffer freezes — BettingClosed for commit
+    env.ledger().with_mut(|li| li.sequence_number = 4);
+    let result = client.try_commit_prediction(&user, &hash, &50_0000000);
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
+
+    // Ledger 6: bet window ended — RoundEnded
+    env.ledger().with_mut(|li| li.sequence_number = 6);
+    let result = client.try_commit_prediction(&user, &hash, &50_0000000);
     assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
 }
 

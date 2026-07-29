@@ -2,7 +2,7 @@
 //! Tests for boundary conditions and unusual scenarios.
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{BetSide, DataKey, OraclePayload, Round, UserPosition};
+use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, Round, UserPosition};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -124,18 +124,18 @@ fn test_accumulate_pending_winnings() {
         );
         env.storage()
             .persistent()
-            .set(&DataKey::UpDownPositions, &positions);
+            .set(&DataKeyCore::UpDownPositions, &positions);
 
         let mut round: Round = env
             .storage()
             .persistent()
-            .get(&DataKey::ActiveRound)
+            .get(&DataKeyCore::ActiveRound)
             .unwrap();
         round.pool_up = 100_0000000;
         round.pool_down = 50_0000000;
         env.storage()
             .persistent()
-            .set(&DataKey::ActiveRound, &round);
+            .set(&DataKeyCore::ActiveRound, &round);
     });
 
     // Advance ledger to allow resolution
@@ -205,10 +205,10 @@ fn test_claim_winnings_checked_overflow() {
     env.as_contract(&contract_id, || {
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(alice.clone()), &i128::MAX);
+            .set(&DataKeyScoped::Balance(alice.clone()), &i128::MAX);
         env.storage()
             .persistent()
-            .set(&DataKey::PendingWinnings(alice.clone()), &1_i128);
+            .set(&DataKeyScoped::PendingWinnings(alice.clone()), &1_i128);
     });
 
     // claim_winnings should fail with Overflow because balance + pending > i128::MAX
@@ -242,7 +242,7 @@ fn test_stats_checked_overflow() {
         };
         env.storage()
             .persistent()
-            .set(&DataKey::UserStats(alice.clone()), &stats);
+            .set(&DataKeyScoped::UserStats(alice.clone()), &stats);
     });
 
     // Create a round, bet, and resolve so _update_stats_win is triggered

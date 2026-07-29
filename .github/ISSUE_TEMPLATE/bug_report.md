@@ -6,6 +6,8 @@ labels: bug
 assignees: ""
 ---
 
+> **Before you start:** Read [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for workflow expectations and the [Contributor Task Matrix](../../docs/CONTRIBUTOR_TASK_MATRIX.md) for test evidence requirements. Use the private disclosure path in [`SUPPORT.md`](../../SUPPORT.md) if this could be a security vulnerability.
+
 ## Summary
 
 Describe the problem clearly.
@@ -34,4 +36,24 @@ Describe the problem clearly.
 
 ## Security impact
 
-If this could be a vulnerability, stop and use the private disclosure path in `SUPPORT.md`.
+- [ ] No security impact (publicly safe to discuss)
+- [ ] Potential vulnerability — **stop here** and follow the private disclosure path in [`SUPPORT.md`](../../SUPPORT.md) before filing
+
+## Proof-of-work validation (required before PR)
+
+- [ ] `cargo test --workspace` passes (or a regression test proving the bug exists)
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes
+- [ ] `cargo fmt --all -- --check` passes
+- [ ] `cd bindings && npm ci && npm run build && npm run test:parity` passes (if bindings affected)
+
+## Difficulty
+
+beginner | intermediate | advanced
+
+---
+
+### Label guidance
+- Use `bug` for all bug reports.
+- Add `security` if the bug has security implications (after private disclosure).
+- Add `blockchain` / `contract` for contract bugs, `Rust` for Rust-specific issues.
+- Add `priority:` labels if you can assess severity (`priority: high`, `priority: medium`, `priority: low`).
