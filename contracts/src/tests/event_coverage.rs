@@ -266,7 +266,7 @@ fn test_event_coverage_commit_and_reveal() {
     );
     assert_eq!(
         data.try_into_val(&env),
-        Ok((user.clone(), 1u64, committed_hash, 100_0000000i128))
+        Ok((user.clone(), 1u64, committed_hash, 100_0000000i128, 0i128))
     );
 
     // Move ledger beyond bet window to allow reveal

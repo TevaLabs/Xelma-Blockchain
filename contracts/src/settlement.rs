@@ -1081,6 +1081,24 @@ pub fn _resolve_precision_legacy(
                 }
             }
         }
+    } else if total_pot > 0 {
+        // All-unrevealed: refund every participant's stake
+        for i in 0..predictions.len() {
+            if let Some(pred) = predictions.get(i) {
+                _accumulate_pending(env, pred.user.clone(), pred.amount)?;
+                _persist_user_outcome(
+                    env,
+                    round_id,
+                    1,
+                    &pred.user,
+                    2,
+                    pred.predicted_price,
+                    pred.amount,
+                    pred.amount,
+                    UserOutcomeType::Refund,
+                );
+            }
+        }
     }
 
     Ok(fee_amount)
