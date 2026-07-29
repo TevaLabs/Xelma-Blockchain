@@ -8,6 +8,40 @@ Thanks for improving Xelma. This document explains the expected workflow for con
 - Keep changes focused and easy to review.
 - For contract changes, include or update tests.
 
+## Label Guidance
+
+Apply labels to help maintainers triage and prioritize your issue or PR.
+All templates include a label guidance block; use it to select the right labels.
+
+### Required base labels (choose one per issue type)
+
+| Issue type | Base label(s) |
+|---|---|
+| Bug report | `bug` |
+| Feature request | `enhancement` |
+| Protocol improvement | `protocol`, `enhancement` |
+| Security hardening | `security` |
+| Test task | `testing` |
+
+### Domain labels (add as applicable)
+
+| Label | When to apply |
+|---|---|
+| `blockchain` | Blockchain-related improvement |
+| `contract` | Changes to the smart contract (`contracts/`) |
+| `Rust` | Rust-specific implementation work |
+| `Stellar Wave` | Eligible for the Stellar Wave program |
+
+### Priority labels (add one when you can assess urgency)
+
+| Label | Criteria |
+|---|---|
+| `priority: high` | Security critical, funds at risk, CI blocked, or mainnet-blocking |
+| `priority: medium` | Correctness impact, user-facing regression, or release-blocking |
+| `priority: low` | Nice-to-have, defense-in-depth, docs, or cleanup |
+
+If you're unsure about labels, leave them for maintainers to apply during triage.
+
 ## Filing Issues
 
 Blank issues are disabled. Pick the template that matches your work so every

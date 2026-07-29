@@ -8,15 +8,15 @@
 //! bet placement and bounded O(N) reads only at resolution time.
 //!
 //! Layout invariants validated here:
-//!   - DataKey::Position(round_id, user) is written exactly once per bet
-//!   - DataKey::RoundParticipants(round_id) tracks every participant in order
+//!   - DataKeyScoped::Position(round_id, user) is written exactly once per bet
+//!   - DataKeyScoped::RoundParticipants(round_id) tracks every participant in order
 //!   - resolve_round removes all per-user keys + the participant list (cleanup)
 //!   - large rounds (50+ participants) resolve correctly without map blowup
 
 extern crate alloc;
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{BetSide, DataKey, OraclePayload, UserPosition};
+use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, UserPosition};
 use alloc::vec::Vec as StdVec;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -35,7 +35,7 @@ fn setup() -> (Env, Address, VirtualTokenContractClient<'static>) {
 
 // ─── place_bet: O(1) per-user key write ──────────────────────────────────────
 
-/// Each place_bet writes exactly one `DataKey::Position(round_id, user)` —
+/// Each place_bet writes exactly one `DataKeyScoped::Position(round_id, user)` —
 /// no full-map deserialisation. Verified by reading the per-user key directly.
 #[test]
 fn bench_place_bet_writes_single_user_key() {
@@ -60,7 +60,7 @@ fn bench_place_bet_writes_single_user_key() {
         let alice_pos: UserPosition = env
             .storage()
             .persistent()
-            .get(&DataKey::Position(round.round_id, alice.clone()))
+            .get(&DataKeyScoped::Position(round.round_id, alice.clone()))
             .expect("alice's per-user position key must exist");
         assert_eq!(alice_pos.amount, 100_0000000);
         assert_eq!(alice_pos.side, BetSide::Up);
@@ -68,17 +68,17 @@ fn bench_place_bet_writes_single_user_key() {
         let bob_pos: UserPosition = env
             .storage()
             .persistent()
-            .get(&DataKey::Position(round.round_id, bob.clone()))
+            .get(&DataKeyScoped::Position(round.round_id, bob.clone()))
             .expect("bob's per-user position key must exist");
         assert_eq!(bob_pos.amount, 200_0000000);
         assert_eq!(bob_pos.side, BetSide::Down);
 
         // The legacy bulk-map key is NOT written under the new layout
         let legacy: Option<soroban_sdk::Map<Address, UserPosition>> =
-            env.storage().persistent().get(&DataKey::UpDownPositions);
+            env.storage().persistent().get(&DataKeyCore::UpDownPositions);
         assert!(
             legacy.is_none(),
-            "legacy DataKey::UpDownPositions must not be written by place_bet"
+            "legacy DataKeyCore::UpDownPositions must not be written by place_bet"
         );
     });
 }
@@ -114,7 +114,7 @@ fn bench_place_bet_op_count_assertion() {
         let participants: Vec<Address> = env
             .storage()
             .persistent()
-            .get(&DataKey::RoundParticipants(round.round_id))
+            .get(&DataKeyScoped::RoundParticipants(round.round_id))
             .expect("participants list must exist after bets");
         assert_eq!(
             participants.len() as usize,
@@ -127,7 +127,7 @@ fn bench_place_bet_op_count_assertion() {
             let pos: UserPosition = env
                 .storage()
                 .persistent()
-                .get(&DataKey::Position(round.round_id, u.clone()))
+                .get(&DataKeyScoped::Position(round.round_id, u.clone()))
                 .expect("each participant has their own indexed key");
             assert_eq!(pos.amount, 10_0000000 + i as i128);
         }
@@ -178,7 +178,7 @@ fn bench_resolve_cleans_indexed_keys() {
         let participants: Option<Vec<Address>> = env
             .storage()
             .persistent()
-            .get(&DataKey::RoundParticipants(round.round_id));
+            .get(&DataKeyScoped::RoundParticipants(round.round_id));
         assert!(participants.is_none(), "participants list must be cleaned");
 
         // Every per-user position key removed
@@ -186,7 +186,7 @@ fn bench_resolve_cleans_indexed_keys() {
             let pos: Option<UserPosition> = env
                 .storage()
                 .persistent()
-                .get(&DataKey::Position(round.round_id, u.clone()));
+                .get(&DataKeyScoped::Position(round.round_id, u.clone()));
             assert!(pos.is_none(), "per-user position must be cleaned");
         }
     });
@@ -256,13 +256,13 @@ fn bench_large_round_resolves_correctly() {
         let participants: Option<Vec<Address>> = env
             .storage()
             .persistent()
-            .get(&DataKey::RoundParticipants(round.round_id));
+            .get(&DataKeyScoped::RoundParticipants(round.round_id));
         assert!(participants.is_none());
         for u in &users {
             let pos: Option<UserPosition> = env
                 .storage()
                 .persistent()
-                .get(&DataKey::Position(round.round_id, u.clone()));
+                .get(&DataKeyScoped::Position(round.round_id, u.clone()));
             assert!(pos.is_none());
         }
     });
@@ -307,7 +307,7 @@ fn bench_precision_mode_indexed_keys() {
             let pred: crate::types::PrecisionPrediction = env
                 .storage()
                 .persistent()
-                .get(&DataKey::PrecisionPosition(round.round_id, (*u).clone()))
+                .get(&DataKeyScoped::PrecisionPosition(round.round_id, (*u).clone()))
                 .expect("each precision prediction stored at indexed key");
             assert_eq!(pred.amount, 10_0000000);
         }
@@ -315,7 +315,7 @@ fn bench_precision_mode_indexed_keys() {
         let participants: Vec<Address> = env
             .storage()
             .persistent()
-            .get(&DataKey::RoundParticipants(round.round_id))
+            .get(&DataKeyScoped::RoundParticipants(round.round_id))
             .expect("participants list shared between modes");
         assert_eq!(participants.len(), 3);
     });

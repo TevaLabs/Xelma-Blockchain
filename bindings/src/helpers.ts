@@ -63,6 +63,13 @@ export class ExposureCapExceededError extends XelmaError {
   }
 }
 
+export class NoRoundTemplateError extends XelmaError {
+  constructor() {
+    super("No round template configured", 65, "NoRoundTemplate");
+    this.name = "NoRoundTemplateError";
+  }
+}
+
 // ─── Error Mapping ─────────────────────────────────────────────
 
 const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
@@ -72,6 +79,7 @@ const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
   22: ContractPausedError,
   28: StakeExceedsMaxError,
   29: ExposureCapExceededError,
+  65: NoRoundTemplateError,
 };
 
 /**
@@ -213,4 +221,43 @@ export async function claimIfPending(
   }
 
   return { claimed: false };
+}
+
+// ─── Simulate Helper ───────────────────────────────────────────
+
+export interface SimulateBetResult {
+  simulated: boolean;
+  minResourceFee?: string;
+  error?: Error;
+}
+
+/**
+ * Simulates placing a bet without broadcasting to inspect expected outcome,
+ * resource fee estimation, and decode any contract errors.
+ *
+ * @example
+ * const { simulated, minResourceFee, error } = await simulateBet(client, {
+ *   user: "GABCDEF123...",
+ *   amount: 500_000_000n,
+ *   side: { tag: "Up", values: undefined },
+ * })
+ */
+export async function simulateBet(
+  client: Client,
+  params: PlaceBetParams,
+  options?: MethodOptions,
+): Promise<SimulateBetResult> {
+  try {
+    const betTx = await client.place_bet(params, options);
+    const simulatedTx = await betTx.simulate();
+    return {
+      simulated: true,
+      minResourceFee: (simulatedTx as any).minResourceFee,
+    };
+  } catch (err) {
+    return {
+      simulated: false,
+      error: wrapContractError(err),
+    };
+  }
 }

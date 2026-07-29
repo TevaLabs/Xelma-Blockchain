@@ -6,6 +6,15 @@
 
 - Closes #
 
+## Docs reference
+
+- [ ] [`PROTOCOL_SPEC.md`](./PROTOCOL_SPEC.md) — invariants (I1–I13) updated if affected
+- [ ] [`docs/EVENT_SCHEMA.md`](./docs/EVENT_SCHEMA.md) — event schema updated if new/changed events
+- [ ] [`MIGRATION.md`](./MIGRATION.md) — breaking changes documented with migration path
+- [ ] [`COMPATIBILITY_POLICY.md`](./COMPATIBILITY_POLICY.md) — MAJOR/MINOR/PATCH classification noted
+- [ ] [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md) — open findings referenced if affected
+- [ ] [`contracts/BENCHMARKS.md`](./contracts/BENCHMARKS.md) — benchmark evidence included if hot paths changed
+
 ## Validation
 
 - [ ] `cargo test --workspace`
@@ -15,9 +24,14 @@
 
 ## Governance checklist
 
-- [ ] I reviewed `CONTRIBUTING.md` for workflow expectations
+- [ ] I reviewed [`CONTRIBUTING.md`](./CONTRIBUTING.md) for workflow expectations
+- [ ] I reviewed the [Contributor Task Matrix](./docs/CONTRIBUTOR_TASK_MATRIX.md) for domain-specific requirements
 - [ ] I checked `CODEOWNERS` impact for touched paths
-- [ ] I followed `SUPPORT.md` disclosure guidance for any security-sensitive change
+- [ ] I followed [`SUPPORT.md`](./SUPPORT.md) disclosure guidance for any security-sensitive change
+
+## Labels
+
+- [ ] I applied relevant labels (`protocol`, `security`, `bug`, `enhancement`, `testing`, `blockchain`, `contract`, `Rust`, `priority: high/medium/low`) as described in [`CONTRIBUTING.md`](./CONTRIBUTING.md#label-guidance)
 
 ## Smart-Contract Security Checklist
 

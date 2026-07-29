@@ -96,6 +96,8 @@ Emitted when a round is settled competitively by the oracle.
 | 0        | `round_id`    | `u64`  | Round that was resolved                          |
 | 1        | `final_price` | `u128` | Closing price reported by the oracle (4 dec.)    |
 | 2        | `mode`        | `u32`  | Round mode: `0` = UpDown, `1` = Precision        |
+| 3        | `protocol_fee_bps` | `Option<u32>` | Active protocol fee in basis points (if set)     |
+| 4        | `precision_payout_policy` | `u32` | Payout distribution policy used for Precision round: `0` = Equal, `1` = StakeWeighted |
 
 ---
 
@@ -292,6 +294,66 @@ Emitted when the oracle records an on-chain liveness heartbeat.
 | 0        | `timestamp` | `u64` | Unix epoch seconds when the heartbeat was recorded on-chain  |
 | 1        | `status`    | `u32` | Oracle status: `0` = active, `1` = degraded, `2` = offline  |
 
+---
+
+## Oracle rotation events (two-step with mandatory delay)
+
+Oracle rotation uses a two-step flow with a **mandatory 1-hour delay**
+(`MIN_ROTATION_DELAY_SECONDS = 3_600`) between proposal and acceptance.
+This prevents quiet takeovers — even with admin key compromise, operators
+have a full hour to observe the proposal and react.
+
+### `("oracle", "propose")`
+
+Emitted when the admin proposes a new oracle address with an expiry window.
+
+| Position | Field         | Type      | Description                                            |
+|----------|---------------|-----------|--------------------------------------------------------|
+| 0        | `new_oracle`  | `Address` | Proposed new oracle address                            |
+| 1        | `expires_at`  | `u64`     | Unix timestamp when the proposal expires               |
+
+### `("oracle", "accept")`
+
+Emitted when a pending rotation proposal is successfully accepted (after the
+mandatory delay has elapsed and before expiry).
+
+| Position | Field             | Type      | Description                               |
+|----------|-------------------|-----------|-------------------------------------------|
+| 0        | `previous_oracle` | `Address` | Oracle address before the rotation         |
+| 1        | `new_oracle`      | `Address` | New oracle address after the rotation      |
+
+### `("oracle", "cancel")`
+
+Emitted when the admin cancels a pending rotation proposal.
+
+| Position | Field         | Type      | Description                                      |
+|----------|---------------|-----------|--------------------------------------------------|
+| 0        | `new_oracle`  | `Address` | The proposed oracle address that was cancelled    |
+
+### `("oracle", "expired")`
+
+Emitted when an expired proposal is cleaned up (auto-clean in
+`get_oracle_rotation_proposal` or during `accept_oracle_rotation`).
+
+| Position | Field         | Type  | Description                                      |
+|----------|---------------|-------|--------------------------------------------------|
+| 0        | `new_oracle`  | `Address` | The proposed oracle address that expired       |
+| 1        | `proposed_at` | `u64` | Unix timestamp when the proposal was created      |
+| 2        | `expires_at`  | `u64` | Unix timestamp when the proposal expired          |
+
+### `("oracle", "early")`
+
+Emitted when an attempt to accept a rotation proposal is rejected because the
+mandatory delay (`MIN_ROTATION_DELAY_SECONDS`) has not yet elapsed.
+
+| Position | Field           | Type  | Description                                          |
+|----------|-----------------|-------|------------------------------------------------------|
+| 0        | `new_oracle`    | `Address` | The proposed oracle address                       |
+| 1        | `current_ts`    | `u64` | Current ledger timestamp at rejection time            |
+| 2        | `earliest_accept` | `u64` | Timestamp at which acceptance will be allowed       |
+
+---
+
 ### `("mode", "transition")`
 
 Emitted when the contract's emergency runtime mode is changed by the admin.
@@ -410,6 +472,105 @@ refunds, so no new authorization surface is added.
 **Topics**: `("protocol", "fee_withdrawn")`
 **Source contracts**: `VirtualTokenContract`
 **Emitted by**: `withdraw_protocol_fee`.
+
+---
+
+## `("template", "set")` — Round template stored
+
+Emitted when the admin stores or overwrites the round-creation blueprint
+used by `create_next_from_template`.
+
+| Field         | Type          | Description                                    |
+|---------------|---------------|-------------------------------------------------|
+| `start_price` | `u128`        | Starting price the next round will use.         |
+| `mode`        | `u32`         | Round mode: `0` = UpDown, `1` = Precision.       |
+
+**Topics**: `("template", "set")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `set_round_template`.
+
+---
+
+## `("template", "cleared")` — Round template removed
+
+Emitted when the admin clears the configured round template.
+
+| Field     | Type  | Description                                  |
+|-----------|-------|-----------------------------------------------|
+| `ledger`  | `u32` | Ledger sequence number at which it was cleared.|
+
+**Topics**: `("template", "cleared")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `clear_round_template`.
+
+---
+
+## `("template", "applied")` — Next round created from template
+
+Emitted when `create_next_from_template` successfully creates a round from
+the stored blueprint. Always accompanied by a `("round", "created")` event
+from the underlying `create_round` call.
+
+| Field         | Type   | Description                                   |
+|---------------|--------|------------------------------------------------|
+| `round_id`    | `u64`  | Id of the newly created round.                  |
+| `start_price` | `u128` | Starting price used (from the template).        |
+| `mode`        | `u32`  | Round mode used: `0` = UpDown, `1` = Precision. |
+
+**Topics**: `("template", "applied")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `create_next_from_template`.
+
+---
+
+## `("season", "reset")` — Leaderboard season archived and advanced
+
+Emitted when the admin resets the active leaderboard season. The ending
+season's bounded rankings are frozen into a permanent `SeasonArchive` before
+the season id advances; per-user season stats (`SeasonUserStats`) for the
+ended season are never deleted and remain independently queryable.
+
+| Field               | Type  | Description                                          |
+|---------------------|-------|-------------------------------------------------------|
+| `season_id`         | `u32` | Id of the season that was just archived.               |
+| `new_season_id`     | `u32` | Id of the newly-active season (`season_id + 1`).        |
+| `ended_at_ledger`    | `u32` | Ledger sequence number at which the season ended.       |
+| `participant_count` | `u32` | Distinct addresses present in the archived rankings.    |
+
+**Topics**: `("season", "reset")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `reset_leaderboard_season`.
+
+---
+
+## `("oracle", "hblocked")` — Heartbeat health gate blocked settlement
+
+Emitted when `resolve_round` is blocked by the heartbeat health gate in strict mode
+(Issue #264). The round remains active; the oracle or admin must address the heartbeat
+state before retrying.
+
+| Position | Field       | Type   | Description                                    |
+|----------|-------------|--------|------------------------------------------------|
+| 0        | `round_id`  | `u64`  | Round id that was blocked from settlement       |
+
+**Topics**: `("oracle", "hblocked")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `resolve_round` (heartbeat health gate, strict mode).
+
+---
+
+## `("oracle", "hoverride")` — Heartbeat health gate override consumed
+
+Emitted when the admin-armed heartbeat health override is consumed during
+`resolve_round`, allowing settlement to proceed past the gate (Issue #264).
+
+| Position | Field       | Type   | Description                                    |
+|----------|-------------|--------|------------------------------------------------|
+| 0        | `round_id`  | `u64`  | Round id for which the override was consumed    |
+
+**Topics**: `("oracle", "hoverride")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `resolve_round` (heartbeat health gate override path).
 
 ---
 

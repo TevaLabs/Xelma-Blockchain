@@ -18,8 +18,9 @@ This runbook covers staging-to-mainnet deployment for Xelma contract updates, in
 
 ### Checklist
 - [ ] Confirm target network and chain ID match the intended environment.
+- [ ] Execute testnet dry-run validation: `./scripts/deploy_testnet.sh --dry-run` or trigger `Deploy Testnet` GitHub Actions workflow with `dry_run: true`.
 - [ ] Verify admin and oracle addresses are the intended role keys.
-- [ ] Confirm the deployed artifact hash matches the reviewed build.
+- [ ] Confirm the deployed artifact hash/SHA256 checksum matches the reviewed build.
 - [ ] Run the release checklist script: `python3 scripts/check_release_checklist.py --network mainnet --strict`.
 - [ ] Review the pending config changes and ensure the timelock is acceptable.
 - [ ] Confirm an operator can access the pause/rollback path before deployment starts.

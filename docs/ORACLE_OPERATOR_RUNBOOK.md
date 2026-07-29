@@ -188,6 +188,11 @@ prove liveness.
 `is_oracle_live()` returns `false` if no heartbeat exists, status is `2`, or the
 heartbeat is older than the threshold.
 
+**Heartbeat health gate (strict mode, Issue #264):** When `HbGateConfig.strict_mode`
+is enabled by the admin, `resolve_round` blocks settlement if the oracle heartbeat
+is not live. An admin-armed one-shot override (`arm_hb_override`) or a configured
+grace period (`HbGateConfig.grace_seconds`) can allow settlement through the gate.
+
 **Recommended interval:** every 15–30 minutes for a 1-hour threshold.
 
 ---
@@ -385,6 +390,69 @@ Prevention:
   - After a successful resolution, persist the consumed nonce off-chain
     so the next round starts fresh.
 ```
+
+---
+
+## 9. Oracle Rotation (Two-Step with Mandatory Delay)
+
+The oracle address can be rotated through a two-step process: first the admin
+proposes a new oracle, then **any caller** can accept the proposal after a
+**mandatory 1-hour delay** has elapsed. This delay prevents quiet one-block
+takeovers — even if the admin key is compromised, the community has a full hour
+to observe the `(oracle, propose)` event and react before the oracle actually
+changes.
+
+### 9.1 Rotation lifecycle
+
+```
+Admin proposes ──→ (1 hour delay) ──→ Anyone accepts ──→ Oracle rotated
+     │                                       │
+     └── Admin can cancel at any time ───────┘
+```
+
+### 9.2 Constants
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `MIN_ROTATION_DELAY_SECONDS` | 3 600 (1 hour) | Minimum time between proposal and acceptance |
+| `MIN_ROTATION_EXPIRY_SECONDS` | 60 (1 minute) | Minimum expiry window after delay |
+
+### 9.3 Entry points
+
+**`propose_oracle_rotation(new_oracle, expires_in_seconds)`** (admin only)
+- Proposes a new oracle address.
+- `expires_in_seconds` must be ≥ 3 600 (the mandatory delay).
+- Emits `(oracle, propose)`.
+
+**`accept_oracle_rotation()`** (any caller)
+- Accepts the pending proposal after the delay has elapsed.
+- Fails with `RotationDelayNotElapsed` if called too early.
+- Fails with `NoPendingRotation` if the proposal has expired.
+- Emits `(oracle, accept)` on success.
+
+**`cancel_oracle_rotation()`** (admin only)
+- Cancels a pending proposal at any time.
+- Emits `(oracle, cancel)`.
+
+### 9.4 Events
+
+| Event | Emitted when |
+|-------|-------------|
+| `(oracle, propose)` | Admin proposes a new oracle |
+| `(oracle, accept)` | Rotation is successfully accepted after delay |
+| `(oracle, cancel)` | Admin cancels a pending proposal |
+| `(oracle, expired)` | Proposal expires (auto-cleaned) |
+| `(oracle, early)` | Acceptance attempted before delay elapsed |
+
+### 9.5 Monitoring checklist
+
+Operators and monitoring dashboards should:
+1. Watch for `(oracle, propose)` events — these signal an impending rotation.
+2. If the proposed address is unexpected, escalate to the admin within the
+   1-hour delay window.
+3. Watch for `(oracle, early)` events — these indicate someone is trying to
+   bypass the delay.
+4. After `(oracle, accept)`, verify the new oracle by calling `get_oracle()`.
 
 ---
 

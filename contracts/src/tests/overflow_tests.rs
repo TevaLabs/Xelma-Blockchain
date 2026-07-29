@@ -11,7 +11,7 @@
 use super::config_helpers::apply_max_pending_winnings;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKey, OraclePayload};
+use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, Env,
@@ -96,7 +96,7 @@ fn test_claim_winnings_overflow_returns_payout_overflow() {
 
     // Inject i128::MAX as pending winnings directly into storage
     env.as_contract(&contract_id, || {
-        let key = DataKey::PendingWinnings(user.clone());
+        let key = DataKeyScoped::PendingWinnings(user.clone());
         env.storage().persistent().set(&key, &i128::MAX);
     });
 
@@ -121,9 +121,9 @@ fn test_claim_winnings_overflow_balance_at_max() {
 
     // Set balance to i128::MAX directly
     env.as_contract(&contract_id, || {
-        let bal_key = DataKey::Balance(user.clone());
+        let bal_key = DataKeyScoped::Balance(user.clone());
         env.storage().persistent().set(&bal_key, &i128::MAX);
-        let win_key = DataKey::PendingWinnings(user.clone());
+        let win_key = DataKeyScoped::PendingWinnings(user.clone());
         env.storage().persistent().set(&win_key, &1i128);
     });
 
@@ -160,12 +160,12 @@ fn test_record_winnings_mul_overflow_returns_payout_overflow() {
         let mut round: crate::types::Round = env
             .storage()
             .persistent()
-            .get(&DataKey::ActiveRound)
+            .get(&DataKeyCore::ActiveRound)
             .unwrap();
         round.pool_down = i128::MAX; // causes payout_mul overflow
         env.storage()
             .persistent()
-            .set(&DataKey::ActiveRound, &round);
+            .set(&DataKeyCore::ActiveRound, &round);
     });
 
     env.ledger().with_mut(|li| li.sequence_number = 12);
@@ -202,7 +202,7 @@ fn test_record_refunds_overflow_returns_payout_overflow() {
 
     // Inject near-max existing pending winnings for alice
     env.as_contract(&contract_id, || {
-        let key = DataKey::PendingWinnings(alice.clone());
+        let key = DataKeyScoped::PendingWinnings(alice.clone());
         env.storage().persistent().set(&key, &(i128::MAX - 1));
     });
 
@@ -237,7 +237,7 @@ fn test_claim_winnings_near_max_succeeds() {
 
     // balance = 0, pending = i128::MAX  → new_balance = i128::MAX (no overflow)
     env.as_contract(&contract_id, || {
-        let win_key = DataKey::PendingWinnings(user.clone());
+        let win_key = DataKeyScoped::PendingWinnings(user.clone());
         env.storage().persistent().set(&win_key, &i128::MAX);
     });
 

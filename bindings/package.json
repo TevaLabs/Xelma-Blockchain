@@ -15,8 +15,8 @@
   "author": "TevaLabs",
   "license": "MIT",
   "scripts": {
-    "build": "./node_modules/.bin/tsc",
-    "lint": "./node_modules/.bin/tsc --noEmit",
+    "build": "tsc",
+    "lint": "tsc --noEmit",
     "test:parity": "node src/parity.js",
     "test:errors": "vitest run tests/contract-error-parity.test.js",
     "test:wasm": "vitest run tests/wasm-parity.test.js",

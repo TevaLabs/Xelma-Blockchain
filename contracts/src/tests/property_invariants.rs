@@ -10,7 +10,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::{
-    BetSide, DataKey, OraclePayload, PrecisionPrediction, Round, UserPosition, UserStats,
+    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, PrecisionPrediction, Round, UserPosition, UserStats,
 };
 use proptest::prelude::*;
 use soroban_sdk::{
@@ -83,12 +83,12 @@ proptest! {
                 });
             }
 
-            env.storage().persistent().set(&DataKey::UpDownPositions, &positions);
+            env.storage().persistent().set(&DataKeyCore::UpDownPositions, &positions);
 
-            let mut round: Round = env.storage().persistent().get(&DataKey::ActiveRound).unwrap();
+            let mut round: Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
             round.pool_up = total_up;
             round.pool_down = total_down;
-            env.storage().persistent().set(&DataKey::ActiveRound, &round);
+            env.storage().persistent().set(&DataKeyCore::ActiveRound, &round);
         });
 
         // Advance ledger to allow resolution
@@ -205,7 +205,7 @@ proptest! {
 
             env.storage()
                 .persistent()
-                .set(&DataKey::PrecisionPositions, &predictions);
+                .set(&DataKeyCore::PrecisionPositions, &predictions);
         });
 
         // Advance ledger to allow resolution
@@ -331,16 +331,16 @@ proptest! {
             positions.set(alice.clone(),   UserPosition { amount: a_up,   side: BetSide::Up });
             positions.set(bob.clone(),     UserPosition { amount: b_up,   side: BetSide::Up });
             positions.set(charlie.clone(), UserPosition { amount: c_down, side: BetSide::Down });
-            env.storage().persistent().set(&DataKey::UpDownPositions, &positions);
+            env.storage().persistent().set(&DataKeyCore::UpDownPositions, &positions);
 
-            let mut round: Round = env.storage().persistent().get(&DataKey::ActiveRound).unwrap();
+            let mut round: Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
             round.pool_up   = total_up;
             round.pool_down = total_down;
-            env.storage().persistent().set(&DataKey::ActiveRound, &round);
+            env.storage().persistent().set(&DataKeyCore::ActiveRound, &round);
 
             // fee_bps_raw == 0  →  fee disabled (no key written)
             if fee_bps_raw > 0 {
-                env.storage().persistent().set(&DataKey::ProtocolFeeBps, &fee_bps_raw);
+                env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
             }
         });
 
@@ -441,10 +441,10 @@ proptest! {
                 PrecisionPrediction { user: bob.clone(),     predicted_price: price_b, amount: amount_b });
             predictions.set(charlie.clone(),
                 PrecisionPrediction { user: charlie.clone(), predicted_price: price_c, amount: amount_c });
-            env.storage().persistent().set(&DataKey::PrecisionPositions, &predictions);
+            env.storage().persistent().set(&DataKeyCore::PrecisionPositions, &predictions);
 
             if fee_bps_raw > 0 {
-                env.storage().persistent().set(&DataKey::ProtocolFeeBps, &fee_bps_raw);
+                env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
             }
         });
 
@@ -522,16 +522,16 @@ proptest! {
             let mut positions = Map::<Address, UserPosition>::new(&env);
             positions.set(alice.clone(), UserPosition { amount: a_up,   side: BetSide::Up   });
             positions.set(bob.clone(),   UserPosition { amount: b_down, side: BetSide::Down });
-            env.storage().persistent().set(&DataKey::UpDownPositions, &positions);
+            env.storage().persistent().set(&DataKeyCore::UpDownPositions, &positions);
 
-            let mut round: Round = env.storage().persistent().get(&DataKey::ActiveRound).unwrap();
+            let mut round: Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
             round.pool_up   = a_up;
             round.pool_down = b_down;
-            env.storage().persistent().set(&DataKey::ActiveRound, &round);
+            env.storage().persistent().set(&DataKeyCore::ActiveRound, &round);
 
             // Even with a fee configured, it must NOT be charged on a tie/refund.
             if fee_bps_raw > 0 {
-                env.storage().persistent().set(&DataKey::ProtocolFeeBps, &fee_bps_raw);
+                env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
             }
         });
 
@@ -604,36 +604,36 @@ proptest! {
             let mut positions = Map::<Address, UserPosition>::new(&env);
             positions.set(alice.clone(), UserPosition { amount: a_up,   side: BetSide::Up   });
             positions.set(bob.clone(),   UserPosition { amount: b_down, side: BetSide::Down });
-            env.storage().persistent().set(&DataKey::UpDownPositions, &positions);
+            env.storage().persistent().set(&DataKeyCore::UpDownPositions, &positions);
 
-            let mut round: Round = env.storage().persistent().get(&DataKey::ActiveRound).unwrap();
+            let mut round: Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
             round.pool_up   = a_up;
             round.pool_down = b_down;
-            env.storage().persistent().set(&DataKey::ActiveRound, &round);
+            env.storage().persistent().set(&DataKeyCore::ActiveRound, &round);
 
             if fee_bps_raw > 0 {
-                env.storage().persistent().set(&DataKey::ProtocolFeeBps, &fee_bps_raw);
+                env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
             }
         });
 
         // Register both users as participants so the cancel path can find them.
         env.as_contract(&contract_id, || {
-            let round: Round = env.storage().persistent().get(&DataKey::ActiveRound).unwrap();
+            let round: Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
             let round_id = round.round_id;
             let mut parts = soroban_sdk::Vec::<Address>::new(&env);
             parts.push_back(alice.clone());
             parts.push_back(bob.clone());
             env.storage().persistent().set(
-                &DataKey::RoundParticipants(round_id),
+                &DataKeyScoped::RoundParticipants(round_id),
                 &parts,
             );
             // Also store individual position keys so cancel can read them.
             env.storage().persistent().set(
-                &DataKey::Position(round_id, alice.clone()),
+                &DataKeyScoped::Position(round_id, alice.clone()),
                 &UserPosition { amount: a_up,   side: BetSide::Up   },
             );
             env.storage().persistent().set(
-                &DataKey::Position(round_id, bob.clone()),
+                &DataKeyScoped::Position(round_id, bob.clone()),
                 &UserPosition { amount: b_down, side: BetSide::Down },
             );
         });

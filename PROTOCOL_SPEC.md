@@ -216,14 +216,40 @@ Canonical event classes:
 - Round lifecycle: `("round", "created")`, `("round", "resolved")`,
   `("round", "cancelled")`, `("round", "fallback")`.
 - User actions: `("mint", "initial")`, `("bet", "placed")`,
-  `("predict", "price")`, `("claim", "winnings")`.
+  `("predict", "price")`, `("claim", "winnings")`,
+  `("cashout", "early")`.
 - Configuration/liveness: `("windows", "updated")`,
-  `("oracle", "heartbeat")`.
+  `("oracle", "heartbeat")`, `("config", "ec_bps")`.
 
 Evidence:
 - Code: event publishing calls in `contract.rs`.
-- Tests: `lifecycle.rs`, `mode_tests.rs`, `resolution.rs`, `security.rs`.
+- Tests: `lifecycle.rs`, `mode_tests.rs`, `resolution.rs`, `security.rs`,
+  `conservation.rs`.
 - Docs: `docs/EVENT_SCHEMA.md`.
+
+### I14. Early Cash-Out
+
+When enabled by admin (`EarlyCashoutBps` set to a non-`None` penalty rate in
+basis points), a bettor in an UpDown round may exit their position during the
+Running phase (`bet_end_ledger ≤ ledger < end_ledger`). The user receives
+`stake * (10000 - penalty_bps) / 10000` as pending winnings; the forfeited
+amount is credited to the protocol fee treasury. The full original stake is
+deducted from the pool so remaining participants are unaffected.
+
+Restrictions:
+- Default-off: feature is disabled unless admin explicitly configures.
+- UpDown rounds only (not Precision).
+- Running phase only; blocked after resolution.
+- Each user may cash out at most once per round (position is removed).
+
+Conservation holds: `cashout + forfeit == stake` per exit. The pool reduction
+preserves the invariant that pool totals match the sum of remaining active
+positions.
+
+Evidence:
+- Code: `cash_out_early` in `betting.rs`, `set_early_cashout_bps` in `config.rs`.
+- Tests: `conservation.rs`.
+- Docs: `PROTOCOL_SPEC.md` (this section).
 
 ## Threat Model
 
@@ -287,6 +313,7 @@ Evidence:
 | I11 | Cancellation/fallback refunds | `cancel_round`, `_refund_under_threshold` | `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs` | Covered |
 | I12 | Storage cleanup/migration | indexed cleanup and legacy fallbacks | `storage_benchmarks.rs` | Covered |
 | I13 | Event semantics | event publishing calls | `lifecycle.rs`, `mode_tests.rs`, `resolution.rs`, `security.rs` | Covered; canonical schema in `docs/EVENT_SCHEMA.md` |
+| I14 | Early cash-out | `cash_out_early`, `set_early_cashout_bps` | `conservation.rs` | Covered |
 
 ## Contributor Checklist
 

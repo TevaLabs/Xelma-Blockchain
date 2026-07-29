@@ -581,6 +581,30 @@ jobs:
             echo "OK: WASM size is within budget."
           fi
 
+  e2e-smoke:
+    name: Local Soroban RPC E2E Smoke
+    runs-on: ubuntu-latest
+    needs: contract-build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: contract-wasm
+          path: target/wasm32v1-none/release/
+
+      - name: Install Stellar CLI & dependencies
+        run: |
+          cargo install --locked stellar-cli --version 22.0.1 || true
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run E2E Smoke Test against Local Soroban RPC
+        run: |
+          chmod +x scripts/e2e_smoke.sh
+          ./scripts/e2e_smoke.sh
+
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest

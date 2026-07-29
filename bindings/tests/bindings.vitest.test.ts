@@ -90,6 +90,8 @@ const EXPECTED_CONTRACT_METHODS = [
   'get_max_precision_participants',
   'set_mint_limit',
   'get_mint_limit',
+  'set_epoch_mint_budget',
+  'get_epoch_mint_budget',
   'set_archive_retention',
   'get_archive_retention',
   'set_close_buffer_ledgers',

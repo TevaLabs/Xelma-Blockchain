@@ -3,6 +3,7 @@ import {
   mintIfNeeded,
   placeBetChecked,
   claimIfPending,
+  simulateBet,
   XelmaError,
   InsufficientBalanceError,
   NoActiveRoundError,
@@ -10,10 +11,12 @@ import {
   AlreadyBetError,
   StakeExceedsMaxError,
   ExposureCapExceededError,
+  NoRoundTemplateError,
   wrapContractError,
   type MintResult,
   type ClaimResult,
   type PlaceBetParams,
+  type SimulateBetResult,
 } from "../src/helpers.js";
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -203,6 +206,45 @@ describe("wrapContractError", () => {
     const err = wrapContractError({ code: 29 });
     expect(err).toBeInstanceOf(ExposureCapExceededError);
   });
+
+  it("passes through NoRoundTemplateError for code 65", () => {
+    const err = wrapContractError({ code: 65 });
+    expect(err).toBeInstanceOf(NoRoundTemplateError);
+  });
+});
+
+// ─── simulateBet ───────────────────────────────────────────────
+
+describe("simulateBet", () => {
+  it("returns simulated=true and minResourceFee on success", async () => {
+    const client = createMockClient();
+    client.place_bet.mockResolvedValue({
+      simulate: vi.fn().mockResolvedValue({ minResourceFee: "100" }),
+    });
+
+    const result = await simulateBet(client, {
+      user: "GABC",
+      amount: 100n,
+      side: { tag: "Up", values: undefined },
+    });
+
+    expect(result.simulated).toBe(true);
+    expect(result.minResourceFee).toBe("100");
+  });
+
+  it("returns simulated=false and wrapped error on simulation failure", async () => {
+    const client = createMockClient();
+    client.place_bet.mockRejectedValue({ code: 22 });
+
+    const result = await simulateBet(client, {
+      user: "GABC",
+      amount: 100n,
+      side: { tag: "Up", values: undefined },
+    });
+
+    expect(result.simulated).toBe(false);
+    expect(result.error).toBeInstanceOf(ContractPausedError);
+  });
 });
 
 // ─── Type exports ──────────────────────────────────────────────
@@ -225,5 +267,10 @@ describe("type exports", () => {
       side: { tag: "Down", values: undefined },
     };
     expect(p.side.tag).toBe("Down");
+  });
+
+  it("SimulateBetResult has expected shape", () => {
+    const s: SimulateBetResult = { simulated: true, minResourceFee: "100" };
+    expect(s.simulated).toBe(true);
   });
 });

@@ -537,7 +537,7 @@ fn test_commit_reveal_e2e_reveal_without_commit_returns_not_found() {
 /// has committed, they cannot bypass the hash by calling
 /// `place_precision_prediction` (and vice-versa). This enforces the
 /// contract invariant that the indexed position keys
-/// `DataKey::PrecisionPosition` / `DataKey::PrecisionCommitment` cannot both be
+/// `DataKeyScoped::PrecisionPosition` / `DataKeyScoped::PrecisionCommitment` cannot both be
 /// populated for the same `(round_id, user)`.
 #[test]
 fn test_commit_reveal_e2e_commit_then_direct_prediction_is_rejected() {

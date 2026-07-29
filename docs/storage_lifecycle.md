@@ -86,3 +86,82 @@ When adding new persistent keys or modifying storage layouts:
 3. If it is short-lived:
    - Ensure that the key is explicitly cleared (`env.storage().persistent().remove(...)`) when its lifecycle completes.
 4. Always add verification tests in `contracts/src/tests/ttl_tests.rs`.
+
+---
+
+## 5. Batch TTL Touch Entrypoint (`batch_touch_ttl`)
+
+A dedicated admin-gated entrypoint, `batch_touch_ttl`, allows maintainers to
+proactively extend the TTL of system-critical storage keys without waiting for
+on-access extension. This is essential for production rent maintenance.
+
+### Entrypoint
+
+```rust
+pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, ContractError>
+```
+
+- **Auth gate**: Requires admin authentication (`admin.require_auth()`).
+- **Allowlist**: Only keys in the `_is_ttl_touch_allowed` allowlist are accepted.
+  Supplying a non-allowlisted key fails the entire call with
+  `UnsupportedDataKeyForTtlTouch`.
+- **Absent keys**: Keys in the allowlist but absent from storage are silently
+  skipped (counted as part of the event's `skipped` field).
+- **Return value**: Number of keys whose TTL was actually extended.
+- **Event**: Emits `("storage", "touch")` with `(touched: u32, skipped: u32)`.
+
+### Allowlisted Key Classes
+
+| Class               | Keys                                                                 |
+|---------------------|----------------------------------------------------------------------|
+| Core config         | `Admin`, `Oracle`, `SchemaVersion`, `Paused`                        |
+| Windows             | `BetWindowLedgers`, `RunWindowLedgers`, `CloseBufferLedgers`        |
+| Risk limits         | `MaxStake`, `MaxUserRoundExposure`, `MaxPendingWinnings`            |
+| Matchmaking         | `MinParticipants`, `MaxPrecisionParticipants`                       |
+| Oracle safety       | `OracleHeartbeat`, `OracleStaleThreshold`, `OracleMaxDeviationBps`,
+|                     | `OracleDeviationOverrideArmed`, `OracleMinConfidenceBps`,
+|                     | `OracleStrictMode`                                                   |
+| Protocol fee        | `ProtocolFeeBps`, `ProtocolFeeTreasury`                              |
+| Migration           | `MigratedToV3`                                                       |
+| Archive / Keeper    | `ArchiveRetention`, `RoundTemplate`                                  |
+| Leaderboard         | `LeaderboardWins`, `LeaderboardStreak`, `SeasonId`,
+|                     | `SeasonLeaderboardWins`, `SeasonLeaderboardStreak`                   |
+| Round counter       | `LastRoundId`                                                         |
+| Rotation            | `OracleRotationProposal`                                             |
+| Mint                | `MintLimitConfig`                                                    |
+
+Per-user keys (`Balance`, `PendingWinnings`, `UserStats`) and round-scoped
+keys (`ActiveRound`, `Position`, `PrecisionPosition`, `RoundParticipants`,
+`ArchivedRound`, etc.) are **excluded** because they are either ephemeral
+(deleted after settlement/cancel) or managed through the standard on-access
+TTL extension path.
+
+### Cadence Recommendations
+
+| Environment | Recommended Frequency | Trigger                          |
+|-------------|----------------------|----------------------------------|
+| Testnet     | Weekly / on-demand   | After contract upgrades or       |
+|             |                      | long idle periods                |
+| Mainnet     | Every 7–10 days      | Cron job or monitoring alert     |
+|             |                      | when storage TTL drops below     |
+|             |                      | 7 days (~120_960 ledgers)        |
+
+### Example Usage (Script / CLI)
+
+```bash
+# Using stellar-cli with a Soroban contract invocation:
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source-account <ADMIN_SECRET> \
+  --network testnet \
+  -- \
+  batch_touch_ttl \
+  --keys '[{"variant": "Admin"}, {"variant": "Oracle"}, {"variant": "SchemaVersion"}]'
+```
+
+> [!IMPORTANT]
+> The `batch_touch_ttl` entrypoint is **not** a substitute for proper
+> on-access TTL extension in the contract logic. It exists as a safety net
+> and maintenance tool for emergencies and long-idle deployments. Always
+> ensure read/write paths call `_extend_persistent_ttl` per the on-access
+> policy (Section 2).
