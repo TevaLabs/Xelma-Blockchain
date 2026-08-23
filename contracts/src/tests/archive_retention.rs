@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+use super::config_helpers::apply_windows;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
 use crate::types::{ArchivedRoundSummary, DataKeyCore, DataKeyScoped, OraclePayload};
@@ -32,6 +33,14 @@ fn create_and_resolve_round(
         li.sequence_number = start_ledger;
         li.timestamp = 1000;
     });
+    // Widen the round's run window to exactly 100 ledgers: large enough
+    // that the round-relative oracle timestamp check (Issue:
+    // oracle-round-relative-timestamp-window) accepts the fixed
+    // payload.timestamp=1800 resolved below (needs >=100 ledgers: round_start
+    // 1000 + 100*5 + 300s skew == 1800), yet no larger than the fixed
+    // `start_ledger + 100` advance below, which must reach round.end_ledger
+    // for resolve_round's RoundNotEnded gate to pass.
+    apply_windows(env, client, 6, 100);
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -297,6 +306,8 @@ fn test_user_archived_participation_returns_none_after_prune() {
         li.sequence_number = 0;
         li.timestamp = 1000;
     });
+    // Widen the run window — see the comment in create_and_resolve_round.
+    apply_windows(&env, &client, 6, 100);
     client.create_round(&1_0000000, &None);
     client.place_bet(&user, &100_0000000, &crate::types::BetSide::Up);
 
@@ -315,22 +326,48 @@ fn test_user_archived_participation_returns_none_after_prune() {
         attestation: None,
     });
 
-    // User participation is available before prune
-    let outcome = client.get_user_archived_participation(&user, &0);
+    // User participation is available before prune. Round ids are
+    // 1-indexed (create_round increments from a last-id of 0), so round 1's
+    // id is 1, not the OraclePayload.round_id field above (which is
+    // matched against round.start_ledger, a different value).
+    let outcome = client.get_user_archived_participation(&user, &1);
     assert!(outcome.is_some(), "outcome should exist before prune");
 
-    // Create and resolve round 2 — this should prune round 1
-    create_and_resolve_round(&env, &client, &contract_id_obj, 200, 1);
+    // Create round 2, with the same user participating, and resolve — this
+    // should prune round 1.
+    apply_windows(&env, &client, 6, 100);
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 200;
+        li.timestamp = 1000;
+    });
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user, &100_0000000, &crate::types::BetSide::Up);
 
-    // After prune, get_user_archived_participation should return None
-    let outcome = client.get_user_archived_participation(&user, &0);
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 300;
+        li.timestamp = 2000;
+    });
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: 1800,
+        round_id: 200,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id_obj.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    // After prune, get_user_archived_participation should return None for
+    // round 1
+    let outcome = client.get_user_archived_participation(&user, &1);
     assert!(
         outcome.is_none(),
         "get_user_archived_participation should return None for pruned round"
     );
 
-    // Round 2 still has its outcome
-    let outcome2 = client.get_user_archived_participation(&user, &1);
+    // Round 2 (id=2) still has its outcome
+    let outcome2 = client.get_user_archived_participation(&user, &2);
     assert!(outcome2.is_some(), "outcome should exist for retained round");
 }
 
@@ -362,7 +399,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         assert!(
             env.storage()
                 .persistent()
-                .has(&DataKeyScoped::CancelledRound(0u64))
+                .has(&DataKeyScoped::CancelledRound(1u64))
         );
     });
 
@@ -379,7 +416,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         assert!(
             !env.storage()
                 .persistent()
-                .has(&DataKeyScoped::CancelledRound(0u64)),
+                .has(&DataKeyScoped::CancelledRound(1u64)),
             "CancelledRound marker should be cleaned up during prune"
         );
     });

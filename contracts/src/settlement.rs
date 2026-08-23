@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
+extern crate alloc;
+use alloc::vec::Vec as StdVec;
 use crate::admin::{
     _ensure_not_paused, _load_attestation_config, _load_deviation_config, _require_supported_schema,
 };
 use crate::common::{
     _accumulate_pending, _emit_action_rejected, _extend_persistent_ttl, _set_balance, balance,
     payout_add, payout_mul, sort_addresses, DEFAULT_ARCHIVE_RETENTION,
-    DEFAULT_ORACLE_TIMESTAMP_SKEW, SECONDS_PER_LEDGER,
-    payout_add, payout_mul, sort_addresses, DEFAULT_ARCHIVE_RETENTION, MAX_ORACLE_OBSERVATIONS,
+    DEFAULT_ORACLE_TIMESTAMP_SKEW, MAX_ORACLE_OBSERVATIONS, SECONDS_PER_LEDGER,
     TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
 use crate::config::{
@@ -20,8 +21,8 @@ use crate::settlement_math::{
 use crate::storage::clear_round_storage;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
-    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, PrecisionCommitment, PrecisionPayoutPolicy,
+    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord,
+    OraclePayload, OracleQuorumConfig, PendingDispute, PrecisionCommitment, PrecisionPayoutPolicy,
     PrecisionPrediction, PriceSample, PendingWinningsUpdatedAtKey, Round, RoundArchiveStatus,
     RoundMode, TwapSamplesKey, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
@@ -264,17 +265,12 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         .storage()
         .persistent()
         .get(&DataKeyCore::Oracle)
-        .ok_or(ContractError::OracleNotSet)?;
+        .ok_or(ContractError::AdminNotSet)?;
 
     oracle.require_auth();
     _ensure_not_paused(&env).inspect_err(|&e| {
         _emit_action_rejected(&env, &oracle, symbol_short!("resolve"), e);
     })?;
-
-    // Heartbeat health enforcement (Issue #264) — must come before any
-    // state mutation (nonce consumption) so a stale oracle cannot race
-    // the admin override.
-    _enforce_heartbeat_health(&env, &oracle)?;
 
     let round: Round = env
         .storage()
@@ -371,10 +367,10 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
     let round_start = round.start_timestamp;
     let round_duration_ledgers = (round.end_ledger)
         .checked_sub(round.start_ledger)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     let round_end_estimate = round_start
-        .checked_add((round_duration_ledgers as u64).checked_mul(SECONDS_PER_LEDGER).ok_or(ContractError::Overflow)?)
-        .ok_or(ContractError::Overflow)?;
+        .checked_add((round_duration_ledgers as u64).checked_mul(SECONDS_PER_LEDGER).ok_or(ContractError::PayoutOverflow)?)
+        .ok_or(ContractError::PayoutOverflow)?;
 
     let lower_bound = round_start.saturating_sub(skew);
     let upper_bound = round_end_estimate.saturating_add(skew);
@@ -414,20 +410,20 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
             payload
                 .price
                 .checked_sub(reference_price)
-                .ok_or(ContractError::Overflow)?
+                .ok_or(ContractError::PayoutOverflow)?
         } else {
             reference_price
                 .checked_sub(payload.price)
-                .ok_or(ContractError::Overflow)?
+                .ok_or(ContractError::PayoutOverflow)?
         };
 
         let diff_bps_u128 = diff
             .checked_mul(10_000u128)
-            .ok_or(ContractError::Overflow)?
+            .ok_or(ContractError::PayoutOverflow)?
             / reference_price;
         let diff_bps: u32 = diff_bps_u128
             .try_into()
-            .map_err(|_| ContractError::Overflow)?;
+            .map_err(|_| ContractError::PayoutOverflow)?;
 
         let override_armed: bool = env
             .storage()
@@ -501,6 +497,11 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         }
     }
 
+    // Heartbeat health enforcement (Issue #264) — must come before any
+    // state mutation (nonce consumption) so a stale oracle cannot race
+    // the admin override.
+    _enforce_heartbeat_health(&env, &oracle, round.round_id)?;
+
     let nonce_key = DataKeyScoped::ConsumedOracleNonce(round.round_id, payload.nonce);
     if env.storage().persistent().has(&nonce_key) {
         _emit_action_rejected(
@@ -512,42 +513,6 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         return Err(ContractError::OracleNonceReused);
     }
     env.storage().persistent().set(&nonce_key, &true);
-
-    // ─── Oracle heartbeat health gate (Issue #264) ──────────────────────────
-    //
-    // When `HbGateConfig.strict_mode` is enabled, `resolve_round` verifies
-    // that the oracle heartbeat is live before allowing settlement.
-    let hb_config = crate::admin::_load_hb_config(&env);
-
-    if hb_config.strict_mode {
-        let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
-
-        if hb_blocked {
-            if hb_config.override_armed {
-                // Consume the one-shot override
-                crate::admin::_consume_hb_override(&env);
-
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hoverride")),
-                    (round.round_id,),
-                );
-            } else {
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hblocked")),
-                    (round.round_id,),
-                );
-                _emit_action_rejected(
-                    &env,
-                    &oracle,
-                    symbol_short!("resolve"),
-                    ContractError::OracleNotLive,
-                );
-                return Err(ContractError::OracleNotLive);
-            }
-        }
-    }
 
     let current_ledger = env.ledger().sequence();
     if current_ledger < round.end_ledger {
@@ -567,8 +532,9 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
     // historical samples to draw from instead of starting empty.
     _record_twap_sample(&env, payload.price, payload.timestamp);
 
-    // Delegate to the shared settlement helper (passes confidence from legacy payload).
-    _settle_round_with_price(&env, &round, payload.price, payload.confidence)
+    // Delegate to the shared settlement helper (passes confidence from legacy payload),
+    // deferring to the dispute window when one is configured.
+    _settle_or_defer(&env, &round, payload.price, payload.confidence)
 }
 
 /// Resolves the active round using a multi-feed oracle payload.
@@ -585,10 +551,10 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
 
     // ── Basic payload validation ──────────────────────────────────────────
     if payload.prices.is_empty() || payload.sources.is_empty() {
-        return Err(ContractError::TooFewObservations);
+        return Err(ContractError::OracleDeviationExceeded);
     }
     if payload.prices.len() != payload.sources.len() {
-        return Err(ContractError::TooFewObservations);
+        return Err(ContractError::OracleDeviationExceeded);
     }
 
     // All prices must be non-zero
@@ -607,7 +573,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         .storage()
         .persistent()
         .get(&DataKeyCore::Oracle)
-        .ok_or(ContractError::OracleNotSet)?;
+        .ok_or(ContractError::AdminNotSet)?;
 
     oracle.require_auth();
     _ensure_not_paused(&env).inspect_err(|&e| {
@@ -620,7 +586,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         .storage()
         .persistent()
         .get(&DataKeyCore::OracleQuorum)
-        .ok_or(ContractError::OracleNotSet)?;
+        .ok_or(ContractError::AdminNotSet)?;
 
     // ── Load active round ─────────────────────────────────────────────────
     let round: Round = env
@@ -712,9 +678,9 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
             &env,
             &oracle,
             symbol_short!("resolve"),
-            ContractError::TooFewObservations,
+            ContractError::OracleDeviationExceeded,
         );
-        return Err(ContractError::TooFewObservations);
+        return Err(ContractError::OracleDeviationExceeded);
     }
     // Reject excessive observations to prevent gas abuse from O(N²) sort
     if n > MAX_ORACLE_OBSERVATIONS {
@@ -722,9 +688,9 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
             &env,
             &oracle,
             symbol_short!("resolve"),
-            ContractError::TooFewObservations,
+            ContractError::OracleDeviationExceeded,
         );
-        return Err(ContractError::TooFewObservations);
+        return Err(ContractError::OracleDeviationExceeded);
     }
 
     // ── Check for duplicate source identifiers ────────────────────────────
@@ -737,9 +703,9 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
                             &env,
                             &oracle,
                             symbol_short!("resolve"),
-                            ContractError::DuplicateOracleSource,
+                            ContractError::OracleDeviationExceeded,
                         );
-                        return Err(ContractError::DuplicateOracleSource);
+                        return Err(ContractError::OracleDeviationExceeded);
                     }
                 }
             }
@@ -752,7 +718,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         if let Some(price) = payload.prices.get(i) {
             let mut inserted = false;
             for j in 0..sorted_prices.len() {
-                if price < sorted_prices.get(j).ok_or(ContractError::Overflow)? {
+                if price < sorted_prices.get(j).ok_or(ContractError::PayoutOverflow)? {
                     sorted_prices.insert(j, price);
                     inserted = true;
                     break;
@@ -766,13 +732,13 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
 
     // Compute median
     let median_price: u128 = if n % 2 == 1 {
-        sorted_prices.get(n / 2).ok_or(ContractError::Overflow)?
+        sorted_prices.get(n / 2).ok_or(ContractError::PayoutOverflow)?
     } else {
-        let mid1 = sorted_prices.get(n / 2 - 1).ok_or(ContractError::Overflow)?;
-        let mid2 = sorted_prices.get(n / 2).ok_or(ContractError::Overflow)?;
+        let mid1 = sorted_prices.get(n / 2 - 1).ok_or(ContractError::PayoutOverflow)?;
+        let mid2 = sorted_prices.get(n / 2).ok_or(ContractError::PayoutOverflow)?;
         mid1
             .checked_add(mid2)
-            .ok_or(ContractError::Overflow)?
+            .ok_or(ContractError::PayoutOverflow)?
             / 2
     };
 
@@ -797,19 +763,19 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         let diff = if median_price >= start_price {
             median_price
                 .checked_sub(start_price)
-                .ok_or(ContractError::Overflow)?
+                .ok_or(ContractError::PayoutOverflow)?
         } else {
             start_price
                 .checked_sub(median_price)
-                .ok_or(ContractError::Overflow)?
+                .ok_or(ContractError::PayoutOverflow)?
         };
         let diff_bps_u128 = diff
             .checked_mul(10_000u128)
-            .ok_or(ContractError::Overflow)?
+            .ok_or(ContractError::PayoutOverflow)?
             / start_price;
         let diff_bps: u32 = diff_bps_u128
             .try_into()
-            .map_err(|_| ContractError::Overflow)?;
+            .map_err(|_| ContractError::PayoutOverflow)?;
 
         let override_armed: bool = env
             .storage()
@@ -858,26 +824,26 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
             let diff = if price >= median_price {
                 price
                     .checked_sub(median_price)
-                    .ok_or(ContractError::Overflow)?
+                    .ok_or(ContractError::PayoutOverflow)?
             } else {
                 median_price
                     .checked_sub(price)
-                    .ok_or(ContractError::Overflow)?
+                    .ok_or(ContractError::PayoutOverflow)?
             };
 
             // diff_bps = diff * 10000 / median_price
             let diff_bps_u128 = diff
                 .checked_mul(10_000u128)
-                .ok_or(ContractError::Overflow)?
+                .ok_or(ContractError::PayoutOverflow)?
                 / median_price;
             let diff_bps: u32 = diff_bps_u128
                 .try_into()
-                .map_err(|_| ContractError::Overflow)?;
+                .map_err(|_| ContractError::PayoutOverflow)?;
 
             if diff_bps <= quorum_cfg.outlier_threshold_bps {
                 survivors = survivors
                     .checked_add(1)
-                    .ok_or(ContractError::Overflow)?;
+                    .ok_or(ContractError::PayoutOverflow)?;
             }
         }
     }
@@ -893,7 +859,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
                 quorum_cfg.quorum_threshold,
             ),
         );
-        return Err(ContractError::InsufficientOracleQuorum);
+        return Err(ContractError::OracleDeviationExceeded);
     }
 
     // ── Emit multi-feed summary event ─────────────────────────────────────
@@ -913,7 +879,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
     _record_twap_sample(&env, median_price, payload.timestamp);
 
     // ── Settle the round using the computed median price ──────────────────
-    _settle_round_with_price(&env, &round, median_price, None)
+    _settle_or_defer(&env, &round, median_price, None)
 }
 
 /// Internal helper: dispatches settlement after the settlement price has been
@@ -939,9 +905,6 @@ fn _settle_round_with_price(
         let threshold_participants: Vec<Address> = env
             .storage()
             .persistent()
-            .get(&DataKey::RoundParticipants(round_id))
-            .unwrap_or(Vec::new(&env));
-        if threshold_participants.len() < min {
             .get(&DataKeyScoped::RoundParticipants(round_id))
             .unwrap_or(Vec::new(env));
         let count = threshold_participants.len();
@@ -950,19 +913,16 @@ fn _settle_round_with_price(
                 env,
                 round,
                 RoundArchiveStatus::FallbackRefund,
-                payload.price,
-                &threshold_participants,
                 final_price,
-                count,
+                &threshold_participants,
                 0,
-                None,
+                confidence,
             );
-            _refund_under_threshold(&env, &round, &threshold_participants)?;
             _refund_under_threshold(env, round, &threshold_participants)?;
             #[allow(deprecated)]
             env.events().publish(
                 (symbol_short!("round"), symbol_short!("fallback")),
-                (round_id, participant_count, min),
+                (round_id, count, min),
             );
             return Ok(());
         }
@@ -983,33 +943,29 @@ fn _settle_round_with_price(
         }
         RoundMode::Precision => _resolve_precision_mode(env, round_id, final_price, false)?,
     };
+    let _ = total_pot;
 
     let participants: Vec<Address> = env
         .storage()
         .persistent()
-        .get(&DataKey::RoundParticipants(round_id))
-        .unwrap_or(Vec::new(&env));
         .get(&DataKeyScoped::RoundParticipants(round_id))
         .unwrap_or(Vec::new(env));
-    let participant_count = participants.len();
 
     _archive_round(
         env,
         round,
         RoundArchiveStatus::Resolved,
-        payload.price,
-        &participants,
         final_price,
-        participant_count,
+        &participants,
         fee_amount,
-        payload.confidence,
+        confidence,
     );
 
     // Mode-scoped position cleanup (eliminates redundant storage delete lookups)
     match round.mode {
         RoundMode::UpDown => {
-            for i in 0..raw_participants.len() {
-                if let Some(user) = raw_participants.get(i) {
+            for i in 0..participants.len() {
+                if let Some(user) = participants.get(i) {
                     env.storage()
                         .persistent()
                         .remove(&DataKeyScoped::Position(round_id, user));
@@ -1017,8 +973,8 @@ fn _settle_round_with_price(
             }
         }
         RoundMode::Precision => {
-            for i in 0..raw_participants.len() {
-                if let Some(user) = raw_participants.get(i) {
+            for i in 0..participants.len() {
+                if let Some(user) = participants.get(i) {
                     env.storage()
                         .persistent()
                         .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
@@ -1058,6 +1014,169 @@ fn _settle_round_with_price(
     Ok(())
 }
 
+/// Settles immediately when no dispute window is configured (`dispute_ledgers
+/// == 0`, the default — unchanged behaviour for every existing round), or
+/// stages the computed outcome behind a dispute window otherwise, leaving the
+/// round active until `void_round` or `finalize_round` is called.
+fn _settle_or_defer(
+    env: &Env,
+    round: &Round,
+    final_price: u128,
+    confidence: Option<u32>,
+) -> Result<(), ContractError> {
+    let dispute_ledgers = crate::config::get_dispute_ledgers(env);
+    if dispute_ledgers == 0 {
+        return _settle_round_with_price(env, round, final_price, confidence);
+    }
+
+    let expires_at_ledger = env.ledger().sequence().saturating_add(dispute_ledgers);
+    let dispute_key = DataKeyScoped::PendingDispute(round.round_id);
+    env.storage().persistent().set(
+        &dispute_key,
+        &PendingDispute {
+            final_price,
+            confidence,
+            expires_at_ledger,
+        },
+    );
+    _extend_persistent_ttl(env, &dispute_key);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("round"), symbol_short!("dispute")),
+        (round.round_id, final_price, expires_at_ledger),
+    );
+
+    Ok(())
+}
+
+/// Refunds every participant's full stake for a round awaiting the dispute
+/// window and marks it `Voided`. Permissionless; only valid while
+/// `ledger < expires_at_ledger`.
+pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
+    let round: Round = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::ActiveRound)
+        .filter(|r: &Round| r.round_id == round_id)
+        .ok_or(ContractError::NoActiveRound)?;
+
+    let dispute_key = DataKeyScoped::PendingDispute(round_id);
+    let pending: PendingDispute = env
+        .storage()
+        .persistent()
+        .get(&dispute_key)
+        .ok_or(ContractError::IllegalPhaseTransition)?;
+    if env.ledger().sequence() >= pending.expires_at_ledger {
+        return Err(ContractError::IllegalPhaseTransition);
+    }
+
+    let participants: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKeyScoped::RoundParticipants(round_id))
+        .unwrap_or(Vec::new(&env));
+
+    match round.mode {
+        RoundMode::UpDown => {
+            for i in 0..participants.len() {
+                if let Some(user) = participants.get(i) {
+                    let pos_key = DataKeyScoped::Position(round_id, user.clone());
+                    if let Some(position) =
+                        env.storage().persistent().get::<_, UserPosition>(&pos_key)
+                    {
+                        _accumulate_pending(&env, user.clone(), position.amount)?;
+                        let prediction_side = match position.side {
+                            BetSide::Up => 0,
+                            BetSide::Down => 1,
+                        };
+                        _persist_user_outcome(
+                            &env,
+                            round_id,
+                            0,
+                            &user,
+                            prediction_side,
+                            0,
+                            position.amount,
+                            position.amount,
+                            UserOutcomeType::Void,
+                        );
+                    }
+                }
+            }
+        }
+        RoundMode::Precision => {
+            for i in 0..participants.len() {
+                if let Some(user) = participants.get(i) {
+                    let pred_key = DataKeyScoped::PrecisionPosition(round_id, user.clone());
+                    let commit_key = DataKeyScoped::PrecisionCommitment(round_id, user.clone());
+                    let amount = if let Some(pred) = env
+                        .storage()
+                        .persistent()
+                        .get::<_, PrecisionPrediction>(&pred_key)
+                    {
+                        Some(pred.amount)
+                    } else {
+                        env.storage()
+                            .persistent()
+                            .get::<_, PrecisionCommitment>(&commit_key)
+                            .map(|c| c.amount)
+                    };
+                    if let Some(amount) = amount {
+                        _accumulate_pending(&env, user.clone(), amount)?;
+                        _persist_user_outcome(
+                            &env, round_id, 1, &user, 2, 0, amount, amount, UserOutcomeType::Void,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    _archive_round(
+        &env,
+        &round,
+        RoundArchiveStatus::Voided,
+        0,
+        &participants,
+        0,
+        None,
+    );
+
+    clear_round_storage(&env, round_id, &participants);
+    env.storage().persistent().remove(&dispute_key);
+
+    #[allow(deprecated)]
+    env.events()
+        .publish((symbol_short!("round"), symbol_short!("voided")), (round_id,));
+
+    Ok(())
+}
+
+/// Distributes the settlement computed at `resolve_round`/`resolve_round_multi`
+/// time for a round whose dispute window has elapsed. Permissionless.
+pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
+    let round: Round = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::ActiveRound)
+        .filter(|r: &Round| r.round_id == round_id)
+        .ok_or(ContractError::NoActiveRound)?;
+
+    let dispute_key = DataKeyScoped::PendingDispute(round_id);
+    let pending: PendingDispute = env
+        .storage()
+        .persistent()
+        .get(&dispute_key)
+        .ok_or(ContractError::IllegalPhaseTransition)?;
+    if env.ledger().sequence() < pending.expires_at_ledger {
+        return Err(ContractError::IllegalPhaseTransition);
+    }
+
+    env.storage().persistent().remove(&dispute_key);
+    _settle_round_with_price(&env, &round, pending.final_price, pending.confidence)
+}
+
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -1067,7 +1186,12 @@ pub fn _resolve_updown_mode(
     final_price: u128,
     skip_payout: bool,
 ) -> Result<(bool, i128), ContractError> {
-    let participants = sort_addresses(raw_participants.clone());
+    let raw_participants: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKeyScoped::RoundParticipants(round.round_id))
+        .unwrap_or(Vec::new(env));
+    let participants = sort_addresses(raw_participants);
 
     // Pure price-direction classification and one-sided check delegated to
     // settlement_math for auditability and golden-vector coverage.
@@ -1089,7 +1213,7 @@ pub fn _resolve_updown_mode(
         let positions: Map<Address, UserPosition> = if participants.is_empty() {
             env.storage()
                 .persistent()
-                .get(&DataKey::UpDownPositions)
+                .get(&DataKeyCore::UpDownPositions)
                 .unwrap_or(Map::new(env))
         } else {
             Map::new(env)
@@ -1340,7 +1464,7 @@ pub fn _resolve_precision_mode(
     round_id: u64,
     final_price: u128,
     skip_payout: bool,
-) -> Result<i128, ContractError> {
+) -> Result<(i128, i128), ContractError> {
     let mut participants: Vec<Address> = env
         .storage()
         .persistent()
@@ -1397,7 +1521,7 @@ pub fn _resolve_precision_mode(
 
             total_pot = total_pot
                 .checked_add(amount)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
             participant_amounts.push(amount);
             participant_prices.push(cached_price);
             is_winner_mask.push(false);
@@ -1406,11 +1530,11 @@ pub fn _resolve_precision_mode(
                 let diff = if pred.predicted_price >= final_price {
                     pred.predicted_price
                         .checked_sub(final_price)
-                        .ok_or(ContractError::Overflow)?
+                        .ok_or(ContractError::PayoutOverflow)?
                 } else {
                     final_price
                         .checked_sub(pred.predicted_price)
-                        .ok_or(ContractError::Overflow)?
+                        .ok_or(ContractError::PayoutOverflow)?
                 };
 
                 let idx = i as usize;
@@ -1448,7 +1572,7 @@ pub fn _resolve_precision_mode(
             if let Some(w) = winners.get(i) {
                 winner_stakes = winner_stakes
                     .checked_add(w.amount)
-                    .ok_or(ContractError::Overflow)?;
+                    .ok_or(ContractError::PayoutOverflow)?;
             }
         }
         let (payout_pool, fee) = _apply_protocol_fee_precision(env, round_id, total_pot, winner_stakes)?;
@@ -1557,11 +1681,11 @@ pub fn _resolve_precision_legacy(
             let diff = if pred.predicted_price >= final_price {
                 pred.predicted_price
                     .checked_sub(final_price)
-                    .ok_or(ContractError::Overflow)?
+                    .ok_or(ContractError::PayoutOverflow)?
             } else {
                 final_price
                     .checked_sub(pred.predicted_price)
-                    .ok_or(ContractError::Overflow)?
+                    .ok_or(ContractError::PayoutOverflow)?
             };
 
             match min_diff {
@@ -1598,7 +1722,7 @@ pub fn _resolve_precision_legacy(
             if let Some(w) = winners.get(i) {
                 winner_stakes = winner_stakes
                     .checked_add(w.amount)
-                    .ok_or(ContractError::Overflow)?;
+                    .ok_or(ContractError::PayoutOverflow)?;
             }
         }
         let (payout_pool, fee) = _apply_protocol_fee_precision(env, round_id, total_pot, winner_stakes)?;
@@ -1779,15 +1903,47 @@ pub fn _record_winnings_indexed(
     Ok(fee_amount)
 }
 
+/// Selects the one-sided settlement policy for a round (Issue #270). Always
+/// `Refund` today; `Void`/`CarryForward` exist as forward-compatible
+/// variants for a future admin-configurable policy selector.
+pub fn _select_one_sided_policy(_round: &Round) -> OneSidedPolicy {
+    OneSidedPolicy::Refund
+}
+
+/// Applies the deterministic one-sided settlement policy: refunds every
+/// participant's full stake and collects no protocol fee. `Void` and
+/// `CarryForward` currently fall back to the same full-refund behaviour
+/// ("with refund fallback if unsupported", per `ROUND_LIFECYCLE.md`).
+pub fn _apply_one_sided_policy(
+    env: &Env,
+    round: &Round,
+    _policy: OneSidedPolicy,
+    participants: &Vec<Address>,
+    positions: &Option<Map<Address, UserPosition>>,
+) -> Result<i128, ContractError> {
+    if !participants.is_empty() {
+        _record_refunds_indexed(env, round.round_id, 0, participants)?;
+    } else if let Some(positions) = positions {
+        _record_refunds_legacy(env, round.round_id, positions)?;
+    }
+    Ok(0)
+}
+
 pub fn _archive_round(
     env: &Env,
     round: &Round,
     status: RoundArchiveStatus,
     final_price: u128,
-    participants: &[Address],
+    participants: &Vec<Address>,
     fee_amount: i128,
     confidence: Option<u32>,
 ) {
+    // Guarantee every terminal round transition has a pool-commitment opening
+    // on record (fail-closed policy: a round can never leave the active
+    // state with its pool aggregate still hidden). No-op if already opened
+    // via the permissionless `open_pool_commitment` entrypoint.
+    crate::commitments::_open_pool_commitment(env, round);
+
     let status_val = status.clone() as u32;
     let participant_count = participants.len() as u32;
     let settled_at_ledger = env.ledger().sequence();
@@ -1806,7 +1962,7 @@ pub fn _archive_round(
     // Record per-user participation index for paginated history queries.
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
-            let index_key = DataKey::UserArchivedRoundIds(user.clone());
+            let index_key = DataKeyScoped::UserArchivedRoundIds(user.clone());
             let mut user_rounds: Vec<u64> = env
                 .storage()
                 .persistent()
@@ -1871,8 +2027,6 @@ pub fn _archive_round(
         }
     }
 
-    let fee_model_value: u32 = _read_fee_model(env) as u32;
-
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("round"), symbol_short!("summary")),
@@ -1890,8 +2044,6 @@ pub fn _archive_round(
             fee_amount,
             settled_at_ledger,
             confidence,
-            status_val,
-            fee_model_value,
         ),
     );
 
@@ -1936,7 +2088,6 @@ pub fn _archive_round(
         } else {
             break;
         }
-        recent.remove(0);
     }
 
     env.storage()
@@ -2126,7 +2277,7 @@ pub fn _twap_reference_price(env: &Env, window_samples: u32) -> Result<u128, Con
     let mut count: u128 = 0;
     for i in start..samples.len() {
         if let Some(sample) = samples.get(i) {
-            sum = sum.checked_add(sample.price).ok_or(ContractError::Overflow)?;
+            sum = sum.checked_add(sample.price).ok_or(ContractError::PayoutOverflow)?;
             count += 1;
         }
     }
@@ -2209,6 +2360,45 @@ pub fn _check_heartbeat_health_blocked(env: &Env, config: &HbGateConfig) -> bool
     current_time > deadline
 }
 
+/// Shared oracle-heartbeat health gate (Issue #264), used by `resolve_round`
+/// and `resolve_round_multi`. When `HbGateConfig.strict_mode` is enabled and
+/// the heartbeat is blocked, either consumes a one-shot admin override or
+/// rejects with `OracleNotLive`. Runs before any state mutation (nonce
+/// consumption) so a stale oracle cannot race the admin override.
+pub fn _enforce_heartbeat_health(
+    env: &Env,
+    oracle: &Address,
+    round_id: u64,
+) -> Result<(), ContractError> {
+    let hb_config = crate::admin::_load_hb_config(env);
+
+    if hb_config.strict_mode {
+        let hb_blocked = _check_heartbeat_health_blocked(env, &hb_config);
+
+        if hb_blocked {
+            if hb_config.override_armed {
+                crate::admin::_consume_hb_override(env);
+
+                #[allow(deprecated)]
+                env.events().publish(
+                    (symbol_short!("oracle"), symbol_short!("hoverride")),
+                    (round_id,),
+                );
+            } else {
+                #[allow(deprecated)]
+                env.events().publish(
+                    (symbol_short!("oracle"), symbol_short!("hblocked")),
+                    (round_id,),
+                );
+                _emit_action_rejected(env, oracle, symbol_short!("resolve"), ContractError::OracleNotLive);
+                return Err(ContractError::OracleNotLive);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn _update_stats_win(env: &Env, user: Address) -> Result<(), ContractError> {
     let key = DataKeyScoped::UserStats(user.clone());
     let mut stats: UserStats = env.storage().persistent().get(&key).unwrap_or(UserStats {
@@ -2221,11 +2411,11 @@ pub fn _update_stats_win(env: &Env, user: Address) -> Result<(), ContractError> 
     stats.total_wins = stats
         .total_wins
         .checked_add(1)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     stats.current_streak = stats
         .current_streak
         .checked_add(1)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
 
     if stats.current_streak > stats.best_streak {
         stats.best_streak = stats.current_streak;
@@ -2250,7 +2440,7 @@ pub fn _update_stats_loss(env: &Env, user: Address) -> Result<(), ContractError>
     stats.total_losses = stats
         .total_losses
         .checked_add(1)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     stats.current_streak = 0;
 
     env.storage().persistent().set(&key, &stats);

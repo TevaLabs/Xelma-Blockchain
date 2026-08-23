@@ -108,12 +108,14 @@ impl ReferenceModel {
             return false;
         }
 
+        let active = matches!(&self.active_round, Some(round) if round.active);
+        if !active {
+            return false;
+        }
+
+        self.withdraw(user, amount);
+        self.total_pool = self.total_pool.saturating_add(amount);
         if let Some(ref mut round) = self.active_round {
-            if !round.active {
-                return false;
-            }
-            self.withdraw(user, amount);
-            self.total_pool = self.total_pool.saturating_add(amount);
             if side_is_up {
                 round.pool_up += amount;
                 *round.bets_up.entry(user.clone()).or_default() += amount;
@@ -121,10 +123,8 @@ impl ReferenceModel {
                 round.pool_down += amount;
                 *round.bets_down.entry(user.clone()).or_default() += amount;
             }
-            true
-        } else {
-            false
         }
+        true
     }
 
     /// Cancel current active round (returns 100% of stakes to pending winnings, 0 fee).

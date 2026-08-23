@@ -277,8 +277,11 @@ fn test_event_coverage_place_bet() {
 
     client.place_bet(&user, &100_0000000, &BetSide::Up);
 
+    // The pool-aggregate commitment event (Observability/ZK-friendly design)
+    // is published last on every mutating betting action, so the "bet"
+    // event itself is second-to-last here.
     let events = env.events().all();
-    let last_event = events.last().unwrap();
+    let last_event = events.get(events.len() - 2).unwrap();
     let (_contract, topics, data) = last_event;
 
     assert_eq!(topics.len(), 2);
@@ -319,8 +322,11 @@ fn test_event_coverage_commit_and_reveal() {
     let committed_hash: BytesN<32> = hash.into();
     client.commit_prediction(&user, &committed_hash.clone(), &100_0000000);
 
+    // The pool-aggregate commitment event (Observability/ZK-friendly design)
+    // is published last on every mutating betting action, so the "commit"
+    // event itself is second-to-last here.
     let events = env.events().all();
-    let last_event = events.last().unwrap();
+    let last_event = events.get(events.len() - 2).unwrap();
     let (_contract, topics, data) = last_event;
 
     assert_eq!(topics.len(), 2);
@@ -344,8 +350,9 @@ fn test_event_coverage_commit_and_reveal() {
 
     client.reveal_prediction(&user, &price, &salt);
 
+    // Same reasoning as above — pool commitment event trails "reveal".
     let events = env.events().all();
-    let last_event = events.last().unwrap();
+    let last_event = events.get(events.len() - 2).unwrap();
     let (_contract, topics, data) = last_event;
 
     assert_eq!(topics.len(), 2);
@@ -386,19 +393,21 @@ fn test_event_coverage_resolve_round() {
         confidence: None,
         attestation: None,    });
 
+    // Locate the canonical round-summary event by topic rather than
+    // assuming it's last: the pool-aggregate commitment event and the
+    // legacy ("round","resolved") terminal event both publish after it.
     let events = env.events().all();
-    let last_event = events.last().unwrap();
-    let (_contract, topics, data) = last_event;
+    let summary_event = events
+        .iter()
+        .find(|(_contract, topics, _data)| {
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("summary"))
+        })
+        .expect("round summary event must be emitted");
+    let (_contract, topics, data) = summary_event;
 
     assert_eq!(topics.len(), 2);
-    assert_eq!(
-        topics.get(0).unwrap().try_into_val(&env),
-        Ok(symbol_short!("round"))
-    );
-    assert_eq!(
-        topics.get(1).unwrap().try_into_val(&env),
-        Ok(symbol_short!("summary"))
-    );
     let canon: (u32, u64, u32, u32, u128, u128, i128, i128, u32, i128, i128, u32, Option<u32>) =
         data.try_into_val(&env).unwrap();
     assert_eq!(canon.0, 0u32);           // version
@@ -414,12 +423,6 @@ fn test_event_coverage_resolve_round() {
     assert_eq!(canon.10, 0i128);         // fee_amount
     assert_eq!(canon.11, 12u32);         // settled_at_ledger
     assert_eq!(canon.12, None);          // confidence
-        Ok(symbol_short!("resolved"))
-    );
-    assert_eq!(
-        data.try_into_val(&env),
-        Ok((1u64, 1_2000000u128, 0u32, Option::<u32>::None, 0u32))
-    );
 }
 
 #[test]

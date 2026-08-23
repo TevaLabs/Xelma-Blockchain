@@ -59,8 +59,12 @@ fn test_propose_and_accept_before_expiry_succeeds() {
     assert_eq!(proposal.proposed_at, 1000);
     assert_eq!(proposal.expires_at, 4600);
 
+    // Acceptance is gated by MIN_ROTATION_DELAY_SECONDS (3600s) after
+    // proposal, so the earliest valid accept time equals proposed_at+3600
+    // here (which also happens to be expires_at, since expires_in_seconds
+    // was set to exactly the minimum delay).
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        li.timestamp = 4600;
     });
 
     client.accept_oracle_rotation();
@@ -86,10 +90,13 @@ fn test_accept_after_expiry_fails() {
         li.timestamp = 500;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    // expires_in_seconds must be >= MIN_ROTATION_DELAY_SECONDS (3600s);
+    // expires_at = 500+3600 = 4100.
+    client.propose_oracle_rotation(&new_oracle, &3600);
 
+    // Past expiry (and past the mandatory delay, since they coincide here).
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 4200;
     });
 
     let result = client.try_accept_oracle_rotation();
@@ -214,8 +221,10 @@ fn test_propose_and_accept_emits_events() {
         "propose event should be emitted"
     );
 
+    // Acceptance is gated by MIN_ROTATION_DELAY_SECONDS (3600s) after
+    // proposal — see the comment in test_propose_and_accept_before_expiry_succeeds.
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        li.timestamp = 4600;
     });
 
     client.accept_oracle_rotation();
@@ -239,10 +248,13 @@ fn test_accept_after_expiry_emits_expired_event() {
         li.timestamp = 500;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    // expires_in_seconds must be >= MIN_ROTATION_DELAY_SECONDS (3600s);
+    // expires_at = 500+3600 = 4100.
+    client.propose_oracle_rotation(&new_oracle, &3600);
 
+    // Past expiry (and past the mandatory delay, since they coincide here).
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 4200;
     });
 
     let _ = client.try_accept_oracle_rotation();

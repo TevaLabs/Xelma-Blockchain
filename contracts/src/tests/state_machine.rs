@@ -189,6 +189,7 @@ fn test_resolve_round_fails_in_betting_phase() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+        attestation: None,
     };
 
     let result = client.try_resolve_round(&payload);
@@ -377,6 +378,7 @@ fn test_resolve_round_fails_in_running_phase() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+        attestation: None,
     };
 
     let result = client.try_resolve_round(&payload);
@@ -423,6 +425,7 @@ fn test_resolve_round_succeeds_in_resolvable_phase() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+        attestation: None,
     };
 
     let result = client.try_resolve_round(&payload);

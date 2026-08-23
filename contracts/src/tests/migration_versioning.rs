@@ -153,7 +153,7 @@ fn test_dry_run_v1_to_v2_passes_validation() {
 
     // Dry-run should succeed.
     let res = client.try_migrate_schema_v1_to_v2(&true);
-    assert_eq!(res, Ok(()));
+    assert_eq!(res, Ok(Ok(())));
 
     // Schema version must NOT have changed.
     assert_eq!(client.get_schema_version(), 1u32);
@@ -182,7 +182,7 @@ fn test_dry_run_v2_to_v3_passes_validation() {
 
     // Dry-run should succeed.
     let res = client.try_migrate_schema_v2_to_v3(&true);
-    assert_eq!(res, Ok(()));
+    assert_eq!(res, Ok(Ok(())));
 
     // Schema version must NOT have changed.
     assert_eq!(client.get_schema_version(), 2u32);

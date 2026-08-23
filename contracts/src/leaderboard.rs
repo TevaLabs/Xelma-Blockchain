@@ -306,11 +306,11 @@ pub fn _update_season_stats_win(env: &Env, user: Address) -> Result<(), Contract
     stats.total_wins = stats
         .total_wins
         .checked_add(1)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     stats.current_streak = stats
         .current_streak
         .checked_add(1)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     if stats.current_streak > stats.best_streak {
         stats.best_streak = stats.current_streak;
     }
@@ -335,7 +335,7 @@ pub fn _update_season_stats_loss(env: &Env, user: Address) -> Result<(), Contrac
     stats.total_losses = stats
         .total_losses
         .checked_add(1)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     stats.current_streak = 0;
 
     env.storage().persistent().set(&key, &stats);
@@ -431,7 +431,7 @@ pub fn reset_leaderboard_season(env: Env) -> Result<u32, ContractError> {
     env.storage().persistent().set(&archive_key, &archive);
     _extend_persistent_ttl(&env, &archive_key);
 
-    let new_season_id = season_id.checked_add(1).ok_or(ContractError::Overflow)?;
+    let new_season_id = season_id.checked_add(1).ok_or(ContractError::PayoutOverflow)?;
     let season_key = DataKeyCore::Ext(DataKeyExt::SeasonId);
     env.storage().persistent().set(&season_key, &new_season_id);
     _extend_persistent_ttl(&env, &season_key);

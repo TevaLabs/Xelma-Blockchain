@@ -56,7 +56,6 @@ fn test_set_windows_fails_without_admin_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     // Attempting to set windows without admin auth
     let result = client.try_set_windows(&10, &20);
@@ -609,7 +608,6 @@ fn test_place_precision_prediction_fails_without_user_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &user,

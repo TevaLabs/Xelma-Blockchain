@@ -163,16 +163,21 @@ fn fuzz_protocol_lifecycle_invariants() {
                 }
             }
             LifecycleAction::CancelRound => {
-                let _ = client.try_cancel_round();
+                let _ = client.try_cancel_round(&0u32);
             }
             LifecycleAction::ResolveRound { price_up } => {
                 if let Some(active) = client.get_active_round() {
                     env.ledger().with_mut(|li| li.sequence_number = active.end_ledger);
                     let price = if *price_up { 2_0000000u128 } else { 5000000u128 };
                     let _ = client.try_resolve_round(&OraclePayload {
-                        round_id: active.round_id,
+                        round_id: active.start_ledger,
                         price,
                         timestamp: env.ledger().timestamp(),
+                        nonce: step_idx as u64,
+                        network_id: env.ledger().network_id(),
+                        contract_addr: contract_id.clone(),
+                        confidence: None,
+                        attestation: None,
                     });
                 }
             }

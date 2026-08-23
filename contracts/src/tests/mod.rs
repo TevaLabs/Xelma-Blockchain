@@ -31,6 +31,7 @@ mod overflow_tests;
 mod pause;
 mod pending_winnings_expiry;
 mod policy_gate;
+mod pool_commitments;
 mod property_invariants;
 mod reference_model;
 mod resolution;

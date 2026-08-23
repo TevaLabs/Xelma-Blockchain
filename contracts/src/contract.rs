@@ -5,13 +5,17 @@
 
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
 
+use crate::access_control;
+use crate::commitments;
 use crate::errors::ContractError;
 use crate::governance;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
+    DataKeyScoped, DeviationReferenceMode, FeeModel, GovAction, GovProposal, LeaderboardEntry,
+    MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord,
     OraclePayload, OracleQuorumConfig, OracleRotationProposal, PendingConfigChange,
-    PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
+    PolicyAction, PoolCommitment, PoolOpening, PrecisionPrediction, PriceSample,
+    ProtocolHealthStatus, ProtocolStatus, Round,
     RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
     SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
     UserRoundOutcome, UserStats,
@@ -178,6 +182,8 @@ impl VirtualTokenContract {
         limit: u32,
     ) -> Vec<ArchivedRoundSummary> {
         queries::get_user_archive_history(env, user, offset, limit)
+    }
+
     /// Returns whether `action` is currently permitted under the PolicyGate
     /// for the contract's runtime mode (Issue #261). Read-only; does not
     /// mutate state. See [`admin::_policy_gate`] for the full matrix.
@@ -462,7 +468,7 @@ impl VirtualTokenContract {
         let proposed_at = env.ledger().timestamp();
         let expires_at = proposed_at
             .checked_add(expires_in_seconds)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
 
         let proposal = OracleRotationProposal {
             new_oracle: new_oracle.clone(),
@@ -513,7 +519,7 @@ impl VirtualTokenContract {
         let earliest_accept = proposal
             .proposed_at
             .checked_add(MIN_ROTATION_DELAY_SECONDS)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
         if current_ts < earliest_accept {
             #[allow(deprecated)]
             env.events().publish(
@@ -546,7 +552,7 @@ impl VirtualTokenContract {
             .storage()
             .persistent()
             .get(&oracle_key)
-            .ok_or(ContractError::OracleNotSet)?;
+            .ok_or(ContractError::AdminNotSet)?;
 
         env.storage()
             .persistent()
@@ -675,6 +681,56 @@ impl VirtualTokenContract {
     /// Queries details for a governance proposal.
     pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
         governance::get_gov_proposal(env, proposal_id)
+    }
+
+    /// Turns participant access control on/off (admin only, Issue #274).
+    pub fn set_access_control_enabled(env: Env, enabled: bool) -> Result<(), ContractError> {
+        access_control::set_access_control_enabled(env, enabled)
+    }
+
+    /// Returns whether allowlist mode is currently enabled.
+    pub fn is_access_control_enabled(env: Env) -> bool {
+        access_control::is_access_control_enabled(env)
+    }
+
+    /// Adds `user` to the allowlist (admin only).
+    pub fn add_allowlisted(env: Env, user: Address) -> Result<(), ContractError> {
+        access_control::add_allowlisted(env, user)
+    }
+
+    /// Removes `user` from the allowlist (admin only).
+    pub fn remove_allowlisted(env: Env, user: Address) -> Result<(), ContractError> {
+        access_control::remove_allowlisted(env, user)
+    }
+
+    /// Adds `user` to the denylist (admin only).
+    pub fn add_denylisted(env: Env, user: Address) -> Result<(), ContractError> {
+        access_control::add_denylisted(env, user)
+    }
+
+    /// Removes `user` from the denylist (admin only).
+    pub fn remove_denylisted(env: Env, user: Address) -> Result<(), ContractError> {
+        access_control::remove_denylisted(env, user)
+    }
+
+    /// Returns whether `user` is allowlisted.
+    pub fn is_user_allowlisted(env: Env, user: Address) -> bool {
+        access_control::is_allowlisted(env, user)
+    }
+
+    /// Returns whether `user` is denylisted.
+    pub fn is_user_denylisted(env: Env, user: Address) -> bool {
+        access_control::is_denylisted(env, user)
+    }
+
+    /// Returns the resolved access state for `user`.
+    pub fn get_access_state(env: Env, user: Address) -> AccessState {
+        access_control::get_access_state(env, user)
+    }
+
+    /// Returns a human-facing policy summary: (allowlist enabled, user state).
+    pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
+        access_control::get_access_policy(env, user)
     }
 
     /// Schedules a timelocked windows update (alias for [`Self::schedule_windows`]).
@@ -1074,7 +1130,7 @@ impl VirtualTokenContract {
     }
 
     pub fn get_one_sided_policy(env: Env) -> OneSidedPolicy {
-        let active_round: Option<Round> = env.storage().persistent().get(&DataKey::ActiveRound);
+        let active_round: Option<Round> = env.storage().persistent().get(&DataKeyCore::ActiveRound);
         if let Some(round) = active_round {
             settlement::_select_one_sided_policy(&round)
         } else {
@@ -1084,6 +1140,27 @@ impl VirtualTokenContract {
 
     pub fn get_round_pool_stats(env: Env) -> Option<RoundPoolStats> {
         queries::get_round_pool_stats(env)
+    }
+
+    /// Permissionless: reveals the pool-aggregate commitment for `round_id`
+    /// once betting has closed (`ledger >= bet_end_ledger`). No auth
+    /// required — anyone (typically an indexer) may force the opening even
+    /// if oracle resolution hasn't happened yet.
+    pub fn open_pool_commitment(env: Env, round_id: u64) -> Result<(), ContractError> {
+        commitments::open_pool_commitment(env, round_id)
+    }
+
+    /// Latest published pool-aggregate commitment for `round_id` — a hash,
+    /// sequence number, and ledger. Always available; never carries raw
+    /// aggregate values. See `docs/POOL_COMMITMENTS.md`.
+    pub fn get_pool_commitment(env: Env, round_id: u64) -> Option<PoolCommitment> {
+        commitments::get_pool_commitment(env, round_id)
+    }
+
+    /// The revealed pool-aggregate opening for `round_id`, or `None` if not
+    /// yet opened (fail-closed: absence, not stale/default data).
+    pub fn get_pool_opening(env: Env, round_id: u64) -> Option<PoolOpening> {
+        commitments::get_pool_opening(env, round_id)
     }
 
     pub fn get_round_phase(env: Env) -> Result<RoundPhase, ContractError> {
@@ -1422,7 +1499,7 @@ impl VirtualTokenContract {
     fn _validate_protocol_fee_bps(bps: Option<u32>) -> Result<(), ContractError> {
         if let Some(v) = bps {
             if v == 0 || v > MAX_PROTOCOL_FEE_BPS {
-                return Err(ContractError::InvalidProtocolFeeBps);
+                return Err(ContractError::WindowOutOfRange);
             }
         }
         Ok(())
@@ -1458,7 +1535,7 @@ impl VirtualTokenContract {
         let current: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
         let new_treasury = current
             .checked_add(fee_amount)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
         env.storage().persistent().set(&treasury_key, &new_treasury);
         Self::_extend_persistent_ttl(env, &treasury_key);
 
@@ -1497,7 +1574,7 @@ impl VirtualTokenContract {
         let total_pot = Self::payout_add(winning_pool, losing_pool)?;
         let fee_amount = total_pot
             .checked_mul(bps_value as i128)
-            .ok_or(ContractError::Overflow)?
+            .ok_or(ContractError::PayoutOverflow)?
             / BPS_DENOMINATOR;
         if fee_amount == 0 {
             return Ok((winning_pool, losing_pool, 0));
@@ -1505,13 +1582,13 @@ impl VirtualTokenContract {
         let fee_from_losing = fee_amount.min(losing_pool);
         let fee_from_winning = fee_amount
             .checked_sub(fee_from_losing)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
         let dist_winning = winning_pool
             .checked_sub(fee_from_winning)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
         let dist_losing = losing_pool
             .checked_sub(fee_from_losing)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
         Self::_collect_protocol_fee(env, round_id, fee_amount, Some(bps_value))?;
         Ok((dist_winning, dist_losing, fee_amount))
     }
@@ -1531,11 +1608,11 @@ impl VirtualTokenContract {
         let bps_value = bps.unwrap();
         let fee_amount = total_pot
             .checked_mul(bps_value as i128)
-            .ok_or(ContractError::Overflow)?
+            .ok_or(ContractError::PayoutOverflow)?
             / BPS_DENOMINATOR;
         let distributable = total_pot
             .checked_sub(fee_amount)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
         if fee_amount > 0 {
             Self::_collect_protocol_fee(env, round_id, fee_amount, Some(bps_value))?;
         }

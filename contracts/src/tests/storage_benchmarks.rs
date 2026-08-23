@@ -27,6 +27,11 @@ const N_LARGE: usize = 60;
 
 fn setup() -> (Env, Address, VirtualTokenContractClient<'static>) {
     let env = Env::default();
+    // These tests assert on scaling behavior (O(1)/O(N) storage footprint),
+    // not on the precise CPU/memory cost — that's covered separately by
+    // `cost_benchmarks.rs`. Reset to unlimited so a large-round scenario
+    // never trips the default interpreted-host budget on its own.
+    env.cost_estimate().budget().reset_unlimited();
     env.mock_all_auths();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);

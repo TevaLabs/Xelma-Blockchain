@@ -70,7 +70,7 @@ pub fn compute_updown_fee(
     let total_pot = payout_add(winning_pool, losing_pool)?;
     let fee_amount = total_pot
         .checked_mul(bps_value as i128)
-        .ok_or(ContractError::Overflow)?
+        .ok_or(ContractError::PayoutOverflow)?
         / BPS_DENOMINATOR;
     if fee_amount == 0 {
         return Ok((winning_pool, losing_pool, 0));
@@ -78,13 +78,13 @@ pub fn compute_updown_fee(
     let fee_from_losing = fee_amount.min(losing_pool);
     let fee_from_winning = fee_amount
         .checked_sub(fee_from_losing)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     let dist_winning = winning_pool
         .checked_sub(fee_from_winning)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     let dist_losing = losing_pool
         .checked_sub(fee_from_losing)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     Ok((dist_winning, dist_losing, fee_amount))
 }
 
@@ -100,11 +100,11 @@ pub fn compute_precision_fee(
     let bps_value = fee_bps.unwrap();
     let fee_amount = total_pot
         .checked_mul(bps_value as i128)
-        .ok_or(ContractError::Overflow)?
+        .ok_or(ContractError::PayoutOverflow)?
         / BPS_DENOMINATOR;
     let distributable = total_pot
         .checked_sub(fee_amount)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     Ok((distributable, fee_amount))
 }
 
@@ -237,7 +237,7 @@ pub fn split_pot_among_winners(
         let payout = if i == 0 {
             per_winner
                 .checked_add(remainder)
-                .ok_or(ContractError::Overflow)?
+                .ok_or(ContractError::PayoutOverflow)?
         } else {
             per_winner
         };
@@ -437,19 +437,19 @@ pub fn compute_deviation_bps(
     let diff = if price >= reference {
         price
             .checked_sub(reference)
-            .ok_or(ContractError::Overflow)?
+            .ok_or(ContractError::PayoutOverflow)?
     } else {
         reference
             .checked_sub(price)
-            .ok_or(ContractError::Overflow)?
+            .ok_or(ContractError::PayoutOverflow)?
     };
     let diff_bps_u128 = diff
         .checked_mul(10_000u128)
-        .ok_or(ContractError::Overflow)?
+        .ok_or(ContractError::PayoutOverflow)?
         / reference;
     diff_bps_u128
         .try_into()
-        .map_err(|_| ContractError::Overflow)
+        .map_err(|_| ContractError::PayoutOverflow)
 }
 
 // ─── Median computation (for multi-feed) ─────────────────────────────────────
