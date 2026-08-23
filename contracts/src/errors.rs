@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Contract error types for the XLM Price Prediction Market.
 
-use soroban_sdk::contracterror;
+use soroban_sdk::{ConversionError, Env, Error, IntoVal, TryFromVal, Val};
 
 /// Contract error types
-#[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum ContractError {
@@ -49,44 +48,244 @@ pub enum ContractError {
     InvalidProtocolFeeBps = 51,
     MintLimitExceeded = 53,
     NoPendingRotation = 54,
-    /// Oracle rotation delay has not elapsed yet (must wait MIN_ROTATION_DELAY_SECONDS)
     RotationDelayNotElapsed = 55,
-    /// Invalid archive retention limit
     InvalidArchiveRetention = 62,
     InvalidCommitment = 63,
     InvalidSalt = 64,
     NoRoundTemplate = 65,
-    /// Oracle payload timestamp is outside the round-relative economic window
     OracleTimestampOutsideWindow = 66,
-    /// Pending winnings entry exists but has not yet reached the configured
-    /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 66,
-    /// Epoch mint budget has been fully consumed
-    EpochBudgetExceeded = 67,
-    /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
-    OracleNotLive = 68,
-    /// Invalid precision payout policy
-    InvalidPayoutPolicy = 69,
-    /// Stake amount is below the configured minimum bet (dust protection, Issue #269)
-    BelowMinBet = 70,
-    /// Multi-feed resolution: fewer observations survived outlier rejection
-    /// than the configured quorum threshold.
-    InsufficientOracleQuorum = 71,
-    /// Multi-feed resolution: payload contains fewer observations than the
-    /// configured minimum.
-    TooFewObservations = 72,
-    /// Multi-feed resolution: outlier observations would dominate the result
-    /// (too many rejected, cannot form quorum).
-    OracleOutlierRejected = 73,
-    /// Multi-feed payload contains duplicate source identifiers.
-    DuplicateOracleSource = 74,
-    /// Multi-feed payload has observations that are not sorted or sources
-    /// are out of expected range.
-    InvalidObservationOrder = 75,
-    /// The requested data key is not allowed for batch TTL touch operations.
-    UnsupportedDataKeyForTtlTouch = 76,
-    /// Pending winnings entry does not exist or expiry is not configured.
-    PendingWinningsNotFound = 77,
-    /// Pending winnings expiry is not configured (value is 0).
-    ExpiryNotConfigured = 78,
+    PendingWinningsNotExpired = 67,
+    EpochBudgetExceeded = 68,
+    OracleNotLive = 69,
+    InvalidPayoutPolicy = 70,
+    BelowMinBet = 71,
+    InsufficientOracleQuorum = 72,
+    TooFewObservations = 73,
+    OracleOutlierRejected = 74,
+    DuplicateOracleSource = 75,
+    InvalidObservationOrder = 76,
+    UnsupportedDataKeyForTtlTouch = 77,
+    PendingWinningsNotFound = 78,
+    ExpiryNotConfigured = 79,
+    // ─── Intent / Keeper Authorization Zone errors (Issue #370) ──────────────
+    IntentAlreadyConsumed = 80,
+    IntentExpired = 81,
+    IntentRevoked = 82,
+    IntentKeeperMismatch = 83,
+    IntentScopeMismatch = 84,
+    KeeperNotRegistered = 85,
+    InvalidIntentExpiry = 86,
+    IntentNotFound = 87,
+    // ─── Additional Governance, Dispute & Access Control Errors ─────────────
+    GovUnauthorized = 88,
+    GovProposalNotFound = 89,
+    GovProposalExpired = 90,
+    GovInvalidState = 91,
+    GovSelfApprovalDenied = 92,
+    DisputeWindowExpired = 93,
+    ClaimLocked = 94,
+    AccessDenied = 95,
+    InvalidAmount = 96,
+    ProposalNotFound = 97,
+    ProposalExpired = 98,
+    OracleHeartbeatUnhealthy = 99,
+}
+
+impl From<ContractError> for Error {
+    fn from(e: ContractError) -> Self {
+        Error::from_contract_error(e as u32)
+    }
+}
+
+impl From<&ContractError> for Error {
+    fn from(e: &ContractError) -> Self {
+        Error::from_contract_error(*e as u32)
+    }
+}
+
+impl TryFrom<Error> for ContractError {
+    type Error = Error;
+    fn try_from(err: Error) -> Result<Self, Self::Error> {
+        let code = err.get_code();
+        match code {
+            1 => Ok(ContractError::AlreadyInitialized),
+            2 => Ok(ContractError::AdminNotSet),
+            3 => Ok(ContractError::OracleNotSet),
+            6 => Ok(ContractError::InvalidBetAmount),
+            7 => Ok(ContractError::NoActiveRound),
+            8 => Ok(ContractError::RoundEnded),
+            9 => Ok(ContractError::InsufficientBalance),
+            10 => Ok(ContractError::AlreadyBet),
+            11 => Ok(ContractError::Overflow),
+            12 => Ok(ContractError::InvalidPrice),
+            13 => Ok(ContractError::InvalidDuration),
+            14 => Ok(ContractError::InvalidMode),
+            15 => Ok(ContractError::WrongModeForPrediction),
+            16 => Ok(ContractError::RoundNotEnded),
+            18 => Ok(ContractError::StaleOracleData),
+            19 => Ok(ContractError::InvalidOracleRound),
+            20 => Ok(ContractError::RoundAlreadyActive),
+            22 => Ok(ContractError::ContractPaused),
+            23 => Ok(ContractError::WindowOutOfRange),
+            24 => Ok(ContractError::FutureOracleData),
+            25 => Ok(ContractError::PayoutOverflow),
+            27 => Ok(ContractError::RoundNotCancellable),
+            28 => Ok(ContractError::StakeExceedsMax),
+            29 => Ok(ContractError::ExposureCapExceeded),
+            30 => Ok(ContractError::PendingWinningsCapExceeded),
+            31 => Ok(ContractError::InvalidStartPrice),
+            33 => Ok(ContractError::OracleNonceReused),
+            35 => Ok(ContractError::InvalidMinParticipants),
+            38 => Ok(ContractError::InvalidPrecisionCap),
+            39 => Ok(ContractError::PrecisionCapExceeded),
+            41 => Ok(ContractError::OracleDeviationExceeded),
+            42 => Ok(ContractError::UnsupportedSchemaVersion),
+            44 => Ok(ContractError::MigrationActiveRound),
+            45 => Ok(ContractError::CommitmentNotFound),
+            46 => Ok(ContractError::AlreadyRevealed),
+            47 => Ok(ContractError::InvalidRevealWindow),
+            48 => Ok(ContractError::HashMismatch),
+            49 => Ok(ContractError::OracleNetworkMismatch),
+            51 => Ok(ContractError::InvalidProtocolFeeBps),
+            53 => Ok(ContractError::MintLimitExceeded),
+            54 => Ok(ContractError::NoPendingRotation),
+            55 => Ok(ContractError::RotationDelayNotElapsed),
+            62 => Ok(ContractError::InvalidArchiveRetention),
+            63 => Ok(ContractError::InvalidCommitment),
+            64 => Ok(ContractError::InvalidSalt),
+            65 => Ok(ContractError::NoRoundTemplate),
+            66 => Ok(ContractError::OracleTimestampOutsideWindow),
+            67 => Ok(ContractError::PendingWinningsNotExpired),
+            68 => Ok(ContractError::EpochBudgetExceeded),
+            69 => Ok(ContractError::OracleNotLive),
+            70 => Ok(ContractError::InvalidPayoutPolicy),
+            71 => Ok(ContractError::BelowMinBet),
+            72 => Ok(ContractError::InsufficientOracleQuorum),
+            73 => Ok(ContractError::TooFewObservations),
+            74 => Ok(ContractError::OracleOutlierRejected),
+            75 => Ok(ContractError::DuplicateOracleSource),
+            76 => Ok(ContractError::InvalidObservationOrder),
+            77 => Ok(ContractError::UnsupportedDataKeyForTtlTouch),
+            78 => Ok(ContractError::PendingWinningsNotFound),
+            79 => Ok(ContractError::ExpiryNotConfigured),
+            80 => Ok(ContractError::IntentAlreadyConsumed),
+            81 => Ok(ContractError::IntentExpired),
+            82 => Ok(ContractError::IntentRevoked),
+            83 => Ok(ContractError::IntentKeeperMismatch),
+            84 => Ok(ContractError::IntentScopeMismatch),
+            85 => Ok(ContractError::KeeperNotRegistered),
+            86 => Ok(ContractError::InvalidIntentExpiry),
+            87 => Ok(ContractError::IntentNotFound),
+            88 => Ok(ContractError::GovUnauthorized),
+            89 => Ok(ContractError::GovProposalNotFound),
+            90 => Ok(ContractError::GovProposalExpired),
+            91 => Ok(ContractError::GovInvalidState),
+            92 => Ok(ContractError::GovSelfApprovalDenied),
+            93 => Ok(ContractError::DisputeWindowExpired),
+            94 => Ok(ContractError::ClaimLocked),
+            95 => Ok(ContractError::AccessDenied),
+            96 => Ok(ContractError::InvalidAmount),
+            97 => Ok(ContractError::ProposalNotFound),
+            98 => Ok(ContractError::ProposalExpired),
+            99 => Ok(ContractError::OracleHeartbeatUnhealthy),
+            _ => Err(err),
+        }
+    }
+}
+
+impl IntoVal<Env, Val> for ContractError {
+    fn into_val(&self, env: &Env) -> Val {
+        Error::from_contract_error(*self as u32).into_val(env)
+    }
+}
+
+impl TryFromVal<Env, Val> for ContractError {
+    type Error = ConversionError;
+    fn try_from_val(env: &Env, val: &Val) -> Result<Self, Self::Error> {
+        let err: Error = Error::try_from_val(env, val)?;
+        let code = err.get_code();
+        match code {
+            1 => Ok(ContractError::AlreadyInitialized),
+            2 => Ok(ContractError::AdminNotSet),
+            3 => Ok(ContractError::OracleNotSet),
+            6 => Ok(ContractError::InvalidBetAmount),
+            7 => Ok(ContractError::NoActiveRound),
+            8 => Ok(ContractError::RoundEnded),
+            9 => Ok(ContractError::InsufficientBalance),
+            10 => Ok(ContractError::AlreadyBet),
+            11 => Ok(ContractError::Overflow),
+            12 => Ok(ContractError::InvalidPrice),
+            13 => Ok(ContractError::InvalidDuration),
+            14 => Ok(ContractError::InvalidMode),
+            15 => Ok(ContractError::WrongModeForPrediction),
+            16 => Ok(ContractError::RoundNotEnded),
+            18 => Ok(ContractError::StaleOracleData),
+            19 => Ok(ContractError::InvalidOracleRound),
+            20 => Ok(ContractError::RoundAlreadyActive),
+            22 => Ok(ContractError::ContractPaused),
+            23 => Ok(ContractError::WindowOutOfRange),
+            24 => Ok(ContractError::FutureOracleData),
+            25 => Ok(ContractError::PayoutOverflow),
+            27 => Ok(ContractError::RoundNotCancellable),
+            28 => Ok(ContractError::StakeExceedsMax),
+            29 => Ok(ContractError::ExposureCapExceeded),
+            30 => Ok(ContractError::PendingWinningsCapExceeded),
+            31 => Ok(ContractError::InvalidStartPrice),
+            33 => Ok(ContractError::OracleNonceReused),
+            35 => Ok(ContractError::InvalidMinParticipants),
+            38 => Ok(ContractError::InvalidPrecisionCap),
+            39 => Ok(ContractError::PrecisionCapExceeded),
+            41 => Ok(ContractError::OracleDeviationExceeded),
+            42 => Ok(ContractError::UnsupportedSchemaVersion),
+            44 => Ok(ContractError::MigrationActiveRound),
+            45 => Ok(ContractError::CommitmentNotFound),
+            46 => Ok(ContractError::AlreadyRevealed),
+            47 => Ok(ContractError::InvalidRevealWindow),
+            48 => Ok(ContractError::HashMismatch),
+            49 => Ok(ContractError::OracleNetworkMismatch),
+            51 => Ok(ContractError::InvalidProtocolFeeBps),
+            53 => Ok(ContractError::MintLimitExceeded),
+            54 => Ok(ContractError::NoPendingRotation),
+            55 => Ok(ContractError::RotationDelayNotElapsed),
+            62 => Ok(ContractError::InvalidArchiveRetention),
+            63 => Ok(ContractError::InvalidCommitment),
+            64 => Ok(ContractError::InvalidSalt),
+            65 => Ok(ContractError::NoRoundTemplate),
+            66 => Ok(ContractError::OracleTimestampOutsideWindow),
+            67 => Ok(ContractError::PendingWinningsNotExpired),
+            68 => Ok(ContractError::EpochBudgetExceeded),
+            69 => Ok(ContractError::OracleNotLive),
+            70 => Ok(ContractError::InvalidPayoutPolicy),
+            71 => Ok(ContractError::BelowMinBet),
+            72 => Ok(ContractError::InsufficientOracleQuorum),
+            73 => Ok(ContractError::TooFewObservations),
+            74 => Ok(ContractError::OracleOutlierRejected),
+            75 => Ok(ContractError::DuplicateOracleSource),
+            76 => Ok(ContractError::InvalidObservationOrder),
+            77 => Ok(ContractError::UnsupportedDataKeyForTtlTouch),
+            78 => Ok(ContractError::PendingWinningsNotFound),
+            79 => Ok(ContractError::ExpiryNotConfigured),
+            80 => Ok(ContractError::IntentAlreadyConsumed),
+            81 => Ok(ContractError::IntentExpired),
+            82 => Ok(ContractError::IntentRevoked),
+            83 => Ok(ContractError::IntentKeeperMismatch),
+            84 => Ok(ContractError::IntentScopeMismatch),
+            85 => Ok(ContractError::KeeperNotRegistered),
+            86 => Ok(ContractError::InvalidIntentExpiry),
+            87 => Ok(ContractError::IntentNotFound),
+            88 => Ok(ContractError::GovUnauthorized),
+            89 => Ok(ContractError::GovProposalNotFound),
+            90 => Ok(ContractError::GovProposalExpired),
+            91 => Ok(ContractError::GovInvalidState),
+            92 => Ok(ContractError::GovSelfApprovalDenied),
+            93 => Ok(ContractError::DisputeWindowExpired),
+            94 => Ok(ContractError::ClaimLocked),
+            95 => Ok(ContractError::AccessDenied),
+            96 => Ok(ContractError::InvalidAmount),
+            97 => Ok(ContractError::ProposalNotFound),
+            98 => Ok(ContractError::ProposalExpired),
+            99 => Ok(ContractError::OracleHeartbeatUnhealthy),
+            _ => Err(ConversionError),
+        }
+    }
 }

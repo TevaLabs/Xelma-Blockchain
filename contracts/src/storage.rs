@@ -11,7 +11,7 @@
 //! (`Position` + `PrecisionPosition` + `PrecisionCommitment`) should route
 //! through `clear_user_positions` or `clear_round_storage`.
 
-use crate::types::DataKey;
+use crate::types::{DataKeyCore, DataKeyScoped};
 use soroban_sdk::{Address, Env, Vec};
 
 /// Removes **all** position storage keys for a single participant,
@@ -28,13 +28,13 @@ use soroban_sdk::{Address, Env, Vec};
 pub fn clear_user_positions(env: &Env, round_id: u64, user: &Address) {
     env.storage()
         .persistent()
-        .remove(&DataKey::Position(round_id, user.clone()));
+        .remove(&DataKeyScoped::Position(round_id, user.clone()));
     env.storage()
         .persistent()
-        .remove(&DataKey::PrecisionPosition(round_id, user.clone()));
+        .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
     env.storage()
         .persistent()
-        .remove(&DataKey::PrecisionCommitment(round_id, user.clone()));
+        .remove(&DataKeyScoped::PrecisionCommitment(round_id, user.clone()));
 }
 
 /// Removes all position storage keys for every participant in a round,
@@ -64,15 +64,15 @@ pub fn clear_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>
     // Clear shared keys
     env.storage()
         .persistent()
-        .remove(&DataKey::RoundParticipants(round_id));
-    env.storage().persistent().remove(&DataKey::ActiveRound);
+        .remove(&DataKeyScoped::RoundParticipants(round_id));
+    env.storage().persistent().remove(&DataKeyCore::ActiveRound);
 
     // Legacy keys — safe no-op when absent
-    env.storage().persistent().remove(&DataKey::Positions);
+    env.storage().persistent().remove(&DataKeyCore::Positions);
     env.storage()
         .persistent()
-        .remove(&DataKey::UpDownPositions);
+        .remove(&DataKeyCore::UpDownPositions);
     env.storage()
         .persistent()
-        .remove(&DataKey::PrecisionPositions);
+        .remove(&DataKeyCore::PrecisionPositions);
 }

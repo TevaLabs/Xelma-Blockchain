@@ -4,18 +4,18 @@
 use crate::admin::{_require_supported_schema, _set_mode};
 use crate::common::{_emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_PROPOSAL_TTL_LEDGERS};
 use crate::errors::ContractError;
-use crate::types::{DataKey, GovAction, GovProposal, GovProposalStatus, RuntimeMode};
+use crate::types::{DataKeyCore, DataKeyScoped, GovAction, GovProposal, GovProposalStatus, RuntimeMode};
 use soroban_sdk::{symbol_short, Address, Env};
 
 /// Returns whether `user` is an authorized governance administrator or approver.
 pub fn _is_authorized_gov_user(env: &Env, user: &Address) -> bool {
-    let admin: Option<Address> = env.storage().persistent().get(&DataKey::Admin);
+    let admin: Option<Address> = env.storage().persistent().get(&DataKeyCore::Admin);
     if let Some(ref a) = admin {
         if a == user {
             return true;
         }
     }
-    let approver: Option<Address> = env.storage().persistent().get(&DataKey::GovApprover);
+    let approver: Option<Address> = env.storage().persistent().get(&DataKeyCore::GovApprover);
     if let Some(ref ap) = approver {
         if ap == user {
             return true;
@@ -26,7 +26,7 @@ pub fn _is_authorized_gov_user(env: &Env, user: &Address) -> bool {
 
 /// Returns whether dual governance approval is currently active (a secondary approver is set).
 pub fn _is_gov_approver_set(env: &Env) -> bool {
-    let key = DataKey::GovApprover;
+    let key = DataKeyCore::GovApprover;
     if env.storage().persistent().has(&key) {
         _extend_persistent_ttl(env, &key);
         true
@@ -41,11 +41,11 @@ pub fn set_gov_approver(env: Env, approver: Address) -> Result<(), ContractError
     let admin: Address = env
         .storage()
         .persistent()
-        .get(&DataKey::Admin)
+        .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
 
-    let key = DataKey::GovApprover;
+    let key = DataKeyCore::GovApprover;
     env.storage().persistent().set(&key, &approver);
     _extend_persistent_ttl(&env, &key);
 
@@ -60,7 +60,7 @@ pub fn set_gov_approver(env: Env, approver: Address) -> Result<(), ContractError
 
 /// Returns the configured secondary governance approver address, if set.
 pub fn get_gov_approver(env: Env) -> Option<Address> {
-    let key = DataKey::GovApprover;
+    let key = DataKeyCore::GovApprover;
     _extend_persistent_ttl(&env, &key);
     env.storage().persistent().get(&key)
 }
@@ -71,7 +71,7 @@ pub fn set_gov_proposal_ttl(env: Env, ttl_ledgers: u32) -> Result<(), ContractEr
     let admin: Address = env
         .storage()
         .persistent()
-        .get(&DataKey::Admin)
+        .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
 
@@ -79,7 +79,7 @@ pub fn set_gov_proposal_ttl(env: Env, ttl_ledgers: u32) -> Result<(), ContractEr
         return Err(ContractError::WindowOutOfRange);
     }
 
-    let key = DataKey::GovProposalTtlLedgers;
+    let key = DataKeyCore::GovProposalTtlLedgers;
     env.storage().persistent().set(&key, &ttl_ledgers);
     _extend_persistent_ttl(&env, &key);
     Ok(())
@@ -87,7 +87,7 @@ pub fn set_gov_proposal_ttl(env: Env, ttl_ledgers: u32) -> Result<(), ContractEr
 
 /// Returns the configured default proposal TTL in ledgers.
 pub fn get_gov_proposal_ttl(env: Env) -> u32 {
-    let key = DataKey::GovProposalTtlLedgers;
+    let key = DataKeyCore::GovProposalTtlLedgers;
     _extend_persistent_ttl(&env, &key);
     env.storage()
         .persistent()
@@ -128,7 +128,7 @@ pub fn propose(
         return Err(ContractError::GovUnauthorized);
     }
 
-    let id_key = DataKey::NextGovProposalId;
+    let id_key = DataKeyCore::NextGovProposalId;
     let proposal_id: u64 = env.storage().persistent().get(&id_key).unwrap_or(1);
     env.storage().persistent().set(&id_key, &(proposal_id + 1));
     _extend_persistent_ttl(&env, &id_key);
@@ -147,7 +147,7 @@ pub fn propose(
         status: GovProposalStatus::Pending,
     };
 
-    let p_key = DataKey::GovProposal(proposal_id);
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     env.storage().persistent().set(&p_key, &proposal);
     _extend_persistent_ttl(&env, &p_key);
 
@@ -160,7 +160,7 @@ pub fn propose(
     Ok(proposal_id)
 }
 
-/// Approves a pending governance proposal (governance admin/approver only, distinct from proposer).
+/// Approves a pending governance proposal (must be the other authorized party).
 pub fn approve(env: Env, approver: Address, proposal_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     approver.require_auth();
@@ -175,36 +175,28 @@ pub fn approve(env: Env, approver: Address, proposal_id: u64) -> Result<(), Cont
         return Err(ContractError::GovUnauthorized);
     }
 
-    let p_key = DataKey::GovProposal(proposal_id);
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     let mut proposal: GovProposal = env
         .storage()
         .persistent()
         .get(&p_key)
-        .ok_or(ContractError::ProposalNotFound)?;
+        .ok_or(ContractError::GovProposalNotFound)?;
 
     let current_ledger = env.ledger().sequence();
     if current_ledger > proposal.expires_at_ledger {
         proposal.status = GovProposalStatus::Expired;
         env.storage().persistent().set(&p_key, &proposal);
         _extend_persistent_ttl(&env, &p_key);
-
-        #[allow(deprecated)]
-        env.events().publish(
-            (symbol_short!("gov"), symbol_short!("expired")),
-            (proposal_id, current_ledger),
+        _emit_action_rejected(
+            &env,
+            &approver,
+            symbol_short!("approve"),
+            ContractError::GovProposalExpired,
         );
-        return Err(ContractError::ProposalExpired);
+        return Err(ContractError::GovProposalExpired);
     }
 
-    match proposal.status {
-        GovProposalStatus::Cancelled => return Err(ContractError::GovInvalidState),
-        GovProposalStatus::Executed => return Err(ContractError::GovInvalidState),
-        GovProposalStatus::Approved => return Err(ContractError::GovInvalidState),
-        GovProposalStatus::Expired => return Err(ContractError::ProposalExpired),
-        GovProposalStatus::Pending => {}
-    }
-
-    if proposal.proposer == approver {
+    if proposal.status != GovProposalStatus::Pending {
         _emit_action_rejected(
             &env,
             &approver,
@@ -212,6 +204,18 @@ pub fn approve(env: Env, approver: Address, proposal_id: u64) -> Result<(), Cont
             ContractError::GovInvalidState,
         );
         return Err(ContractError::GovInvalidState);
+    }
+
+    // Dual approval: Proposer cannot approve their own proposal if dual approval is active.
+    let dual_active = _is_gov_approver_set(&env);
+    if dual_active && approver == proposal.proposer {
+        _emit_action_rejected(
+            &env,
+            &approver,
+            symbol_short!("approve"),
+            ContractError::GovSelfApprovalDenied,
+        );
+        return Err(ContractError::GovSelfApprovalDenied);
     }
 
     proposal.approver = Some(approver.clone());
@@ -228,52 +232,65 @@ pub fn approve(env: Env, approver: Address, proposal_id: u64) -> Result<(), Cont
     Ok(())
 }
 
-/// Executes an approved governance proposal (governance admin/approver only).
-pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), ContractError> {
+/// Executes an approved governance proposal (admin/approver only).
+pub fn execute_proposal(env: Env, caller: Address, proposal_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
-    executor.require_auth();
+    caller.require_auth();
 
-    if !_is_authorized_gov_user(&env, &executor) {
+    if !_is_authorized_gov_user(&env, &caller) {
         _emit_action_rejected(
             &env,
-            &executor,
-            symbol_short!("execute"),
+            &caller,
+            symbol_short!("exec_prop"),
             ContractError::GovUnauthorized,
         );
         return Err(ContractError::GovUnauthorized);
     }
 
-    let p_key = DataKey::GovProposal(proposal_id);
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     let mut proposal: GovProposal = env
         .storage()
         .persistent()
         .get(&p_key)
-        .ok_or(ContractError::ProposalNotFound)?;
+        .ok_or(ContractError::GovProposalNotFound)?;
 
     let current_ledger = env.ledger().sequence();
     if current_ledger > proposal.expires_at_ledger {
         proposal.status = GovProposalStatus::Expired;
         env.storage().persistent().set(&p_key, &proposal);
         _extend_persistent_ttl(&env, &p_key);
-
-        #[allow(deprecated)]
-        env.events().publish(
-            (symbol_short!("gov"), symbol_short!("expired")),
-            (proposal_id, current_ledger),
+        _emit_action_rejected(
+            &env,
+            &caller,
+            symbol_short!("exec_prop"),
+            ContractError::GovProposalExpired,
         );
-        return Err(ContractError::ProposalExpired);
+        return Err(ContractError::GovProposalExpired);
     }
 
-    match proposal.status {
-        GovProposalStatus::Cancelled => return Err(ContractError::GovInvalidState),
-        GovProposalStatus::Executed => return Err(ContractError::GovInvalidState),
-        GovProposalStatus::Expired => return Err(ContractError::ProposalExpired),
-        GovProposalStatus::Pending => return Err(ContractError::GovInvalidState),
-        GovProposalStatus::Approved => {}
+    // Require Approved state (or Pending if dual governance is NOT active)
+    let dual_active = _is_gov_approver_set(&env);
+    if dual_active && proposal.status != GovProposalStatus::Approved {
+        _emit_action_rejected(
+            &env,
+            &caller,
+            symbol_short!("exec_prop"),
+            ContractError::GovInvalidState,
+        );
+        return Err(ContractError::GovInvalidState);
+    }
+    if !dual_active && proposal.status != GovProposalStatus::Pending && proposal.status != GovProposalStatus::Approved {
+        _emit_action_rejected(
+            &env,
+            &caller,
+            symbol_short!("exec_prop"),
+            ContractError::GovInvalidState,
+        );
+        return Err(ContractError::GovInvalidState);
     }
 
-    // Execute the action payload
-    match &proposal.action {
+    // Apply the action
+    match proposal.action {
         GovAction::PauseProtocol => {
             _set_mode(&env, RuntimeMode::FullyPaused)?;
         }
@@ -281,8 +298,7 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
             _set_mode(&env, RuntimeMode::Normal)?;
         }
         GovAction::SetProtocolFeeBps(bps) => {
-            crate::config::_validate_protocol_fee_bps(bps.clone())?;
-            let key = DataKey::ProtocolFeeBps;
+            let key = DataKeyCore::ProtocolFeeBps;
             if let Some(ref v) = bps {
                 env.storage().persistent().set(&key, v);
                 _extend_persistent_ttl(&env, &key);
@@ -290,20 +306,20 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
                 env.storage().persistent().remove(&key);
             }
         }
-        GovAction::WithdrawProtocolFee(recipient, amount) => {
-            _execute_withdraw_fee(&env, &recipient, *amount)?;
+        GovAction::WithdrawProtocolFee(ref recipient, amount) => {
+            _execute_withdraw_fee(&env, recipient, amount)?;
         }
-        GovAction::SetTreasuryAddress(treasury) => {
-            env.storage().persistent().set(&DataKey::ProtocolFeeTreasury, &treasury);
-            _extend_persistent_ttl(&env, &DataKey::ProtocolFeeTreasury);
+        GovAction::SetTreasuryAddress(ref treasury) => {
+            env.storage().persistent().set(&DataKeyCore::ProtocolFeeTreasury, treasury);
+            _extend_persistent_ttl(&env, &DataKeyCore::ProtocolFeeTreasury);
         }
-        GovAction::SetAdmin(new_admin) => {
-            env.storage().persistent().set(&DataKey::Admin, &new_admin);
-            _extend_persistent_ttl(&env, &DataKey::Admin);
+        GovAction::SetAdmin(ref new_admin) => {
+            env.storage().persistent().set(&DataKeyCore::Admin, new_admin);
+            _extend_persistent_ttl(&env, &DataKeyCore::Admin);
         }
-        GovAction::SetOracle(new_oracle) => {
-            env.storage().persistent().set(&DataKey::Oracle, &new_oracle);
-            _extend_persistent_ttl(&env, &DataKey::Oracle);
+        GovAction::SetOracle(ref new_oracle) => {
+            env.storage().persistent().set(&DataKeyCore::Oracle, new_oracle);
+            _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
         }
     }
 
@@ -314,71 +330,76 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("gov"), symbol_short!("executed")),
-        (proposal_id, executor, _action_code(&proposal.action)),
+        (proposal_id, caller),
     );
 
     Ok(())
 }
 
-/// Helper executing fee withdrawals for Governance Action
-fn _execute_withdraw_fee(
-    env: &Env,
-    recipient: &Address,
-    amount: i128,
-) -> Result<i128, ContractError> {
+fn _execute_withdraw_fee(env: &Env, recipient: &Address, amount: i128) -> Result<(), ContractError> {
     if amount <= 0 {
-        return Err(ContractError::InvalidBetAmount);
+        return Err(ContractError::InvalidAmount);
     }
-    let treasury_key = DataKey::ProtocolFeeTreasury;
-    let current: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
-    if amount > current {
+    let treasury_key = DataKeyCore::ProtocolFeeTreasury;
+    let balance: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
+    if amount > balance {
         return Err(ContractError::InsufficientBalance);
     }
-    let new_treasury = current
-        .checked_sub(amount)
-        .ok_or(ContractError::InsufficientBalance)?;
-    env.storage().persistent().set(&treasury_key, &new_treasury);
+    let new_balance = balance.checked_sub(amount).ok_or(ContractError::Overflow)?;
+    env.storage().persistent().set(&treasury_key, &new_balance);
     _extend_persistent_ttl(env, &treasury_key);
 
-    let recipient_bal: i128 = crate::common::balance(env.clone(), recipient.clone());
-    let new_bal = crate::common::payout_add(recipient_bal, amount)?;
-    crate::common::_set_balance(env, recipient.clone(), new_bal);
+    // Credit user's in-contract balance
+    let current_user_bal: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKeyScoped::Balance(recipient.clone()))
+        .unwrap_or(0);
+    let new_user_bal = current_user_bal.checked_add(amount).ok_or(ContractError::Overflow)?;
+    env.storage()
+        .persistent()
+        .set(&DataKeyScoped::Balance(recipient.clone()), &new_user_bal);
+    _extend_persistent_ttl(env, &DataKeyScoped::Balance(recipient.clone()));
 
     #[allow(deprecated)]
     env.events().publish(
-        (symbol_short!("protocol"), symbol_short!("fee_with")),
-        (recipient.clone(), amount, new_treasury),
+        (symbol_short!("fee"), symbol_short!("withdrawn")),
+        (recipient.clone(), amount, new_balance),
     );
 
-    Ok(amount)
+    Ok(())
 }
 
-/// Cancels an unexecuted governance proposal (governance admin/approver only).
-pub fn cancel(env: Env, canceller: Address, proposal_id: u64) -> Result<(), ContractError> {
+/// Cancels a pending or approved governance proposal (proposer or admin only).
+pub fn cancel_proposal(env: Env, caller: Address, proposal_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
-    canceller.require_auth();
+    caller.require_auth();
 
-    if !_is_authorized_gov_user(&env, &canceller) {
+    if !_is_authorized_gov_user(&env, &caller) {
         _emit_action_rejected(
             &env,
-            &canceller,
-            symbol_short!("cancel"),
+            &caller,
+            symbol_short!("cancel_p"),
             ContractError::GovUnauthorized,
         );
         return Err(ContractError::GovUnauthorized);
     }
 
-    let p_key = DataKey::GovProposal(proposal_id);
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     let mut proposal: GovProposal = env
         .storage()
         .persistent()
         .get(&p_key)
-        .ok_or(ContractError::ProposalNotFound)?;
+        .ok_or(ContractError::GovProposalNotFound)?;
 
-    match proposal.status {
-        GovProposalStatus::Executed => return Err(ContractError::GovInvalidState),
-        GovProposalStatus::Cancelled => return Err(ContractError::GovInvalidState),
-        _ => {}
+    if proposal.status != GovProposalStatus::Pending && proposal.status != GovProposalStatus::Approved {
+        _emit_action_rejected(
+            &env,
+            &caller,
+            symbol_short!("cancel_p"),
+            ContractError::GovInvalidState,
+        );
+        return Err(ContractError::GovInvalidState);
     }
 
     proposal.status = GovProposalStatus::Cancelled;
@@ -387,16 +408,16 @@ pub fn cancel(env: Env, canceller: Address, proposal_id: u64) -> Result<(), Cont
 
     #[allow(deprecated)]
     env.events().publish(
-        (symbol_short!("gov"), symbol_short!("cancel")),
-        (proposal_id, canceller),
+        (symbol_short!("gov"), symbol_short!("cancelled")),
+        (proposal_id, caller),
     );
 
     Ok(())
 }
 
-/// Queries details for a governance proposal.
-pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
-    let p_key = DataKey::GovProposal(proposal_id);
+/// Queries the state of a governance proposal.
+pub fn get_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     _extend_persistent_ttl(&env, &p_key);
     let mut proposal: GovProposal = env.storage().persistent().get(&p_key)?;
 
@@ -409,3 +430,7 @@ pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
 
     Some(proposal)
 }
+
+pub use cancel_proposal as cancel;
+pub use execute_proposal as execute;
+pub use get_proposal as get_gov_proposal;

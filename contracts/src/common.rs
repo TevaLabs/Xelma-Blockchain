@@ -3,15 +3,15 @@ extern crate alloc;
 use alloc::vec::Vec as StdVec;
 use crate::errors::ContractError;
 use crate::types::{
-    ConfigChangeKind, ConfigChangePayload, DataKey, PendingWinningsUpdatedAtKey, Round, RoundPhase,
+    ConfigChangeKind, ConfigChangePayload, DataKey, DataKeyCore, DataKeyScoped,
+    PendingWinningsUpdatedAtKey, Round, RoundPhase,
 };
 use soroban_sdk::{symbol_short, Address, Env, IntoVal, Symbol, Val, Vec};
 
 pub const DEFAULT_PENDING_WINNINGS_EXPIRY: u32 = 0; // 0 = disabled
 pub const MIN_PENDING_WINNINGS_EXPIRY: u32 = 128;   // ~10 min at 5s ledgers
 pub const MAX_PENDING_WINNINGS_EXPIRY: u32 = 1_000_000; // ~58 days
-use crate::types::{ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, Round, RoundPhase};
-use soroban_sdk::{symbol_short, Address, Env, IntoVal, Symbol, Val, Vec};
+pub const DEFAULT_GOV_PROPOSAL_TTL_LEDGERS: u32 = 17280; // ~24h at 5s ledgers
 
 // ─── DataKey overflow workaround (DataKey has 51 variants, XDR limit is 50) ──
 // Moved out of DataKey to get under the limit.
@@ -103,10 +103,7 @@ pub const MIN_TWAP_WINDOW_SAMPLES: u32 = 2;
 /// Maximum trailing samples configurable — bounds the ring buffer's storage cost.
 pub const MAX_TWAP_WINDOW_SAMPLES: u32 = 64;
 
-/// Bumps/extends the TTL of the given persistent storage key if its remaining TTL
-/// is less than the threshold. Enforces rent policy (Issue #142).
 pub fn _extend_persistent_ttl<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
-pub fn _extend_persistent_ttl<T: IntoVal<Env, Val>>(env: &Env, key: &T) {
     if env.storage().persistent().has(key) {
         env.storage()
             .persistent()
@@ -152,8 +149,7 @@ pub fn payout_mul(a: i128, b: i128) -> Result<i128, ContractError> {
 
 /// Accumulates `amount` into a user's pending winnings, enforcing the cap if set (Issue #120).
 pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(), ContractError> {
-    let key = DataKey::PendingWinnings(user.clone());
-    let key = DataKeyScoped::PendingWinnings(user);
+    let key = DataKeyScoped::PendingWinnings(user.clone());
     let existing: i128 = env.storage().persistent().get(&key).unwrap_or(0);
     let new_pending = payout_add(existing, amount)?;
 
