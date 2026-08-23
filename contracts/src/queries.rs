@@ -218,7 +218,7 @@ pub fn get_user_archive_history(
     let user_rounds: Vec<u64> = env
         .storage()
         .persistent()
-        .get(&DataKey::UserArchivedRoundIds(user))
+        .get(&DataKeyScoped::UserArchivedRoundIds(user))
         .unwrap_or(Vec::new(env_ref));
 
     let total = user_rounds.len();
@@ -235,7 +235,7 @@ pub fn get_user_archive_history(
             if let Some(summary) = env
                 .storage()
                 .persistent()
-                .get(&DataKey::ArchivedRound(round_id))
+                .get(&DataKeyScoped::ArchivedRound(round_id))
             {
                 result.push_back(summary);
             }

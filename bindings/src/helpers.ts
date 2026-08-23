@@ -261,3 +261,65 @@ export async function simulateBet(
     };
   }
 }
+
+// ─── Keeper Intent Errors & Helpers (Issue #370) ─────────────────
+
+export class IntentAlreadyConsumedError extends XelmaError {
+  constructor() {
+    super("Keeper intent has already been consumed", 79, "IntentAlreadyConsumed");
+    this.name = "IntentAlreadyConsumedError";
+  }
+}
+
+export class IntentExpiredError extends XelmaError {
+  constructor() {
+    super("Keeper intent has expired", 80, "IntentExpired");
+    this.name = "IntentExpiredError";
+  }
+}
+
+export class IntentRevokedError extends XelmaError {
+  constructor() {
+    super("Keeper intent has been revoked by the user", 81, "IntentRevoked");
+    this.name = "IntentRevokedError";
+  }
+}
+
+export class IntentKeeperMismatchError extends XelmaError {
+  constructor() {
+    super("Caller address is not the keeper specified in the intent", 82, "IntentKeeperMismatch");
+    this.name = "IntentKeeperMismatchError";
+  }
+}
+
+export class IntentScopeMismatchError extends XelmaError {
+  constructor() {
+    super("Intent scope does not match the attempted operation", 83, "IntentScopeMismatch");
+    this.name = "IntentScopeMismatchError";
+  }
+}
+
+export class KeeperNotRegisteredError extends XelmaError {
+  constructor() {
+    super("Keeper is not on the authorized registration list", 84, "KeeperNotRegistered");
+    this.name = "KeeperNotRegisteredError";
+  }
+}
+
+export type KeeperScopeTag = "Resolve" | "Claim" | "CreateNext";
+
+export interface KeeperIntentPayload {
+  user: string;
+  keeper: string;
+  scope: KeeperScopeTag;
+  nonce: bigint;
+  expiresAtLedger: number;
+}
+
+/**
+ * Builds intent summary metadata for off-chain keeper service indexing.
+ */
+export function formatKeeperIntentSummary(intent: KeeperIntentPayload): string {
+  return `Intent[user=${intent.user}, keeper=${intent.keeper}, scope=${intent.scope}, nonce=${intent.nonce}, expiresAt=${intent.expiresAtLedger}]`;
+}
+

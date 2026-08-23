@@ -8,13 +8,13 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Ma
 use crate::errors::ContractError;
 use crate::governance;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, OracleRotationProposal, PendingConfigChange,
-    PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
-    RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
-    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
-    UserRoundOutcome, UserStats,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKey, DataKeyCore,
+    DataKeyScoped, DeviationReferenceMode, FeeModel, GovAction, GovProposal, KeeperIntent, KeeperScope, LeaderboardEntry, MultiFeedPayload,
+    OneSidedPolicy, OracleHeartbeatRecord, OraclePayload, OracleQuorumConfig, OracleRotationProposal,
+    PendingConfigChange, PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus,
+    ProtocolStatus, Round, RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus,
+    RoundTemplate, RuntimeMode, SeasonArchive, SeasonLeaderboardEntry, SimulationResult,
+    UserPosition, UserRoundOutcome, UserStats,
 };
 
 // ─── Economic control limits ─────────────────────────────────────────────────
@@ -92,6 +92,7 @@ use crate::admin;
 use crate::betting;
 use crate::common;
 use crate::config;
+use crate::intents;
 use crate::leaderboard;
 use crate::queries;
 use crate::settlement;
@@ -178,6 +179,8 @@ impl VirtualTokenContract {
         limit: u32,
     ) -> Vec<ArchivedRoundSummary> {
         queries::get_user_archive_history(env, user, offset, limit)
+    }
+
     /// Returns whether `action` is currently permitted under the PolicyGate
     /// for the contract's runtime mode (Issue #261). Read-only; does not
     /// mutate state. See [`admin::_policy_gate`] for the full matrix.
@@ -243,6 +246,100 @@ impl VirtualTokenContract {
     /// Arms a one-shot override to bypass deviation checks for the next settlement (admin only).
     pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
         admin::arm_oracle_deviation_override(env)
+    }
+
+    // ─── Intent / Keeper Authorization Zone (Issue #370) ─────────────────────────
+
+    /// Creates a new keeper intent authorizing `keeper` to execute `scope` on
+    /// behalf of `user` within `expiry_ledgers` (user auth required).
+    pub fn authorize_keeper_intent(
+        env: Env,
+        user: Address,
+        keeper: Address,
+        scope: KeeperScope,
+        expiry_ledgers: u32,
+    ) -> Result<u64, ContractError> {
+        intents::authorize_keeper_intent(env, user, keeper, scope, expiry_ledgers)
+    }
+
+    /// Revokes an active keeper intent before it is executed (user auth required).
+    pub fn revoke_keeper_intent(
+        env: Env,
+        user: Address,
+        scope: KeeperScope,
+        nonce: u64,
+    ) -> Result<(), ContractError> {
+        intents::revoke_keeper_intent(env, user, scope, nonce)
+    }
+
+    /// Returns the keeper intent record for `(user, scope, nonce)`, if present.
+    pub fn get_keeper_intent(
+        env: Env,
+        user: Address,
+        scope: KeeperScope,
+        nonce: u64,
+    ) -> Option<KeeperIntent> {
+        intents::get_keeper_intent(env, user, scope, nonce)
+    }
+
+    /// Keeper executes a `Resolve` intent: settles active round using `payload`.
+    pub fn execute_keeper_resolve(
+        env: Env,
+        keeper: Address,
+        user: Address,
+        nonce: u64,
+        payload: OraclePayload,
+    ) -> Result<(), ContractError> {
+        intents::execute_keeper_resolve(env, keeper, user, nonce, payload)
+    }
+
+    /// Keeper executes a `Claim` intent: collects pending winnings on behalf of `user`.
+    /// Funds are transferred directly to `user`, NOT to `keeper`.
+    pub fn execute_keeper_claim(
+        env: Env,
+        keeper: Address,
+        user: Address,
+        nonce: u64,
+    ) -> Result<(), ContractError> {
+        intents::execute_keeper_claim(env, keeper, user, nonce)
+    }
+
+    /// Keeper executes a `CreateNext` intent: spins up next round from template.
+    pub fn execute_keeper_create_next(
+        env: Env,
+        keeper: Address,
+        user: Address,
+        nonce: u64,
+    ) -> Result<(), ContractError> {
+        intents::execute_keeper_create_next(env, keeper, user, nonce)
+    }
+
+    /// Registers `keeper` on the authorised-keeper allowlist (admin only).
+    pub fn register_keeper(env: Env, keeper: Address) -> Result<(), ContractError> {
+        intents::register_keeper(env, keeper)
+    }
+
+    /// Deregisters `keeper` from the authorised-keeper allowlist (admin only).
+    pub fn deregister_keeper(env: Env, keeper: Address) -> Result<(), ContractError> {
+        intents::deregister_keeper(env, keeper)
+    }
+
+    /// Toggles the global keeper-registration requirement (admin only).
+    pub fn set_keeper_registration_required(
+        env: Env,
+        required: bool,
+    ) -> Result<(), ContractError> {
+        intents::set_keeper_registration_required(env, required)
+    }
+
+    /// Returns whether `keeper` is currently registered.
+    pub fn is_keeper_registered(env: Env, keeper: Address) -> bool {
+        intents::is_keeper_registered(env, keeper)
+    }
+
+    /// Returns whether keeper registration is currently required.
+    pub fn is_keeper_registration_required(env: Env) -> bool {
+        intents::is_keeper_registration_required(env)
     }
 
     /// Sets the minimum oracle confidence threshold in basis points (admin only).
@@ -1574,6 +1671,57 @@ impl VirtualTokenContract {
         config::_apply_config_payload(env, kind, payload)
     }
 
+    // ─── Participant Access Control (Issue #274) ─────────────────────────────
+    pub fn set_access_control_enabled(env: Env, enabled: bool) -> Result<(), ContractError> {
+        crate::access_control::set_access_control_enabled(env, enabled)
+    }
+
+    pub fn is_access_control_enabled(env: Env) -> bool {
+        crate::access_control::is_access_control_enabled(env)
+    }
+
+    pub fn add_allowlisted(env: Env, user: Address) -> Result<(), ContractError> {
+        crate::access_control::add_allowlisted(env, user)
+    }
+
+    pub fn remove_allowlisted(env: Env, user: Address) -> Result<(), ContractError> {
+        crate::access_control::remove_allowlisted(env, user)
+    }
+
+    pub fn add_denylisted(env: Env, user: Address) -> Result<(), ContractError> {
+        crate::access_control::add_denylisted(env, user)
+    }
+
+    pub fn remove_denylisted(env: Env, user: Address) -> Result<(), ContractError> {
+        crate::access_control::remove_denylisted(env, user)
+    }
+
+    pub fn is_user_allowlisted(env: Env, user: Address) -> bool {
+        crate::access_control::is_allowlisted(env, user)
+    }
+
+    pub fn is_allowlisted(env: Env, user: Address) -> bool {
+        crate::access_control::is_allowlisted(env, user)
+    }
+
+    pub fn is_user_denylisted(env: Env, user: Address) -> bool {
+        crate::access_control::is_denylisted(env, user)
+    }
+
+    pub fn is_denylisted(env: Env, user: Address) -> bool {
+        crate::access_control::is_denylisted(env, user)
+    }
+
+    pub fn get_access_state(env: Env, user: Address) -> AccessState {
+        crate::access_control::get_access_state(env, user)
+    }
+
+    pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
+        crate::access_control::get_access_policy(env, user)
+    }
+}
+
+impl VirtualTokenContract {
     fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(env: &Env, key: &T) {
         if env.storage().persistent().has(key) {
             env.storage()
@@ -1581,9 +1729,7 @@ impl VirtualTokenContract {
                 .extend_ttl(key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
         }
     }
-}
 
-impl VirtualTokenContract {
     pub fn _update_stats_win(env: &Env, user: Address) -> Result<(), ContractError> {
         settlement::_update_stats_win(env, user)
     }

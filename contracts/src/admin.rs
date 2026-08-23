@@ -7,7 +7,7 @@ use crate::common::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt,
+    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyScoped,
     DeviationConfig, DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey,
     OracleHeartbeatRecord, OracleQuorumConfig, PolicyAction, ProtocolHealthStatus, Round,
     RuntimeMode, PENDING_WINNINGS_EXPIRY_KEY, PendingWinningsUpdatedAtKey,
@@ -691,6 +691,81 @@ pub fn _save_hb_config(env: &Env, config: &HbGateConfig) {
     );
 }
 
+pub fn _enforce_heartbeat_health(env: &Env, oracle: &Address) -> Result<(), ContractError> {
+    let config = _load_hb_config(env);
+    if config.override_armed {
+        let mut new_config = config.clone();
+        new_config.override_armed = false;
+        _save_hb_config(env, &new_config);
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("oracle"), Symbol::new(env, "hb_override")),
+            (oracle.clone(),),
+        );
+        return Ok(());
+    }
+
+    let heartbeat_key = DataKeyCore::OracleHeartbeat;
+    _extend_persistent_ttl(env, &heartbeat_key);
+    let record: OracleHeartbeatRecord = match env.storage().persistent().get(&heartbeat_key) {
+        Some(r) => r,
+        None => {
+            _emit_action_rejected(
+                env,
+                oracle,
+                symbol_short!("resolve"),
+                ContractError::OracleHeartbeatUnhealthy,
+            );
+            return Err(ContractError::OracleHeartbeatUnhealthy);
+        }
+    };
+
+    let threshold_key = DataKeyCore::OracleStaleThreshold;
+    _extend_persistent_ttl(env, &threshold_key);
+    let stale_threshold: u64 = env
+        .storage()
+        .persistent()
+        .get(&threshold_key)
+        .unwrap_or(DEFAULT_ORACLE_STALE_THRESHOLD);
+
+    let current_time = env.ledger().timestamp();
+    let is_fresh = current_time <= record.timestamp.saturating_add(stale_threshold);
+
+    match record.status {
+        0 => {
+            if is_fresh {
+                return Ok(());
+            }
+        }
+        1 => {
+            if is_fresh && !config.strict_mode {
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+
+    if (record.status == 0 || record.status == 1) && !config.strict_mode {
+        let within_grace = current_time
+            <= record
+                .timestamp
+                .saturating_add(stale_threshold)
+                .saturating_add(config.grace_seconds);
+
+        if within_grace {
+            return Ok(());
+        }
+    }
+
+    _emit_action_rejected(
+        env,
+        oracle,
+        symbol_short!("resolve"),
+        ContractError::OracleHeartbeatUnhealthy,
+    );
+    Err(ContractError::OracleHeartbeatUnhealthy)
+}
+
 /// Records an oracle heartbeat (oracle only).
 pub fn update_oracle_heartbeat(env: Env, status: u32) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
@@ -1000,11 +1075,11 @@ pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
             | DataKeyCore::MigratedToV3
             | DataKeyCore::ArchiveRetention
             | DataKeyCore::RoundTemplate
-            | DataKeyCore::Ext(DataKeyExt::LeaderboardWins)
-            | DataKeyCore::Ext(DataKeyExt::LeaderboardStreak)
-            | DataKeyCore::Ext(DataKeyExt::SeasonId)
-            | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins)
-            | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak)
+            | DataKeyCore::LeaderboardWins
+            | DataKeyCore::LeaderboardStreak
+            | DataKeyCore::SeasonId
+            | DataKeyCore::SeasonLeaderboardWins
+            | DataKeyCore::SeasonLeaderboardStreak
             | DataKeyCore::LastRoundId
             | DataKeyCore::OracleRotationProposal
             | DataKeyCore::MintLimitConfig
@@ -1207,7 +1282,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
     }
 
     // Read pending winnings.
-    let pending_key = DataKey::PendingWinnings(user.clone());
+    let pending_key = DataKeyScoped::PendingWinnings(user.clone());
     let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
     if pending == 0 {
         _emit_action_rejected(
