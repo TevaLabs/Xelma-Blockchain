@@ -117,7 +117,7 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
         .unwrap_or(0);
     let round_id = last_round_id
         .checked_add(1)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     env.storage()
         .persistent()
         .set(&DataKeyCore::LastRoundId, &round_id);
@@ -126,10 +126,10 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
     let start_ledger = env.ledger().sequence();
     let bet_end_ledger = start_ledger
         .checked_add(bet_ledgers)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     let end_ledger = start_ledger
         .checked_add(run_ledgers)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
 
     let start_timestamp = env.ledger().timestamp();
 
@@ -191,7 +191,7 @@ pub fn create_next_from_template(env: Env) -> Result<u64, ContractError> {
         .storage()
         .persistent()
         .get(&DataKeyCore::RoundTemplate)
-        .ok_or(ContractError::NoRoundTemplate)
+        .ok_or(ContractError::NoActiveRound)
         .inspect_err(|&e| {
             _emit_action_rejected(&env, &admin, symbol_short!("nxttmpl"), e);
         })?;
@@ -291,7 +291,7 @@ pub fn place_bet(
     // Deduct balance
     let new_balance = user_balance
         .checked_sub(amount)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     _set_balance(&env, user.clone(), new_balance);
 
     // Write single-user position key
@@ -319,13 +319,13 @@ pub fn place_bet(
             round.pool_up = round
                 .pool_up
                 .checked_add(amount)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
         }
         BetSide::Down => {
             round.pool_down = round
                 .pool_down
                 .checked_add(amount)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
         }
     }
     env.storage()
@@ -341,6 +341,8 @@ pub fn place_bet(
         (symbol_short!("bet"), symbol_short!("placed")),
         (user, round.round_id, amount, side_value),
     );
+
+    crate::commitments::_advance_pool_commitment(&env, &round);
 
     Ok(())
 }
@@ -438,7 +440,7 @@ pub fn place_precision_prediction(
     // Deduct balance
     let new_balance = user_balance
         .checked_sub(amount)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     _set_balance(&env, user.clone(), new_balance);
 
     // Write single-user prediction key
@@ -460,6 +462,9 @@ pub fn place_precision_prediction(
         (symbol_short!("predict"), symbol_short!("price")),
         (user, round.round_id, predicted_price, amount),
     );
+
+    crate::commitments::_add_precision_commit_stake(&env, round.round_id, amount);
+    crate::commitments::_advance_pool_commitment(&env, &round);
 
     Ok(())
 }
@@ -557,7 +562,7 @@ pub fn commit_prediction(
     // Deduct balance
     let new_balance = user_balance
         .checked_sub(amount)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     _set_balance(&env, user.clone(), new_balance);
 
     // Store commitment
@@ -585,6 +590,9 @@ pub fn commit_prediction(
         (symbol_short!("commit"), symbol_short!("predict")),
         (user, round.round_id, hash, amount),
     );
+
+    crate::commitments::_add_precision_commit_stake(&env, round.round_id, amount);
+    crate::commitments::_advance_pool_commitment(&env, &round);
 
     Ok(())
 }
@@ -665,6 +673,8 @@ pub fn reveal_prediction(
         (user, round.round_id, predicted_price, commitment.amount),
     );
 
+    crate::commitments::_advance_pool_commitment(&env, &round);
+
     Ok(())
 }
 
@@ -739,14 +749,14 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     let penalty_bps_i128 = penalty_bps as i128;
     let forfeit = stake
         .checked_mul(penalty_bps_i128)
-        .ok_or(ContractError::Overflow)?
+        .ok_or(ContractError::PayoutOverflow)?
         / BPS_DENOMINATOR;
 
     // If forfeit rounds down to zero (very small stake relative to penalty),
     // user gets full refund — still remove position from pool.
     let cashout = stake
         .checked_sub(forfeit)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
 
     // Deduct full stake from the appropriate pool
     match position.side {
@@ -754,13 +764,13 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
             round.pool_up = round
                 .pool_up
                 .checked_sub(stake)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
         }
         BetSide::Down => {
             round.pool_down = round
                 .pool_down
                 .checked_sub(stake)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
         }
     }
     env.storage()

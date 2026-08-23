@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: MIT
 #![no_std]
-extern crate alloc;
 //! # XLM Price Prediction Market
 //!
 //! Secure Soroban-based prediction market for XLM price movements.
 //! Users bet on price direction (UP/DOWN) using virtual XLM tokens
-
 //!
 //! ## Key Features
 //! - Role-based access control (Admin, Oracle, Users)
@@ -13,15 +11,20 @@ extern crate alloc;
 //! - Proportional payout distribution
 //! - Comprehensive error handling
 
+extern crate alloc;
+
 #[cfg(test)]
 extern crate std;
 
+mod access_control;
 mod admin;
 mod betting;
 pub mod common;
+mod commitments;
 mod config;
 mod contract;
 mod errors;
+mod governance;
 mod leaderboard;
 mod queries;
 mod settlement;

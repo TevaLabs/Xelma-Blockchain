@@ -60,7 +60,7 @@
 //! wiring is required for CI inclusion.
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{BetSide, DataKey, DataKeyCore, DataKeyScoped, OraclePayload, RoundArchiveStatus};
+use crate::types::{BetSide, DataKeyCore, OraclePayload, RoundArchiveStatus};
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},

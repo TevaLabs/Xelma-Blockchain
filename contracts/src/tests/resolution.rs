@@ -23,6 +23,7 @@ use soroban_sdk::{
     Address, Env, Map, TryIntoVal, Vec,
 };
 use std::string::{String, ToString};
+use std::vec;
 
 /// Salt satisfying on-chain minimum entropy (non-zero, non-constant).
 fn test_salt(env: &Env, seed: u8) -> BytesN<32> {
@@ -4562,7 +4563,7 @@ fn golden_precision_winners_all_unrevealed() {
 
 #[test]
 fn golden_precision_winners_empty() {
-    let entries: Vec<PrecisionEntry> = vec![];
+    let entries: std::vec::Vec<PrecisionEntry> = vec![];
     let result = find_precision_winners(&entries, 2298);
     assert!(result.winner_indices.is_empty());
     assert_eq!(result.total_pot, 0);
@@ -4694,7 +4695,7 @@ fn golden_precision_payouts_with_1pct_fee() {
 
 #[test]
 fn golden_precision_payouts_empty() {
-    let entries: Vec<PrecisionEntry> = vec![];
+    let entries: std::vec::Vec<PrecisionEntry> = vec![];
     let results = compute_precision_payouts(&entries, 2298, None).unwrap();
     assert!(results.is_empty());
 }
@@ -4765,7 +4766,7 @@ fn golden_updown_conservation_invariant() {
 
 #[test]
 fn golden_precision_conservation_invariant() {
-    let scenarios: Vec<(Vec<PrecisionEntry>, u128, Option<u32>)> = vec![
+    let scenarios: std::vec::Vec<(std::vec::Vec<PrecisionEntry>, u128, Option<u32>)> = vec![
         // Single winner, no fee
         (
             vec![
@@ -4822,7 +4823,8 @@ fn golden_precision_conservation_invariant() {
             assert_eq!(sum_payouts, 0);
         }
     }
-=======
+}
+
 #[test]
 fn test_precision_payout_policy_config() {
     let env = Env::default();

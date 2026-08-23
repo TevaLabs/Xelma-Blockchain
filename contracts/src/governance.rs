@@ -4,18 +4,18 @@
 use crate::admin::{_require_supported_schema, _set_mode};
 use crate::common::{_emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_PROPOSAL_TTL_LEDGERS};
 use crate::errors::ContractError;
-use crate::types::{DataKey, GovAction, GovProposal, GovProposalStatus, RuntimeMode};
+use crate::types::{DataKeyCore, DataKeyScoped, GovAction, GovProposal, GovProposalStatus, RuntimeMode};
 use soroban_sdk::{symbol_short, Address, Env};
 
 /// Returns whether `user` is an authorized governance administrator or approver.
 pub fn _is_authorized_gov_user(env: &Env, user: &Address) -> bool {
-    let admin: Option<Address> = env.storage().persistent().get(&DataKey::Admin);
+    let admin: Option<Address> = env.storage().persistent().get(&DataKeyCore::Admin);
     if let Some(ref a) = admin {
         if a == user {
             return true;
         }
     }
-    let approver: Option<Address> = env.storage().persistent().get(&DataKey::GovApprover);
+    let approver: Option<Address> = env.storage().persistent().get(&DataKeyCore::GovApprover);
     if let Some(ref ap) = approver {
         if ap == user {
             return true;
@@ -26,7 +26,7 @@ pub fn _is_authorized_gov_user(env: &Env, user: &Address) -> bool {
 
 /// Returns whether dual governance approval is currently active (a secondary approver is set).
 pub fn _is_gov_approver_set(env: &Env) -> bool {
-    let key = DataKey::GovApprover;
+    let key = DataKeyCore::GovApprover;
     if env.storage().persistent().has(&key) {
         _extend_persistent_ttl(env, &key);
         true
@@ -41,11 +41,11 @@ pub fn set_gov_approver(env: Env, approver: Address) -> Result<(), ContractError
     let admin: Address = env
         .storage()
         .persistent()
-        .get(&DataKey::Admin)
+        .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
 
-    let key = DataKey::GovApprover;
+    let key = DataKeyCore::GovApprover;
     env.storage().persistent().set(&key, &approver);
     _extend_persistent_ttl(&env, &key);
 
@@ -60,7 +60,7 @@ pub fn set_gov_approver(env: Env, approver: Address) -> Result<(), ContractError
 
 /// Returns the configured secondary governance approver address, if set.
 pub fn get_gov_approver(env: Env) -> Option<Address> {
-    let key = DataKey::GovApprover;
+    let key = DataKeyCore::GovApprover;
     _extend_persistent_ttl(&env, &key);
     env.storage().persistent().get(&key)
 }
@@ -71,7 +71,7 @@ pub fn set_gov_proposal_ttl(env: Env, ttl_ledgers: u32) -> Result<(), ContractEr
     let admin: Address = env
         .storage()
         .persistent()
-        .get(&DataKey::Admin)
+        .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
 
@@ -79,7 +79,7 @@ pub fn set_gov_proposal_ttl(env: Env, ttl_ledgers: u32) -> Result<(), ContractEr
         return Err(ContractError::WindowOutOfRange);
     }
 
-    let key = DataKey::GovProposalTtlLedgers;
+    let key = DataKeyCore::GovProposalTtlLedgers;
     env.storage().persistent().set(&key, &ttl_ledgers);
     _extend_persistent_ttl(&env, &key);
     Ok(())
@@ -87,7 +87,7 @@ pub fn set_gov_proposal_ttl(env: Env, ttl_ledgers: u32) -> Result<(), ContractEr
 
 /// Returns the configured default proposal TTL in ledgers.
 pub fn get_gov_proposal_ttl(env: Env) -> u32 {
-    let key = DataKey::GovProposalTtlLedgers;
+    let key = DataKeyCore::GovProposalTtlLedgers;
     _extend_persistent_ttl(&env, &key);
     env.storage()
         .persistent()
@@ -128,7 +128,7 @@ pub fn propose(
         return Err(ContractError::GovUnauthorized);
     }
 
-    let id_key = DataKey::NextGovProposalId;
+    let id_key = DataKeyCore::NextGovProposalId;
     let proposal_id: u64 = env.storage().persistent().get(&id_key).unwrap_or(1);
     env.storage().persistent().set(&id_key, &(proposal_id + 1));
     _extend_persistent_ttl(&env, &id_key);
@@ -147,7 +147,7 @@ pub fn propose(
         status: GovProposalStatus::Pending,
     };
 
-    let p_key = DataKey::GovProposal(proposal_id);
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     env.storage().persistent().set(&p_key, &proposal);
     _extend_persistent_ttl(&env, &p_key);
 
@@ -175,12 +175,12 @@ pub fn approve(env: Env, approver: Address, proposal_id: u64) -> Result<(), Cont
         return Err(ContractError::GovUnauthorized);
     }
 
-    let p_key = DataKey::GovProposal(proposal_id);
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     let mut proposal: GovProposal = env
         .storage()
         .persistent()
         .get(&p_key)
-        .ok_or(ContractError::ProposalNotFound)?;
+        .ok_or(ContractError::GovInvalidState)?;
 
     let current_ledger = env.ledger().sequence();
     if current_ledger > proposal.expires_at_ledger {
@@ -243,12 +243,12 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
         return Err(ContractError::GovUnauthorized);
     }
 
-    let p_key = DataKey::GovProposal(proposal_id);
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     let mut proposal: GovProposal = env
         .storage()
         .persistent()
         .get(&p_key)
-        .ok_or(ContractError::ProposalNotFound)?;
+        .ok_or(ContractError::GovInvalidState)?;
 
     let current_ledger = env.ledger().sequence();
     if current_ledger > proposal.expires_at_ledger {
@@ -282,7 +282,7 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
         }
         GovAction::SetProtocolFeeBps(bps) => {
             crate::config::_validate_protocol_fee_bps(bps.clone())?;
-            let key = DataKey::ProtocolFeeBps;
+            let key = DataKeyCore::ProtocolFeeBps;
             if let Some(ref v) = bps {
                 env.storage().persistent().set(&key, v);
                 _extend_persistent_ttl(&env, &key);
@@ -294,16 +294,16 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
             _execute_withdraw_fee(&env, &recipient, *amount)?;
         }
         GovAction::SetTreasuryAddress(treasury) => {
-            env.storage().persistent().set(&DataKey::ProtocolFeeTreasury, &treasury);
-            _extend_persistent_ttl(&env, &DataKey::ProtocolFeeTreasury);
+            env.storage().persistent().set(&DataKeyCore::ProtocolFeeTreasury, &treasury);
+            _extend_persistent_ttl(&env, &DataKeyCore::ProtocolFeeTreasury);
         }
         GovAction::SetAdmin(new_admin) => {
-            env.storage().persistent().set(&DataKey::Admin, &new_admin);
-            _extend_persistent_ttl(&env, &DataKey::Admin);
+            env.storage().persistent().set(&DataKeyCore::Admin, &new_admin);
+            _extend_persistent_ttl(&env, &DataKeyCore::Admin);
         }
         GovAction::SetOracle(new_oracle) => {
-            env.storage().persistent().set(&DataKey::Oracle, &new_oracle);
-            _extend_persistent_ttl(&env, &DataKey::Oracle);
+            env.storage().persistent().set(&DataKeyCore::Oracle, &new_oracle);
+            _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
         }
     }
 
@@ -329,7 +329,7 @@ fn _execute_withdraw_fee(
     if amount <= 0 {
         return Err(ContractError::InvalidBetAmount);
     }
-    let treasury_key = DataKey::ProtocolFeeTreasury;
+    let treasury_key = DataKeyCore::ProtocolFeeTreasury;
     let current: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
     if amount > current {
         return Err(ContractError::InsufficientBalance);
@@ -368,12 +368,12 @@ pub fn cancel(env: Env, canceller: Address, proposal_id: u64) -> Result<(), Cont
         return Err(ContractError::GovUnauthorized);
     }
 
-    let p_key = DataKey::GovProposal(proposal_id);
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     let mut proposal: GovProposal = env
         .storage()
         .persistent()
         .get(&p_key)
-        .ok_or(ContractError::ProposalNotFound)?;
+        .ok_or(ContractError::GovInvalidState)?;
 
     match proposal.status {
         GovProposalStatus::Executed => return Err(ContractError::GovInvalidState),
@@ -396,7 +396,7 @@ pub fn cancel(env: Env, canceller: Address, proposal_id: u64) -> Result<(), Cont
 
 /// Queries details for a governance proposal.
 pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
-    let p_key = DataKey::GovProposal(proposal_id);
+    let p_key = DataKeyScoped::GovProposal(proposal_id);
     _extend_persistent_ttl(&env, &p_key);
     let mut proposal: GovProposal = env.storage().persistent().get(&p_key)?;
 

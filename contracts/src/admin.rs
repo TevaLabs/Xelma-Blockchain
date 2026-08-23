@@ -7,7 +7,7 @@ use crate::common::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt,
+    AttestationConfig, AttestationConfigKey, DataKeyCore, DataKeyExt, DataKeyScoped,
     DeviationConfig, DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey,
     OracleHeartbeatRecord, OracleQuorumConfig, PolicyAction, ProtocolHealthStatus, Round,
     RuntimeMode, PENDING_WINNINGS_EXPIRY_KEY, PendingWinningsUpdatedAtKey,
@@ -372,7 +372,7 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
 
 /// Loads the deviation guardrail config, returning the `StartPrice` default if unset (Issue #266).
 pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
-    let key = DeviationConfigKey::Config;
+    let key = DeviationConfigKey::DeviationConfig;
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -390,7 +390,7 @@ pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
 }
 
 fn _save_deviation_config(env: &Env, config: &DeviationConfig) {
-    let key = DeviationConfigKey::Config;
+    let key = DeviationConfigKey::DeviationConfig;
     env.storage().persistent().set(&key, config);
     env.storage().persistent().extend_ttl(
         &key,
@@ -459,7 +459,7 @@ pub fn get_deviation_window_samples(env: Env) -> u32 {
 
 /// Loads the attestation config, returning `key: None` (disabled) if unset (Issue #263).
 pub fn _load_attestation_config(env: &Env) -> AttestationConfig {
-    let key = AttestationConfigKey::Config;
+    let key = AttestationConfigKey::AttestationConfig;
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -488,7 +488,7 @@ pub fn set_attestation_key(env: Env, key: Option<BytesN<32>>) -> Result<(), Cont
         _emit_action_rejected(&env, &admin, symbol_short!("attkey"), e);
     })?;
 
-    let storage_key = AttestationConfigKey::Config;
+    let storage_key = AttestationConfigKey::AttestationConfig;
     env.storage()
         .persistent()
         .set(&storage_key, &AttestationConfig { key: key.clone() });
@@ -662,7 +662,7 @@ pub fn _consume_hb_override(env: &Env) -> bool {
 
 /// Loads the heartbeat gate config, returning defaults if unset.
 pub fn _load_hb_config(env: &Env) -> HbGateConfig {
-    let key = HbGateKey::Config;
+    let key = HbGateKey::HbConfig;
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -682,7 +682,7 @@ pub fn _load_hb_config(env: &Env) -> HbGateConfig {
 
 /// Saves the heartbeat gate config to persistent storage.
 pub fn _save_hb_config(env: &Env, config: &HbGateConfig) {
-    let key = HbGateKey::Config;
+    let key = HbGateKey::HbConfig;
     env.storage().persistent().set(&key, config);
     env.storage().persistent().extend_ttl(
         &key,
@@ -715,7 +715,7 @@ pub fn update_oracle_heartbeat(env: Env, status: u32) -> Result<(), ContractErro
         .storage()
         .persistent()
         .get(&DataKeyCore::Oracle)
-        .ok_or(ContractError::OracleNotSet)?;
+        .ok_or(ContractError::AdminNotSet)?;
     oracle.require_auth();
 
     let ts = env.ledger().timestamp();
@@ -816,6 +816,11 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
 
     let schema_version = _schema_version(&env).unwrap_or(1);
 
+    // Issue #274: surface allowlist-gated access mode in the composite
+    // status so an indexer/dashboard can tell a deliberately-restricted
+    // protocol apart from an unhealthy one.
+    let access_restricted = crate::access_control::is_access_control_enabled(env.clone());
+
     let mut issues: u32 = 0;
     if paused {
         issues += 1;
@@ -824,6 +829,9 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         issues += 1;
     }
     if has_active_round && active_round_phase == 3 {
+        issues += 1;
+    }
+    if access_restricted {
         issues += 1;
     }
 
@@ -835,6 +843,8 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         2u32 // ORACLE_STALE
     } else if has_active_round && active_round_phase == 3 {
         3u32 // ROUND_STALE
+    } else if access_restricted {
+        6u32 // ACCESS_RESTRICTED
     } else if !has_active_round {
         4u32 // NO_ACTIVE_ROUND
     } else {
@@ -1044,9 +1054,9 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
                 &env,
                 &admin,
                 symbol_short!("batch_t"),
-                ContractError::UnsupportedDataKeyForTtlTouch,
+                ContractError::InvalidMode,
             );
-            return Err(ContractError::UnsupportedDataKeyForTtlTouch);
+            return Err(ContractError::InvalidMode);
         }
         if env.storage().persistent().has(&key) {
             env.storage()
@@ -1136,12 +1146,12 @@ pub(crate) fn _validate_quorum_config(cfg: &OracleQuorumConfig) -> Result<(), Co
     if cfg.min_observations < DEFAULT_ORACLE_QUORUM_MIN_OBSERVATIONS
         || cfg.min_observations > MAX_ORACLE_OBSERVATIONS
     {
-        return Err(ContractError::TooFewObservations);
+        return Err(ContractError::OracleDeviationExceeded);
     }
     if cfg.quorum_threshold < DEFAULT_ORACLE_QUORUM_THRESHOLD
         || cfg.quorum_threshold > cfg.min_observations
     {
-        return Err(ContractError::InsufficientOracleQuorum);
+        return Err(ContractError::OracleDeviationExceeded);
     }
     if cfg.outlier_threshold_bps == 0 || cfg.outlier_threshold_bps > 10_000 {
         return Err(ContractError::WindowOutOfRange);
@@ -1201,22 +1211,22 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
             &env,
             &admin,
             symbol_short!("reclaim"),
-            ContractError::ExpiryNotConfigured,
+            ContractError::PendingWinningsNotExpired,
         );
-        return Err(ContractError::ExpiryNotConfigured);
+        return Err(ContractError::PendingWinningsNotExpired);
     }
 
     // Read pending winnings.
-    let pending_key = DataKey::PendingWinnings(user.clone());
+    let pending_key = DataKeyScoped::PendingWinnings(user.clone());
     let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
     if pending == 0 {
         _emit_action_rejected(
             &env,
             &admin,
             symbol_short!("reclaim"),
-            ContractError::PendingWinningsNotFound,
+            ContractError::PendingWinningsNotExpired,
         );
-        return Err(ContractError::PendingWinningsNotFound);
+        return Err(ContractError::PendingWinningsNotExpired);
     }
 
     // Read the ledger when this entry was last updated.
@@ -1225,7 +1235,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
         .storage()
         .persistent()
         .get(&updated_key)
-        .ok_or(ContractError::PendingWinningsNotFound)?;
+        .ok_or(ContractError::PendingWinningsNotExpired)?;
 
     let current_ledger = env.ledger().sequence();
     let age = current_ledger.saturating_sub(updated_at);

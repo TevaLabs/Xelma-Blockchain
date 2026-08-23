@@ -348,7 +348,6 @@ fn test_create_round_fails_without_admin_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     // No mocking all auths, so create_round should fail
     let result = client.try_create_round(&1_0000000, &None);
@@ -376,7 +375,6 @@ fn test_place_bet_fails_without_user_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &user,
@@ -424,7 +422,6 @@ fn test_resolve_round_fails_without_oracle_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
@@ -474,7 +471,6 @@ fn test_claim_winnings_fails_without_user_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &user,
@@ -1059,7 +1055,7 @@ fn test_create_next_from_template_requires_template() {
     client.update_oracle_heartbeat(&0u32);
 
     let result = client.try_create_next_from_template();
-    assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
+    assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -1217,6 +1213,6 @@ fn test_create_next_from_template_after_clear_fails() {
     client.clear_round_template();
 
     let result = client.try_create_next_from_template();
-    assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
+    assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
     assert_eq!(client.get_active_round(), None);
 }

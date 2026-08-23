@@ -9,7 +9,7 @@ use crate::config::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
+    ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, LeaderboardEntry,
     PrecisionCommitment, PrecisionPrediction, PendingWinningsUpdatedAtKey, Round, RoundMode,
     RoundPhase, RoundPoolStats, RoundTemplate, SeasonArchive, SimulationResult, UserOutcomeType,
     UserPosition, UserRoundOutcome, UserStats,
@@ -218,7 +218,7 @@ pub fn get_user_archive_history(
     let user_rounds: Vec<u64> = env
         .storage()
         .persistent()
-        .get(&DataKey::UserArchivedRoundIds(user))
+        .get(&DataKeyScoped::UserArchivedRoundIds(user))
         .unwrap_or(Vec::new(env_ref));
 
     let total = user_rounds.len();
@@ -235,7 +235,7 @@ pub fn get_user_archive_history(
             if let Some(summary) = env
                 .storage()
                 .persistent()
-                .get(&DataKey::ArchivedRound(round_id))
+                .get(&DataKeyScoped::ArchivedRound(round_id))
             {
                 result.push_back(summary);
             }
@@ -625,7 +625,7 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
                             amount: 0,
                         });
                     }
-                    total_pot = total_pot.checked_add(amt).ok_or(ContractError::Overflow)?;
+                    total_pot = total_pot.checked_add(amt).ok_or(ContractError::PayoutOverflow)?;
                     user_amounts.push_back(amt);
                     is_winner_mask.push_back(false);
 

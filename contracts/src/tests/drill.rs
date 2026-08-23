@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! Automated emergency "claims-only" drill tests for protocol pause/incident behavior.
 
+use super::config_helpers::apply_windows;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKey, OraclePayload, ProtocolStatus};
+use crate::types::{BetSide, DataKeyCore, OraclePayload, ProtocolStatus};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, Env, BytesN,
@@ -33,13 +34,17 @@ fn test_claims_only_matrix_verification() {
     client.mint_initial(&user1);
     client.mint_initial(&user2);
 
-    // Round 0
+    // Round 0. Widen the run window so the round-relative oracle timestamp
+    // check (Issue: oracle-round-relative-timestamp-window) accepts the
+    // timestamp=1000 resolved below, and advance sequence_number to match
+    // (resolve_round also requires current_ledger >= round.end_ledger).
+    apply_windows(&env, &client, 6, 200);
     client.create_round(&1_0000000, &None);
     client.place_bet(&user1, &100_0000000, &BetSide::Up);
     client.place_bet(&user2, &100_0000000, &BetSide::Down);
 
     env.ledger().with_mut(|li| {
-        li.sequence_number = 65;
+        li.sequence_number = 200;
         li.timestamp = 1000;
     });
 
@@ -51,13 +56,14 @@ fn test_claims_only_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+        attestation: None,
     });
 
     assert!(client.get_pending_winnings(&user1) > 0);
 
     // Seed protocol fee treasury for test fee withdrawal validation
     env.as_contract(&contract_id, || {
-        env.storage().persistent().set(&DataKey::ProtocolFeeTreasury, &5000_0000000i128);
+        env.storage().persistent().set(&DataKeyCore::ProtocolFeeTreasury, &5000_0000000i128);
     });
 
     // ─── ENTER CLAIMS-ONLY MODE ────────────────────────────────────────────────
@@ -106,23 +112,26 @@ fn test_claims_only_matrix_verification() {
     // Active Round 1 exists, admin cancels it
     client.cancel_round(&1);
 
-    // Create Round 2 in ClaimsOnly mode
+    // Create Round 2 in ClaimsOnly mode. The run window widened above is a
+    // contract-wide setting, so round 2 inherits it too — it can't be
+    // rescheduled here since config changes require Normal runtime mode.
     client.create_round(&2_0000000, &None);
 
     // 5. Resolution -> ALLOWED
     env.ledger().with_mut(|li| {
-        li.sequence_number = 130;
+        li.sequence_number = 400;
         li.timestamp = 2000;
     });
 
     let resolve_res = client.try_resolve_round(&OraclePayload {
         price: 2_1000000,
         timestamp: env.ledger().timestamp(),
-        round_id: 65,
+        round_id: 200,
         nonce: 101,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+        attestation: None,
     });
     assert_eq!(resolve_res, Ok(Ok(())));
 
@@ -179,6 +188,7 @@ fn test_fully_paused_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+        attestation: None,
     });
     assert_eq!(resolve_res, Err(Ok(ContractError::ContractPaused)));
 
@@ -211,6 +221,11 @@ fn test_emergency_incident_simulation_lifecycle() {
     client.mint_initial(&user1);
     client.mint_initial(&user2);
 
+    // Widen the run window so the round-relative oracle timestamp check
+    // (Issue: oracle-round-relative-timestamp-window) accepts the
+    // timestamp=1000 resolved below, and advance sequence_number to match
+    // (resolve_round also requires current_ledger >= round.end_ledger).
+    apply_windows(&env, &client, 6, 200);
     client.create_round(&1_0000000, &None);
     client.place_bet(&user1, &100_0000000, &BetSide::Up);
     client.place_bet(&user2, &100_0000000, &BetSide::Down);
@@ -230,7 +245,7 @@ fn test_emergency_incident_simulation_lifecycle() {
 
     // Step D: In-Flight Round Resolution in Claims-Only Mode
     env.ledger().with_mut(|li| {
-        li.sequence_number = 65;
+        li.sequence_number = 200;
         li.timestamp = 1000;
     });
 
@@ -242,6 +257,7 @@ fn test_emergency_incident_simulation_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+        attestation: None,
     });
 
     // Step E: Claim Winnings Executed Successfully During Emergency Mode

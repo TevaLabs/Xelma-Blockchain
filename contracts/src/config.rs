@@ -1,29 +1,21 @@
 // SPDX-License-Identifier: MIT
 use crate::admin::{_ensure_normal_mode, _ensure_not_paused, _require_supported_schema};
 use crate::common::{
-    _emit_action_rejected, _emit_config_updated, _extend_persistent_ttl, _set_balance, balance,
-    payout_add, BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS, DEFAULT_ARCHIVE_RETENTION,
-    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_CLOSE_BUFFER_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS,
-    DEFAULT_ORACLE_STALE_THRESHOLD, DEFAULT_ORACLE_TIMESTAMP_SKEW, DEFAULT_RUN_WINDOW_LEDGERS,
-    MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_MIN_PARTICIPANTS,
-    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_ORACLE_TIMESTAMP_SKEW,
-    MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
-    MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
-    MIN_ORACLE_TIMESTAMP_SKEW, MIN_START_PRICE,
     _emit_action_rejected, _emit_config_updated, _extend_persistent_ttl, _extend_ttl_symbol,
     _set_balance, balance, payout_add, BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS,
     DEFAULT_ARCHIVE_RETENTION, DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_CLOSE_BUFFER_LEDGERS,
     DEFAULT_DISPUTE_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
-    DEFAULT_PENDING_WINNINGS_EXPIRY, DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION,
-    MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_DISPUTE_LEDGERS, MAX_MIN_PARTICIPANTS,
-    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PENDING_WINNINGS_EXPIRY,
-    MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
-    MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
+    DEFAULT_ORACLE_TIMESTAMP_SKEW, DEFAULT_PENDING_WINNINGS_EXPIRY, DEFAULT_RUN_WINDOW_LEDGERS,
+    MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_DISPUTE_LEDGERS,
+    MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD,
+    MAX_ORACLE_TIMESTAMP_SKEW, MAX_PENDING_WINNINGS_EXPIRY, MAX_PRECISION_PARTICIPANTS_LIMIT,
+    MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS, MAX_START_PRICE, MIN_ARCHIVE_RETENTION,
+    MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD, MIN_ORACLE_TIMESTAMP_SKEW,
     MIN_PENDING_WINNINGS_EXPIRY, MIN_START_PRICE,
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ConfigChangeKind, ConfigChangePayload, DataKey, DataKeyCore, DataKeyScoped, FeeModel,
+    ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, FeeModel,
     PendingConfigChange, PrecisionPayoutPolicy, RoundTemplate, PENDING_WINNINGS_EXPIRY_KEY,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol};
@@ -840,13 +832,14 @@ pub fn set_early_cashout_bps(env: Env, bps: Option<u32>) -> Result<(), ContractE
                 &env,
                 &admin,
                 symbol_short!("ec_bps"),
-                ContractError::InvalidProtocolFeeBps,
+                ContractError::WindowOutOfRange,
             );
-            return Err(ContractError::InvalidProtocolFeeBps);
+            return Err(ContractError::WindowOutOfRange);
         }
     }
 
     let key = DataKeyCore::EarlyCashoutBps;
+    let old_bps: Option<u32> = env.storage().persistent().get(&key);
     if let Some(v) = bps {
         env.storage().persistent().set(&key, &v);
         _extend_persistent_ttl(&env, &key);
@@ -985,7 +978,7 @@ pub fn _validate_oracle_max_deviation_bps(bps: Option<u32>) -> Result<(), Contra
 pub fn _validate_protocol_fee_bps(bps: Option<u32>) -> Result<(), ContractError> {
     if let Some(v) = bps {
         if v == 0 || v > MAX_PROTOCOL_FEE_BPS {
-            return Err(ContractError::InvalidProtocolFeeBps);
+            return Err(ContractError::WindowOutOfRange);
         }
     }
     Ok(())
@@ -1028,7 +1021,7 @@ pub fn _collect_protocol_fee(
     let current: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
     let new_treasury = current
         .checked_add(fee_amount)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     env.storage().persistent().set(&treasury_key, &new_treasury);
     _extend_persistent_ttl(env, &treasury_key);
 
@@ -1060,13 +1053,13 @@ pub fn calculate_protocol_fee_updown(
             let total_pot = payout_add(winning_pool, losing_pool)?;
             total_pot
                 .checked_mul(bps_value as i128)
-                .ok_or(ContractError::Overflow)?
+                .ok_or(ContractError::PayoutOverflow)?
                 / BPS_DENOMINATOR
         }
         FeeModel::FeeOnWinnings => {
             losing_pool
                 .checked_mul(bps_value as i128)
-                .ok_or(ContractError::Overflow)?
+                .ok_or(ContractError::PayoutOverflow)?
                 / BPS_DENOMINATOR
         }
     };
@@ -1080,19 +1073,19 @@ pub fn calculate_protocol_fee_updown(
             let fee_from_losing = fee_amount.min(losing_pool);
             let fee_from_winning = fee_amount
                 .checked_sub(fee_from_losing)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
             let dist_winning = winning_pool
                 .checked_sub(fee_from_winning)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
             let dist_losing = losing_pool
                 .checked_sub(fee_from_losing)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
             Ok((dist_winning, dist_losing, fee_amount))
         }
         FeeModel::FeeOnWinnings => {
             let dist_losing = losing_pool
                 .checked_sub(fee_amount)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
             Ok((winning_pool, dist_losing, fee_amount))
         }
     }
@@ -1130,7 +1123,7 @@ pub fn calculate_protocol_fee_precision(
         FeeModel::FeeOnWinnings => {
             let profit = total_pot
                 .checked_sub(winner_stakes)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
             if profit <= 0 {
                 return Ok((total_pot, 0));
             }
@@ -1140,14 +1133,14 @@ pub fn calculate_protocol_fee_precision(
 
     let fee_amount = taxable_base
         .checked_mul(bps_value as i128)
-        .ok_or(ContractError::Overflow)?
+        .ok_or(ContractError::PayoutOverflow)?
         / BPS_DENOMINATOR;
     if fee_amount == 0 {
         return Ok((total_pot, 0));
     }
     let distributable = total_pot
         .checked_sub(fee_amount)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     Ok((distributable, fee_amount))
 }
 
@@ -1272,6 +1265,9 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
                 .unwrap_or(DEFAULT_DISPUTE_LEDGERS),
         ),
         ConfigChangeKind::FeeModel => ConfigChangePayload::FeeModel(_read_fee_model(env)),
+        ConfigChangeKind::EarlyCashoutBps => ConfigChangePayload::EarlyCashoutBps(
+            env.storage().persistent().get(&DataKeyCore::EarlyCashoutBps),
+        ),
     }
 }
 
@@ -1304,7 +1300,7 @@ pub fn _schedule_config_change(
     let scheduled_at_ledger = env.ledger().sequence();
     let activation_ledger = scheduled_at_ledger
         .checked_add(CONFIG_TIMELOCK_LEDGERS)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
 
     let pending = PendingConfigChange {
         payload,
@@ -1413,6 +1409,8 @@ pub fn _apply_config_payload(
         ) => {
             _validate_oracle_timestamp_skew(*seconds)?;
             env.storage().instance().set(&symbol_short!("otskew"), seconds);
+        }
+        (
             ConfigChangeKind::PendingWinningsExpiry,
             ConfigChangePayload::PendingWinningsExpiry(ledgers),
         ) => {
@@ -1517,6 +1515,16 @@ pub fn _apply_config_payload(
             env.storage().persistent().set(&key, max);
             _extend_persistent_ttl(env, &key);
         }
+        (ConfigChangeKind::EarlyCashoutBps, ConfigChangePayload::EarlyCashoutBps(bps)) => {
+            let key = DataKeyCore::EarlyCashoutBps;
+            if let Some(v) = bps {
+                env.storage().persistent().set(&key, v);
+                _extend_persistent_ttl(env, &key);
+            } else {
+                env.storage().persistent().remove(&key);
+            }
+        }
+        _ => {}
     }
     _emit_config_updated(env, kind.clone(), old_value, payload.clone());
     Ok(())

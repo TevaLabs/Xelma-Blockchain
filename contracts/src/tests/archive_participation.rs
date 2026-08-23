@@ -22,6 +22,8 @@ fn resolve_active_round(
         nonce,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        confidence: None,
+        attestation: None,
     });
     round_id
 }

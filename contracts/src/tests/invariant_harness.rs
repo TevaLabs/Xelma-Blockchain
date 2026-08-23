@@ -6,9 +6,10 @@ extern crate std;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env};
 use std::env;
+use std::format;
 use std::string::String;
 use std::vec::Vec;
 use rand::{rngs::StdRng, SeedableRng};
@@ -109,14 +110,11 @@ fn differential_invariant_harness() {
     client.update_oracle_heartbeat(&0u32);
 
         let users: std::vec::Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
+        let mut model = ReferenceModel::new();
         for u in &users {
             client.mint_initial(u);
+            model.deposit(u, 1000_0000000);
         }
-
-    for u in &users {
-        client.mint_initial(u);
-        model.deposit(u, 1000_0000000);
-    }
 
     let mut current_round_id = 0u64;
 
@@ -131,14 +129,14 @@ fn differential_invariant_harness() {
             }
             Action::BetUp { user_idx, amount } => {
                 let user = &users[*user_idx % users.len()];
-                let res = client.try_place_bet(user, &(*amount as u128), &BetSide::Up);
+                let res = client.try_place_bet(user, amount, &BetSide::Up);
                 if res.is_ok() {
                     model.place_bet(user, *amount, true);
                 }
             }
             Action::BetDown { user_idx, amount } => {
                 let user = &users[*user_idx % users.len()];
-                let res = client.try_place_bet(user, &(*amount as u128), &BetSide::Down);
+                let res = client.try_place_bet(user, amount, &BetSide::Down);
                 if res.is_ok() {
                     model.place_bet(user, *amount, false);
                 }
@@ -152,10 +150,9 @@ fn differential_invariant_harness() {
                     env.ledger().with_mut(|li| li.sequence_number = active.end_ledger);
                     let price = if *price_up { 2_0000000u128 } else { 5000000u128 };
                     let res = client.try_resolve_round(&crate::types::OraclePayload {
-                        round_id: active.round_id,
                         price,
                         timestamp: env.ledger().timestamp(),
-                        round_id: 0,
+                        round_id: active.start_ledger,
                         nonce: 1u64,
                         network_id: env.ledger().network_id(),
                         contract_addr: contract_id.clone(),
@@ -168,7 +165,7 @@ fn differential_invariant_harness() {
                 }
             }
             Action::CancelRound => {
-                let res = client.try_cancel_round();
+                let res = client.try_cancel_round(&0u32);
                 if res.is_ok() {
                     model.cancel_round();
                 }
