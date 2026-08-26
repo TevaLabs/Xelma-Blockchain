@@ -8,13 +8,13 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Ma
 use crate::errors::ContractError;
 use crate::governance;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, OracleRotationProposal, PendingConfigChange,
-    PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
-    RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
-    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
-    UserRoundOutcome, UserStats,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
+    DataKeyScoped, DeviationReferenceMode, FeeModel, GovAction, GovProposal, GovProposalStatus,
+    LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload,
+    OracleQuorumConfig, OracleRotationProposal, PendingConfigChange, PolicyAction, PrecisionPrediction,
+    PriceSample, ProtocolHealthStatus, ProtocolStatus, Round, RoundArchiveStatus, RoundPhase,
+    RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode, SeasonArchive, SeasonLeaderboardEntry,
+    SimulationResult, UserPosition, UserRoundOutcome, UserStats,
 };
 
 // ─── Economic control limits ─────────────────────────────────────────────────
@@ -88,6 +88,7 @@ const MAX_ARCHIVE_RETENTION: u32 = 10_000;
 /// Ledgers to wait before a scheduled critical config change may be applied (~2 hours).
 const CONFIG_TIMELOCK_LEDGERS: u32 = 1440;
 
+use crate::access_control;
 use crate::admin;
 use crate::betting;
 use crate::common;
@@ -104,6 +105,68 @@ impl VirtualTokenContract {
     /// Initializes the contract with admin and oracle addresses (one-time only)
     pub fn initialize(env: Env, admin: Address, oracle: Address) -> Result<(), ContractError> {
         admin::initialize(env, admin, oracle)
+    }
+
+    // ─── Participant Access Control (Issue #274 / #392) ─────────────────────
+
+    /// Turns participant access control on (`true`) or off (`false`) (admin only).
+    pub fn set_access_control_enabled(env: Env, enabled: bool) -> Result<(), ContractError> {
+        access_control::set_access_control_enabled(env, enabled)
+    }
+
+    /// Returns whether allowlist mode is currently enabled (`false` = open).
+    pub fn is_access_control_enabled(env: Env) -> bool {
+        access_control::is_access_control_enabled(env)
+    }
+
+    /// Adds `user` to the allowlist and clears any stale denylist entry (admin only).
+    pub fn add_allowlisted(env: Env, user: Address) -> Result<(), ContractError> {
+        access_control::add_allowlisted(env, user)
+    }
+
+    /// Removes `user` from the allowlist (admin only).
+    pub fn remove_allowlisted(env: Env, user: Address) -> Result<(), ContractError> {
+        access_control::remove_allowlisted(env, user)
+    }
+
+    /// Adds `user` to the denylist and clears any stale allowlist entry (admin only).
+    pub fn add_denylisted(env: Env, user: Address) -> Result<(), ContractError> {
+        access_control::add_denylisted(env, user)
+    }
+
+    /// Removes `user` from the denylist (admin only).
+    pub fn remove_denylisted(env: Env, user: Address) -> Result<(), ContractError> {
+        access_control::remove_denylisted(env, user)
+    }
+
+    /// Returns whether `user` is allowlisted (read-only).
+    pub fn is_allowlisted(env: Env, user: Address) -> bool {
+        access_control::is_allowlisted(env, user)
+    }
+
+    /// Alias for `is_allowlisted`.
+    pub fn is_user_allowlisted(env: Env, user: Address) -> bool {
+        access_control::is_user_allowlisted(env, user)
+    }
+
+    /// Returns whether `user` is denylisted (read-only).
+    pub fn is_denylisted(env: Env, user: Address) -> bool {
+        access_control::is_denylisted(env, user)
+    }
+
+    /// Alias for `is_denylisted`.
+    pub fn is_user_denylisted(env: Env, user: Address) -> bool {
+        access_control::is_user_denylisted(env, user)
+    }
+
+    /// Returns the resolved access state for `user` (read-only).
+    pub fn get_access_state(env: Env, user: Address) -> AccessState {
+        access_control::get_access_state(env, user)
+    }
+
+    /// Returns a human-facing policy summary: (allowlist enabled, user state).
+    pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
+        access_control::get_access_policy(env, user)
     }
 
     /// Returns the stored schema version. If unset, returns legacy version 1.
@@ -526,7 +589,7 @@ impl VirtualTokenContract {
                     earliest_accept,
                 ),
             );
-            return Err(ContractError::RotationDelayNotElapsed);
+            return Err(ContractError::WindowOutOfRange);
         }
 
         if current_ts > proposal.expires_at {
@@ -1059,24 +1122,12 @@ impl VirtualTokenContract {
         config::get_dispute_ledgers(&env)
     }
 
-    /// Anyone may call `void_round` during the dispute window to refund all
-    /// participants their full stakes (void-to-refund path).
-    pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
-        settlement::void_round(env, round_id)
-    }
-
-    /// Anyone may call `finalize_round` after the dispute window expires to
-    /// distribute winnings to winners (normal settlement outcome).
-    pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
-        settlement::finalize_round(env, round_id)
-    }
-
     pub fn get_active_round(env: Env) -> Option<Round> {
         queries::get_active_round(env)
     }
 
     pub fn get_one_sided_policy(env: Env) -> OneSidedPolicy {
-        let active_round: Option<Round> = env.storage().persistent().get(&DataKey::ActiveRound);
+        let active_round: Option<Round> = env.storage().persistent().get(&DataKeyCore::ActiveRound);
         if let Some(round) = active_round {
             settlement::_select_one_sided_policy(&round)
         } else {

@@ -9,6 +9,9 @@
 //! `settlement.rs` remain responsible for storage reads/writes, events,
 //! and authorization — this module is the *engine*, not the *orchestrator*.
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
+extern crate alloc;
+#[cfg(any(test, not(target_arch = "wasm32")))]
 use alloc::vec::Vec;
 
 use crate::math_common::{payout_add, payout_mul, BPS_DENOMINATOR};
@@ -166,6 +169,7 @@ pub struct PrecisionEntry {
 }
 
 /// Result of the precision winner-determination algorithm.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrecisionWinnersResult {
     /// Indices (into the original `entries` slice) of the winning participants.
@@ -177,6 +181,7 @@ pub struct PrecisionWinnersResult {
 }
 
 /// Finds the closest prediction(s) to `final_price` under default absolute distance scoring.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn find_precision_winners(
     entries: &[PrecisionEntry],
     final_price: u128,
@@ -192,6 +197,7 @@ pub fn find_precision_winners(
 }
 
 /// Finds precision winners given a explicit `PrecisionScoringPolicy` (Absolute vs Relative distance, optional confidence band).
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn find_precision_winners_with_policy(
     entries: &[PrecisionEntry],
     final_price: u128,
@@ -271,6 +277,7 @@ pub fn find_precision_winners_with_policy(
 ///
 /// The remainder (distributable % winner_count) is assigned to the first
 /// winner. Every winner receives at least `distributable / winner_count`.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn split_pot_among_winners(
     distributable: i128,
     winner_count: usize,
@@ -299,6 +306,7 @@ pub fn split_pot_among_winners(
 /// Splits `distributable` proportionally according to winner stakes.
 ///
 /// Integer remainder is allocated to the first winner for exact conservation.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn split_pot_stake_weighted(
     distributable: i128,
     winner_stakes: &[i128],
@@ -354,6 +362,7 @@ pub struct UpDownPosition {
 }
 
 /// Computed payout for one UpDown participant.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct UpDownPayoutEntry {
     pub index: usize,
@@ -367,6 +376,7 @@ pub struct UpDownPayoutEntry {
 ///
 /// Inputs are the round-level parameters and the list of participant
 /// positions.  Returns one `UpDownPayoutEntry` per participant.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn compute_updown_payouts(
     positions: &[UpDownPosition],
     start_price: u128,
@@ -441,6 +451,7 @@ pub fn compute_updown_payouts(
 // ─── Composite: compute full Precision payout vector ─────────────────────────
 
 /// Computed payout for one Precision participant.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrecisionPayoutEntry {
     pub index: usize,
@@ -451,6 +462,7 @@ pub struct PrecisionPayoutEntry {
     pub is_refund: bool,
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn compute_precision_payouts(
     entries: &[PrecisionEntry],
     final_price: u128,
@@ -469,6 +481,7 @@ pub fn compute_precision_payouts(
 }
 
 /// Computes the full payout vector for a Precision round using explicit scoring and payout policies.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn compute_precision_payouts_with_policy(
     entries: &[PrecisionEntry],
     final_price: u128,

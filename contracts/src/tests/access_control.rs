@@ -290,3 +290,143 @@ fn test_protocol_health_reports_access_mode() {
     let after = client.get_protocol_health();
     assert_eq!(after.status_code, 6, "allowlist mode should surface ACCESS_RESTRICTED");
 }
+
+/// `test_allowlist_gates_claim_winnings` — a non-allowlisted user cannot
+/// claim pending winnings when allowlist mode is enabled.
+#[test]
+fn test_allowlist_gates_claim_winnings() {
+    let (env, client, _admin, _oracle) = setup();
+    let alice = Address::generate(&env);
+
+    client.set_access_control_enabled(&true);
+    client.add_allowlisted(&alice);
+    client.mint_initial(&alice);
+
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+
+    // Cancel the round so Alice has pending winnings refunded.
+    client.cancel_round(&0);
+
+    // Remove Alice from allowlist → claim is denied.
+    client.remove_allowlisted(&alice);
+    let claim_denied = client.try_claim_winnings(&alice);
+    assert_eq!(claim_denied, Err(Ok(ContractError::AccessDenied)));
+
+    // Re-allowlist Alice → claim succeeds.
+    client.add_allowlisted(&alice);
+    let claimed = client.claim_winnings(&alice);
+    assert_eq!(claimed, 100_0000000);
+}
+
+/// `test_denylist_blocks_claim_winnings` — a denylisted user cannot
+/// claim pending winnings regardless of allowlist mode.
+#[test]
+fn test_denylist_blocks_claim_winnings() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user, &100_0000000, &BetSide::Up);
+
+    // Cancel the round so user has pending winnings.
+    client.cancel_round(&0);
+
+    // Denylist the user.
+    client.add_denylisted(&user);
+    let claim_denied = client.try_claim_winnings(&user);
+    assert_eq!(claim_denied, Err(Ok(ContractError::AccessDenied)));
+
+    // Un-denylist the user → claim succeeds.
+    client.remove_denylisted(&user);
+    let claimed = client.claim_winnings(&user);
+    assert_eq!(claimed, 100_0000000);
+}
+
+/// `test_allowlist_gates_reveal` — a non-allowlisted user cannot reveal commitments.
+#[test]
+fn test_allowlist_gates_reveal() {
+    let (env, client, _admin, _oracle) = setup();
+    let alice = Address::generate(&env);
+
+    client.set_access_control_enabled(&true);
+    client.add_allowlisted(&alice);
+    client.mint_initial(&alice);
+
+    client.create_round(&1_0000000, &Some(1));
+
+    let salt = [42u8; 32];
+    let salt_bytes = soroban_sdk::BytesN::from_array(&env, &salt);
+    let mut preimage = soroban_sdk::Bytes::new(&env);
+    preimage.append(&1_1000000u128.to_xdr(&env));
+    preimage.append(&salt_bytes.to_xdr(&env));
+    let hash: soroban_sdk::BytesN<32> = env.crypto().sha256(&preimage).into();
+
+    client.commit_prediction(&alice, &hash, &100_0000000);
+
+    // Advance to reveal phase (bet_end_ledger = 6).
+    env.ledger().with_mut(|li| { li.sequence_number = 7; });
+
+    // Admin removes Alice from allowlist before reveal.
+    client.remove_allowlisted(&alice);
+    let reveal_err = client.try_reveal_prediction(&alice, &1_1000000, &salt_bytes);
+    assert_eq!(reveal_err, Err(Ok(ContractError::AccessDenied)));
+
+    // Admin re-allowlists Alice.
+    client.add_allowlisted(&alice);
+    let reveal_ok = client.try_reveal_prediction(&alice, &1_1000000, &salt_bytes);
+    assert!(reveal_ok.is_ok());
+}
+
+/// `test_denylist_blocks_reveal` — a denylisted user cannot reveal commitments.
+#[test]
+fn test_denylist_blocks_reveal() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &Some(1));
+
+    let salt = [42u8; 32];
+    let salt_bytes = soroban_sdk::BytesN::from_array(&env, &salt);
+    let mut preimage = soroban_sdk::Bytes::new(&env);
+    preimage.append(&1_1000000u128.to_xdr(&env));
+    preimage.append(&salt_bytes.to_xdr(&env));
+    let hash: soroban_sdk::BytesN<32> = env.crypto().sha256(&preimage).into();
+
+    client.commit_prediction(&user, &hash, &100_0000000);
+
+    // Advance to reveal phase.
+    env.ledger().with_mut(|li| { li.sequence_number = 7; });
+
+    client.add_denylisted(&user);
+    let reveal_err = client.try_reveal_prediction(&user, &1_1000000, &salt_bytes);
+    assert_eq!(reveal_err, Err(Ok(ContractError::AccessDenied)));
+}
+
+/// `test_get_access_policy_query` — tests querying composite policy tuple.
+#[test]
+fn test_get_access_policy_query() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    let (enabled, state) = client.get_access_policy(&user);
+    assert!(!enabled);
+    assert_eq!(state, AccessState::Open);
+
+    client.set_access_control_enabled(&true);
+    let (enabled, state) = client.get_access_policy(&user);
+    assert!(enabled);
+    assert_eq!(state, AccessState::Open);
+
+    client.add_allowlisted(&user);
+    let (enabled, state) = client.get_access_policy(&user);
+    assert!(enabled);
+    assert_eq!(state, AccessState::Allowlisted);
+
+    client.add_denylisted(&user);
+    let (enabled, state) = client.get_access_policy(&user);
+    assert!(enabled);
+    assert_eq!(state, AccessState::Denylisted);
+}

@@ -189,11 +189,21 @@ pub fn is_allowlisted(env: Env, user: Address) -> bool {
         .has(&DataKeyScoped::Allowlisted(user))
 }
 
+/// Alias for `is_allowlisted`.
+pub fn is_user_allowlisted(env: Env, user: Address) -> bool {
+    is_allowlisted(env, user)
+}
+
 /// Returns whether `user` is denylisted (read-only).
 pub fn is_denylisted(env: Env, user: Address) -> bool {
     env.storage()
         .persistent()
         .has(&DataKeyScoped::Denylisted(user))
+}
+
+/// Alias for `is_denylisted`.
+pub fn is_user_denylisted(env: Env, user: Address) -> bool {
+    is_denylisted(env, user)
 }
 
 /// Returns the resolved access state for `user` (read-only).
