@@ -60,7 +60,7 @@ pub enum ContractError {
     OracleTimestampOutsideWindow = 66,
     /// Pending winnings entry exists but has not yet reached the configured
     /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 66,
+    PendingWinningsNotExpired = 79,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)

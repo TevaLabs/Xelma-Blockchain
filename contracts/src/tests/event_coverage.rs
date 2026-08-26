@@ -414,11 +414,21 @@ fn test_event_coverage_resolve_round() {
     assert_eq!(canon.10, 0i128);         // fee_amount
     assert_eq!(canon.11, 12u32);         // settled_at_ledger
     assert_eq!(canon.12, None);          // confidence
+
+    let resolved_event = events.iter().find(|e| {
+        let (_contract, topics, _data) = e;
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("resolved"))
+    }).unwrap();
+    let (_contract, topics, data) = resolved_event;
+    assert_eq!(
+        topics.get(1).unwrap().try_into_val(&env),
         Ok(symbol_short!("resolved"))
     );
     assert_eq!(
         data.try_into_val(&env),
-        Ok((1u64, 1_2000000u128, 0u32, Option::<u32>::None, 0u32))
+        Ok((1u64, 1_2000000u128, 1u32, 0i128, Option::<u32>::None))
     );
 }
 
