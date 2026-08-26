@@ -138,3 +138,17 @@ cargo test --all-targets
 - [ ] Verify `get_protocol_status()` returns `Active` (mode 0).
 - [ ] Execute smoke test round (`create_round`, `place_bet`, `resolve_round`).
 - [ ] Notify community and publish incident post-mortem.
+
+---
+
+## 5. Release Checklist Gate
+
+To ensure emergency operational capabilities are verified before every release, include the following checklist in the release pull request or notes:
+
+```markdown
+### Emergency Drill Gate
+- [ ] Required CI Job **Emergency Drill Gate** passed successfully.
+- [ ] Automated drill verified `Normal -> ClaimsOnly -> FullyPaused -> Normal` transitions.
+- [ ] `claim_winnings` confirmed functional during `ClaimsOnly` mode.
+- [ ] Operations successfully resumed after `unpause_contract`.
+```
