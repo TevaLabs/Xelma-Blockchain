@@ -1174,9 +1174,9 @@ pub fn _require_supported_schema(env: &Env) -> Result<u32, ContractError> {
 /// # Errors
 /// - `AdminNotSet` — contract not initialized.
 /// - `ContractPaused` — contract is fully paused.
+/// - `ExpiryNotConfigured` — pending winnings expiry is disabled (0 or absent).
+/// - `PendingWinningsNotFound` — no pending winnings entry for this user.
 /// - `PendingWinningsNotExpired` — entry exists but hasn't reached the expiry threshold.
-/// - `NoActiveRound` — used as a generic "no pending winnings" signal when
-///   the entry doesn't exist or expiry is disabled (0).
 pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env
@@ -1191,6 +1191,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
 
     // Read the expiry config. 0 or absent means expiry is disabled.
     let expiry_key = PENDING_WINNINGS_EXPIRY_KEY;
+    _extend_persistent_ttl(&env, &expiry_key);
     let expiry_ledgers: u32 = env
         .storage()
         .persistent()
@@ -1208,6 +1209,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
 
     // Read pending winnings.
     let pending_key = DataKey::PendingWinnings(user.clone());
+    _extend_persistent_ttl(&env, &pending_key);
     let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
     if pending == 0 {
         _emit_action_rejected(
@@ -1221,6 +1223,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
 
     // Read the ledger when this entry was last updated.
     let updated_key = PendingWinningsUpdatedAtKey(user.clone());
+    _extend_persistent_ttl(&env, &updated_key);
     let updated_at: u32 = env
         .storage()
         .persistent()

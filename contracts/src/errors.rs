@@ -58,9 +58,6 @@ pub enum ContractError {
     NoRoundTemplate = 65,
     /// Oracle payload timestamp is outside the round-relative economic window
     OracleTimestampOutsideWindow = 66,
-    /// Pending winnings entry exists but has not yet reached the configured
-    /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 66,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
@@ -89,4 +86,7 @@ pub enum ContractError {
     PendingWinningsNotFound = 77,
     /// Pending winnings expiry is not configured (value is 0).
     ExpiryNotConfigured = 78,
+    /// Pending winnings entry exists but has not yet reached the configured
+    /// expiry threshold — caller must wait before reclaiming.
+    PendingWinningsNotExpired = 79,
 }

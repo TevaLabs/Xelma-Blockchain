@@ -84,7 +84,24 @@ fn test_reclaim_fails_when_expiry_disabled() {
     set_pending_at_current_ledger(&env, &contract_id, &user, 1000);
 
     let result = client.try_reclaim_expired_pending_winnings(&user);
-    assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
+    assert_eq!(result, Err(Ok(ContractError::ExpiryNotConfigured)));
+}
+
+#[test]
+fn test_reclaim_fails_when_expiry_disabled_after_enable() {
+    let (env, admin, contract_id, client) = setup();
+    let user = Address::generate(&env);
+
+    env.ledger().with_mut(|li| li.sequence_number = 0);
+    set_pending_at_current_ledger(&env, &contract_id, &user, 1000);
+    apply_pending_winnings_expiry(&env, &client, 500);
+
+    // Disable expiry after enabling it
+    apply_pending_winnings_expiry(&env, &client, 0);
+    assert_eq!(client.get_pending_winnings_expiry(), 0);
+
+    let result = client.try_reclaim_expired_pending_winnings(&user);
+    assert_eq!(result, Err(Ok(ContractError::ExpiryNotConfigured)));
 }
 
 #[test]
@@ -94,7 +111,38 @@ fn test_reclaim_fails_for_nonexistent_pending() {
     apply_pending_winnings_expiry(&env, &client, 500);
 
     let result = client.try_reclaim_expired_pending_winnings(&user);
-    assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
+    assert_eq!(result, Err(Ok(ContractError::PendingWinningsNotFound)));
+}
+
+#[test]
+fn test_reclaim_fails_for_premature_reclaim() {
+    let (env, admin, contract_id, client) = setup();
+    let user = Address::generate(&env);
+
+    // Set pending winnings at ledger 100 with expiry of 500
+    env.ledger().with_mut(|li| li.sequence_number = 100);
+    set_pending_at_current_ledger(&env, &contract_id, &user, 2000);
+    apply_pending_winnings_expiry(&env, &client, 500);
+
+    // Try at ledger 300: age = 200, which is < 500
+    env.ledger().with_mut(|li| li.sequence_number = 300);
+    let result = client.try_reclaim_expired_pending_winnings(&user);
+    assert_eq!(result, Err(Ok(ContractError::PendingWinningsNotExpired)));
+
+    // Try at ledger 500: age = 400, still < 500
+    env.ledger().with_mut(|li| li.sequence_number = 500);
+    let result = client.try_reclaim_expired_pending_winnings(&user);
+    assert_eq!(result, Err(Ok(ContractError::PendingWinningsNotExpired)));
+
+    // Try at ledger 599: age = 499, still < 500
+    env.ledger().with_mut(|li| li.sequence_number = 599);
+    let result = client.try_reclaim_expired_pending_winnings(&user);
+    assert_eq!(result, Err(Ok(ContractError::PendingWinningsNotExpired)));
+
+    // At ledger 600: age = 500 == expiry → eligible
+    env.ledger().with_mut(|li| li.sequence_number = 600);
+    let reclaimed = client.reclaim_expired_pending_winnings(&user);
+    assert_eq!(reclaimed, 2000);
 }
 
 #[test]
