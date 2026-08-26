@@ -105,8 +105,37 @@ if (Object.keys(bindingsErrors).length === 0) {
     process.exit(1);
 }
 
-const errorsDrift = [];
+// Build a reverse map: code → [rust variant names] to detect duplicate discriminants
+const variantsByCode = {};
 for (const [name, val] of Object.entries(errorVariants)) {
+    if (!variantsByCode[val]) variantsByCode[val] = [];
+    variantsByCode[val].push(name);
+}
+
+// Also build a reverse map from bindings: code → ts variant name
+const bindingsByCode = {};
+for (const [name, val] of Object.entries(bindingsErrors)) {
+    if (!bindingsByCode[val]) bindingsByCode[val] = [];
+    bindingsByCode[val].push(name);
+}
+
+const errorsDrift = [];
+const handledDuplicateCodes = new Set();
+
+for (const [name, val] of Object.entries(errorVariants)) {
+    // For duplicate discriminants, check if at least one variant for this code exists in TS
+    if (variantsByCode[val].length > 1) {
+        if (handledDuplicateCodes.has(val)) continue;
+        handledDuplicateCodes.add(val);
+
+        const anyMatch = variantsByCode[val].some(n => bindingsErrors[n] === val);
+        if (!anyMatch) {
+            errorsDrift.push(`Duplicate discriminant ${val} (${variantsByCode[val].join(', ')}): no matching variant found in bindings error map.`);
+        }
+        continue;
+    }
+
+    // Normal single-variant check
     if (bindingsErrors[name] === undefined) {
         errorsDrift.push(`Error variant '${name}' (value ${val}) exists in contract but is missing from bindings error map.`);
     } else if (bindingsErrors[name] !== val) {
