@@ -536,6 +536,10 @@ export const ContractError = {
    */
   54: {message:"NoPendingRotation"},
   /**
+   * Oracle rotation delay has not elapsed yet (must wait MIN_ROTATION_DELAY_SECONDS)
+   */
+  55: {message:"RotationDelayNotElapsed"},
+  /**
    * Invalid archive retention limit
    */
   62: {message:"InvalidArchiveRetention"},
@@ -548,20 +552,61 @@ export const ContractError = {
    */
   64: {message:"InvalidSalt"},
   /**
-   * Epoch mint budget has been fully consumed
-   */
-  66: {message:"EpochBudgetExceeded"}
-   * create_next_from_template called with no round template configured
+   * No round template configured for create_next_from_template
    */
   65: {message:"NoRoundTemplate"},
   /**
+   * Pending winnings entry has not yet reached the configured expiry threshold
+   */
+  66: {message:"PendingWinningsNotExpired"},
+  /**
+   * Epoch mint budget has been fully consumed
+   */
+  67: {message:"EpochBudgetExceeded"},
+  /**
    * Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
    */
-  66: {message:"OracleNotLive"},
+  68: {message:"OracleNotLive"},
   /**
    * Invalid precision payout policy
    */
-  67: {message:"InvalidPayoutPolicy"}
+  69: {message:"InvalidPayoutPolicy"},
+  /**
+   * Stake amount is below the configured minimum bet (dust protection, Issue #269)
+   */
+  70: {message:"BelowMinBet"},
+  /**
+   * Multi-feed resolution: fewer observations survived outlier rejection than quorum
+   */
+  71: {message:"InsufficientOracleQuorum"},
+  /**
+   * Multi-feed resolution: payload contains fewer observations than configured minimum
+   */
+  72: {message:"TooFewObservations"},
+  /**
+   * Multi-feed resolution: outlier observations would dominate the result
+   */
+  73: {message:"OracleOutlierRejected"},
+  /**
+   * Multi-feed payload contains duplicate source identifiers
+   */
+  74: {message:"DuplicateOracleSource"},
+  /**
+   * Multi-feed payload observations are not sorted or sources are out of expected range
+   */
+  75: {message:"InvalidObservationOrder"},
+  /**
+   * The requested data key is not allowed for batch TTL touch operations
+   */
+  76: {message:"UnsupportedDataKeyForTtlTouch"},
+  /**
+   * Pending winnings entry does not exist or expiry is not configured
+   */
+  77: {message:"PendingWinningsNotFound"},
+  /**
+   * Pending winnings expiry is not configured (value is 0)
+   */
+  78: {message:"ExpiryNotConfigured"}
 }
 
 /**
