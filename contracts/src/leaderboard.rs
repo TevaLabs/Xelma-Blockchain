@@ -29,7 +29,7 @@ use crate::common::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    DataKeyCore, DataKeyExt, DataKeyScoped, LeaderboardEntry, SeasonArchive,
+    DataKeyCore, DataKeyScoped, LeaderboardEntry, SeasonArchive,
     SeasonLeaderboardEntry, UserStats,
 };
 use soroban_sdk::{symbol_short, Address, Env, Vec};
@@ -147,7 +147,7 @@ fn without_user(env: &Env, list: &Vec<Address>, user: &Address) -> Vec<Address> 
 /// **after** the lifetime `UserStats` write, so the freshly-updated totals
 /// are what gets ranked.
 pub fn _update_leaderboards(env: &Env, user: Address) {
-    let wins_key = DataKeyCore::Ext(DataKeyExt::LeaderboardWins);
+    let wins_key = DataKeyCore::LeaderboardWins;
     let wins_list: Vec<Address> = env
         .storage()
         .persistent()
@@ -158,7 +158,7 @@ pub fn _update_leaderboards(env: &Env, user: Address) {
     let sorted = reinsert_sorted_by_wins(env, candidates, |addr| lifetime_user_stats(env, addr));
     upsert_bounded_index(env, &wins_key, sorted);
 
-    let streak_key = DataKeyCore::Ext(DataKeyExt::LeaderboardStreak);
+    let streak_key = DataKeyCore::LeaderboardStreak;
     let streak_list: Vec<Address> = env
         .storage()
         .persistent()
@@ -177,7 +177,7 @@ pub fn get_leaderboard_by_wins(env: Env, offset: u32, limit: u32) -> Vec<Leaderb
     if limit == 0 {
         return Vec::new(&env);
     }
-    let key = DataKeyCore::Ext(DataKeyExt::LeaderboardWins);
+    let key = DataKeyCore::LeaderboardWins;
     _extend_persistent_ttl(&env, &key);
     let list: Vec<Address> = env
         .storage()
@@ -208,7 +208,7 @@ pub fn get_leaderboard_by_streak(env: Env, offset: u32, limit: u32) -> Vec<Leade
     if limit == 0 {
         return Vec::new(&env);
     }
-    let key = DataKeyCore::Ext(DataKeyExt::LeaderboardStreak);
+    let key = DataKeyCore::LeaderboardStreak;
     _extend_persistent_ttl(&env, &key);
     let list: Vec<Address> = env
         .storage()
@@ -237,13 +237,13 @@ pub fn get_leaderboard_by_streak(env: Env, offset: u32, limit: u32) -> Vec<Leade
 pub fn _current_season_id(env: &Env) -> u32 {
     env.storage()
         .persistent()
-        .get(&DataKeyCore::Ext(DataKeyExt::SeasonId))
+        .get(&DataKeyCore::SeasonId)
         .unwrap_or(1)
 }
 
 /// Returns the id of the currently-active leaderboard season (default 1).
 pub fn get_current_season_id(env: Env) -> u32 {
-    let key = DataKeyCore::Ext(DataKeyExt::SeasonId);
+    let key = DataKeyCore::SeasonId;
     _extend_persistent_ttl(&env, &key);
     _current_season_id(&env)
 }
@@ -263,7 +263,7 @@ pub fn get_season_user_stats(env: Env, season_id: u32, user: Address) -> UserSta
 }
 
 fn _update_season_leaderboards(env: &Env, season_id: u32, user: Address) {
-    let wins_key = DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins);
+    let wins_key = DataKeyCore::SeasonLeaderboardWins;
     let wins_list: Vec<Address> = env
         .storage()
         .persistent()
@@ -276,7 +276,7 @@ fn _update_season_leaderboards(env: &Env, season_id: u32, user: Address) {
     });
     upsert_bounded_index(env, &wins_key, sorted);
 
-    let streak_key = DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak);
+    let streak_key = DataKeyCore::SeasonLeaderboardStreak;
     let streak_list: Vec<Address> = env
         .storage()
         .persistent()
@@ -371,12 +371,12 @@ pub fn reset_leaderboard_season(env: Env) -> Result<u32, ContractError> {
     let wins_list: Vec<Address> = env
         .storage()
         .persistent()
-        .get(&DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins))
+        .get(&DataKeyCore::SeasonLeaderboardWins)
         .unwrap_or(Vec::new(&env));
     let streak_list: Vec<Address> = env
         .storage()
         .persistent()
-        .get(&DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak))
+        .get(&DataKeyCore::SeasonLeaderboardStreak)
         .unwrap_or(Vec::new(&env));
 
     let mut wins_entries: Vec<SeasonLeaderboardEntry> = Vec::new(&env);
@@ -432,16 +432,16 @@ pub fn reset_leaderboard_season(env: Env) -> Result<u32, ContractError> {
     _extend_persistent_ttl(&env, &archive_key);
 
     let new_season_id = season_id.checked_add(1).ok_or(ContractError::Overflow)?;
-    let season_key = DataKeyCore::Ext(DataKeyExt::SeasonId);
+    let season_key = DataKeyCore::SeasonId;
     env.storage().persistent().set(&season_key, &new_season_id);
     _extend_persistent_ttl(&env, &season_key);
 
     env.storage()
         .persistent()
-        .remove(&DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins));
+        .remove(&DataKeyCore::SeasonLeaderboardWins);
     env.storage()
         .persistent()
-        .remove(&DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak));
+        .remove(&DataKeyCore::SeasonLeaderboardStreak);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -476,7 +476,7 @@ pub fn get_season_leaderboard_by_wins(
     }
 
     if season_id == _current_season_id(&env) {
-        let key = DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins);
+        let key = DataKeyCore::SeasonLeaderboardWins;
         _extend_persistent_ttl(&env, &key);
         let list: Vec<Address> = env
             .storage()
@@ -522,7 +522,7 @@ pub fn get_season_leaderboard_by_streak(
     }
 
     if season_id == _current_season_id(&env) {
-        let key = DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak);
+        let key = DataKeyCore::SeasonLeaderboardStreak;
         _extend_persistent_ttl(&env, &key);
         let list: Vec<Address> = env
             .storage()

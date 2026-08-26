@@ -1,29 +1,21 @@
 // SPDX-License-Identifier: MIT
 use crate::admin::{_ensure_normal_mode, _ensure_not_paused, _require_supported_schema};
 use crate::common::{
-    _emit_action_rejected, _emit_config_updated, _extend_persistent_ttl, _set_balance, balance,
-    payout_add, BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS, DEFAULT_ARCHIVE_RETENTION,
-    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_CLOSE_BUFFER_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS,
-    DEFAULT_ORACLE_STALE_THRESHOLD, DEFAULT_ORACLE_TIMESTAMP_SKEW, DEFAULT_RUN_WINDOW_LEDGERS,
-    MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_MIN_PARTICIPANTS,
-    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_ORACLE_TIMESTAMP_SKEW,
-    MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
-    MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
-    MIN_ORACLE_TIMESTAMP_SKEW, MIN_START_PRICE,
     _emit_action_rejected, _emit_config_updated, _extend_persistent_ttl, _extend_ttl_symbol,
     _set_balance, balance, payout_add, BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS,
     DEFAULT_ARCHIVE_RETENTION, DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_CLOSE_BUFFER_LEDGERS,
     DEFAULT_DISPUTE_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
-    DEFAULT_PENDING_WINNINGS_EXPIRY, DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION,
-    MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_DISPUTE_LEDGERS, MAX_MIN_PARTICIPANTS,
-    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PENDING_WINNINGS_EXPIRY,
-    MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
-    MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
+    DEFAULT_ORACLE_TIMESTAMP_SKEW, DEFAULT_PENDING_WINNINGS_EXPIRY, DEFAULT_RUN_WINDOW_LEDGERS,
+    MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_DISPUTE_LEDGERS,
+    MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD,
+    MAX_ORACLE_TIMESTAMP_SKEW, MAX_PENDING_WINNINGS_EXPIRY, MAX_PRECISION_PARTICIPANTS_LIMIT,
+    MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS, MAX_START_PRICE, MIN_ARCHIVE_RETENTION,
+    MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD, MIN_ORACLE_TIMESTAMP_SKEW,
     MIN_PENDING_WINNINGS_EXPIRY, MIN_START_PRICE,
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ConfigChangeKind, ConfigChangePayload, DataKey, DataKeyCore, DataKeyScoped, FeeModel,
+    ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, FeeModel,
     PendingConfigChange, PrecisionPayoutPolicy, RoundTemplate, PENDING_WINNINGS_EXPIRY_KEY,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol};
@@ -847,6 +839,7 @@ pub fn set_early_cashout_bps(env: Env, bps: Option<u32>) -> Result<(), ContractE
     }
 
     let key = DataKeyCore::EarlyCashoutBps;
+    let old_bps: Option<u32> = env.storage().persistent().get(&key);
     if let Some(v) = bps {
         env.storage().persistent().set(&key, &v);
         _extend_persistent_ttl(&env, &key);
@@ -1272,6 +1265,9 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
                 .unwrap_or(DEFAULT_DISPUTE_LEDGERS),
         ),
         ConfigChangeKind::FeeModel => ConfigChangePayload::FeeModel(_read_fee_model(env)),
+        ConfigChangeKind::EarlyCashoutBps => ConfigChangePayload::EarlyCashoutBps(
+            env.storage().persistent().get(&DataKeyCore::EarlyCashoutBps),
+        ),
     }
 }
 
@@ -1519,6 +1515,16 @@ pub fn _apply_config_payload(
             env.storage().persistent().set(&key, max);
             _extend_persistent_ttl(env, &key);
         }
+        (ConfigChangeKind::EarlyCashoutBps, ConfigChangePayload::EarlyCashoutBps(bps)) => {
+            let key = DataKeyCore::EarlyCashoutBps;
+            if let Some(v) = bps {
+                env.storage().persistent().set(&key, v);
+                _extend_persistent_ttl(env, &key);
+            } else {
+                env.storage().persistent().remove(&key);
+            }
+        }
+        _ => {}
     }
     _emit_config_updated(env, kind.clone(), old_value, payload.clone());
     Ok(())

@@ -912,7 +912,7 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
                 }
             }
             _ => {
-                soroban_sdk::panic_with_error!(&env, ContractError::EpochBudgetExceeded);
+                soroban_sdk::panic_with_error!(&env, ContractError::MintLimitExceeded);
             }
         }
     }

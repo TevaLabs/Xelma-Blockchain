@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 use crate::common::{
-    _derive_round_phase, _extend_persistent_ttl, _legacy_positions_key, payout_add, payout_mul,
+    _derive_round_phase, _extend_persistent_ttl, payout_add, payout_mul,
     sort_addresses, BPS_DENOMINATOR, DEFAULT_ARCHIVE_RETENTION, MAX_PAGE_SIZE,
 };
 use crate::config::{
@@ -9,7 +9,7 @@ use crate::config::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
+    ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, LeaderboardEntry,
     PrecisionCommitment, PrecisionPrediction, PendingWinningsUpdatedAtKey, Round, RoundMode,
     RoundPhase, RoundPoolStats, RoundTemplate, SeasonArchive, SimulationResult, UserOutcomeType,
     UserPosition, UserRoundOutcome, UserStats,
@@ -218,7 +218,7 @@ pub fn get_user_archive_history(
     let user_rounds: Vec<u64> = env
         .storage()
         .persistent()
-        .get(&DataKey::UserArchivedRoundIds(user))
+        .get(&DataKeyScoped::UserArchivedRoundIds(user))
         .unwrap_or(Vec::new(env_ref));
 
     let total = user_rounds.len();
@@ -235,7 +235,7 @@ pub fn get_user_archive_history(
             if let Some(summary) = env
                 .storage()
                 .persistent()
-                .get(&DataKey::ArchivedRound(round_id))
+                .get(&DataKeyScoped::ArchivedRound(round_id))
             {
                 result.push_back(summary);
             }

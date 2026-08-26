@@ -7,7 +7,7 @@ use crate::common::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt,
+    AttestationConfig, AttestationConfigKey, DataKeyCore, DataKeyScoped,
     DeviationConfig, DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey,
     OracleHeartbeatRecord, OracleQuorumConfig, PolicyAction, ProtocolHealthStatus, Round,
     RuntimeMode, PENDING_WINNINGS_EXPIRY_KEY, PendingWinningsUpdatedAtKey,
@@ -827,6 +827,12 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         issues += 1;
     }
 
+    let access_restricted: bool = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::AccessControlEnabled)
+        .unwrap_or(false);
+
     let status_code = if paused {
         1u32 // PAUSED
     } else if issues > 1 {
@@ -837,6 +843,8 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         3u32 // ROUND_STALE
     } else if !has_active_round {
         4u32 // NO_ACTIVE_ROUND
+    } else if access_restricted {
+        6u32 // ACCESS_RESTRICTED
     } else {
         0u32 // HEALTHY
     };
@@ -932,6 +940,7 @@ pub fn _policy_gate(env: &Env, action: PolicyAction) -> Result<(), ContractError
         PolicyAction::Claim | PolicyAction::AdminConfig | PolicyAction::Settlement => {
             mode == RuntimeMode::FullyPaused
         }
+        _ => mode == RuntimeMode::FullyPaused,
     };
     if blocked {
         return Err(ContractError::ContractPaused);
@@ -1000,11 +1009,11 @@ pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
             | DataKeyCore::MigratedToV3
             | DataKeyCore::ArchiveRetention
             | DataKeyCore::RoundTemplate
-            | DataKeyCore::Ext(DataKeyExt::LeaderboardWins)
-            | DataKeyCore::Ext(DataKeyExt::LeaderboardStreak)
-            | DataKeyCore::Ext(DataKeyExt::SeasonId)
-            | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins)
-            | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak)
+            | DataKeyCore::LeaderboardWins
+            | DataKeyCore::LeaderboardStreak
+            | DataKeyCore::SeasonId
+            | DataKeyCore::SeasonLeaderboardWins
+            | DataKeyCore::SeasonLeaderboardStreak
             | DataKeyCore::LastRoundId
             | DataKeyCore::OracleRotationProposal
             | DataKeyCore::MintLimitConfig
@@ -1044,9 +1053,9 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
                 &env,
                 &admin,
                 symbol_short!("batch_t"),
-                ContractError::UnsupportedDataKeyForTtlTouch,
+                ContractError::UnsupportedSchemaVersion,
             );
-            return Err(ContractError::UnsupportedDataKeyForTtlTouch);
+            return Err(ContractError::UnsupportedSchemaVersion);
         }
         if env.storage().persistent().has(&key) {
             env.storage()
@@ -1136,12 +1145,12 @@ pub(crate) fn _validate_quorum_config(cfg: &OracleQuorumConfig) -> Result<(), Co
     if cfg.min_observations < DEFAULT_ORACLE_QUORUM_MIN_OBSERVATIONS
         || cfg.min_observations > MAX_ORACLE_OBSERVATIONS
     {
-        return Err(ContractError::TooFewObservations);
+        return Err(ContractError::InvalidMinParticipants);
     }
     if cfg.quorum_threshold < DEFAULT_ORACLE_QUORUM_THRESHOLD
         || cfg.quorum_threshold > cfg.min_observations
     {
-        return Err(ContractError::InsufficientOracleQuorum);
+        return Err(ContractError::InvalidMinParticipants);
     }
     if cfg.outlier_threshold_bps == 0 || cfg.outlier_threshold_bps > 10_000 {
         return Err(ContractError::WindowOutOfRange);
@@ -1201,22 +1210,22 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
             &env,
             &admin,
             symbol_short!("reclaim"),
-            ContractError::ExpiryNotConfigured,
+            ContractError::WindowOutOfRange,
         );
-        return Err(ContractError::ExpiryNotConfigured);
+        return Err(ContractError::WindowOutOfRange);
     }
 
     // Read pending winnings.
-    let pending_key = DataKey::PendingWinnings(user.clone());
+    let pending_key = DataKeyScoped::PendingWinnings(user.clone());
     let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
     if pending == 0 {
         _emit_action_rejected(
             &env,
             &admin,
             symbol_short!("reclaim"),
-            ContractError::PendingWinningsNotFound,
+            ContractError::InsufficientBalance,
         );
-        return Err(ContractError::PendingWinningsNotFound);
+        return Err(ContractError::InsufficientBalance);
     }
 
     // Read the ledger when this entry was last updated.
@@ -1225,7 +1234,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
         .storage()
         .persistent()
         .get(&updated_key)
-        .ok_or(ContractError::PendingWinningsNotFound)?;
+        .ok_or(ContractError::InsufficientBalance)?;
 
     let current_ledger = env.ledger().sequence();
     let age = current_ledger.saturating_sub(updated_at);
@@ -1235,9 +1244,9 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
             &env,
             &admin,
             symbol_short!("reclaim"),
-            ContractError::PendingWinningsNotExpired,
+            ContractError::PendingWinningsCapExceeded,
         );
-        return Err(ContractError::PendingWinningsNotExpired);
+        return Err(ContractError::PendingWinningsCapExceeded);
     }
 
     // CEI: remove storage keys before transferring.

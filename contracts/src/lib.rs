@@ -11,18 +11,19 @@
 //! - Comprehensive error handling
 
 #![no_std]
-extern crate alloc;
 
 #[cfg(test)]
 extern crate std;
 
 
+pub mod access_control;
 mod admin;
 mod betting;
 pub mod common;
 mod config;
 mod contract;
 mod errors;
+pub mod governance;
 mod leaderboard;
 mod queries;
 mod settlement;
@@ -37,8 +38,8 @@ mod tests;
 pub use contract::VirtualTokenContract;
 pub use errors::ContractError;
 pub use types::{
-    ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped,
-    LeaderboardEntry, OracleRotationProposal, PendingConfigChange, PrecisionCommitment,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
+    DataKeyScoped, LeaderboardEntry, OracleRotationProposal, PendingConfigChange, PrecisionCommitment,
     PrecisionPrediction, ProtocolHealthStatus, Round, RoundArchiveStatus, RoundTemplate,
     SeasonArchive, SeasonLeaderboardEntry, UserPosition, UserStats,
 };
