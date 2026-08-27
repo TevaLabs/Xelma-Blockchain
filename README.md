@@ -235,8 +235,7 @@ Xelma-Blockchain/
 │   │       ├── ttl_tests.rs
 │   │       └── windows.rs
 │   │       └── ... (20+ test files total — see docs/CONTRIBUTOR_MAP.md)
-│   ├── Cargo.toml            # Rust dependencies
-│   └── test_snapshots/       # Test execution records
+│   └── Cargo.toml            # Rust dependencies
 │
 ├── bindings/                  # TypeScript bindings (auto-generated)
 │   ├── src/
@@ -770,7 +769,6 @@ This repository contains both source files and generated artifacts. Understandin
 - **`target/`** - Rust build outputs (WASM binaries, compiled Rust)
 - **`bindings/dist/`** - Compiled TypeScript output (JavaScript + type definitions)
 - **`node_modules/`** - npm dependencies
-- **`contracts/test_snapshots/`** - Test execution records (generated during tests)
 - **`contracts/proptest-regressions/`** - Property test regression files (generated during tests)
 - **`.soroban/`** - Soroban CLI artifacts
 
@@ -806,14 +804,14 @@ cd ../contracts
 cargo test
 ```
 
-> **Note:** Test snapshots and proptest regressions are automatically generated when running tests. These files help ensure test consistency but should not be committed.
+> **Note:** Proptest regression files are automatically generated when running tests. These files help ensure test consistency but should not be committed.
 
 #### Before Submitting a PR:
 
 1. **Verify no build artifacts are staged:**
    ```bash
    git status
-   # Ensure target/, bindings/dist/, node_modules/, test_snapshots/, proptest-regressions/ are not listed
+   # Ensure target/, bindings/dist/, node_modules/, proptest-regressions/ are not listed
    ```
 
 2. **If you modified the contract**, regenerate bindings:

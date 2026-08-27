@@ -110,33 +110,6 @@ cd Xelma-Blockchain
 pip install pre-commit
 pre-commit install
 ```
-## Snapshot Tests
-
-The project uses storage-snapshot golden files (`contracts/test_snapshots/`) to detect
-unintentional changes to contract state, event emissions, and error behavior.
-
-### When snapshots should change
-
-- You modified contract logic, storage keys, event payloads, or error variants.
-- You made non-semantic refactors that still cause snapshot output to differ (rare).
-
-### When snapshots should NOT change
-
-- Your change is in an unrelated module, test infrastructure, or documentation.
-- CI reports snapshot drift that you did not intend — investigate before regenerating.
-
-### Updating snapshots
-
-After an intentional behavior change, regenerate golden files from the repo root:
-
-```bash
-./scripts/update_snapshots.sh
-```
-
-Then review the diff, run the full suite, and commit the updated snapshots alongside
-your logic change. See [`contracts/test_snapshots/README.md`](./contracts/test_snapshots/README.md)
-for a step-by-step guide.
-
 ## Security Checks (local)
 
 The CI `security-audit` job runs two checks that maintainers and contributors can reproduce locally.
