@@ -55,6 +55,10 @@ This guide maps each smart‑contract error defined in `contracts/src/errors.rs`
 | `0x3f` | 63 | InvalidCommitment | Commitment hash is malformed (e.g. all-zero placeholder) | "Invalid commitment hash."
 | `0x40` | 64 | InvalidSalt | Reveal salt fails minimum entropy rules | "Invalid reveal salt."
 | `0x41` | 65 | NoRoundTemplate | No round template configured | "No round template."
+| `0x4f` | 79 | EarlyCashoutDisabled | Early cash-out is disabled or penalty rate is unset | "Early cash-out is currently disabled."
+| `0x50` | 80 | PositionNotFound | User has no active position in the round to cash out | "No active position found to cash out."
+| `0x51` | 81 | InvalidPhaseForCashout | Early cash-out is only permitted during the running phase | "Early cash-out only available during running phase."
+| `0x52` | 82 | WrongModeForCashout | Early cash-out is only supported for UpDown rounds | "Early cash-out is not supported in Precision mode."
 
 ## Integration Walkthroughs
 ### 1. Handling errors in a Freighter wallet

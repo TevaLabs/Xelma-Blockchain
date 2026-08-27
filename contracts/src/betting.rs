@@ -689,11 +689,17 @@ pub fn reveal_prediction(
 /// - The forfeited amount is credited to the protocol fee treasury.
 /// - The user receives `cashout` as pending winnings.
 ///
+/// **Invariants & Conservation**:
+/// - `cashout + forfeit == stake`: The user's entire position stake removed from the
+///   active pool is fully accounted for — `cashout` is credited to the user's
+///   pending winnings and `forfeit` is retained as a protocol fee.
+///
 /// **Restrictions**:
 /// - Only during the Running phase (`bet_end_ledger ≤ ledger < end_ledger`).
 /// - Only for UpDown rounds (not Precision).
 /// - User must have an active position in the current round.
 /// - Feature must be enabled via `EarlyCashoutBps`.
+/// - Blocked when contract is paused or not in Normal mode.
 pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
@@ -702,7 +708,11 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // Check early cash-out is enabled
     let penalty_bps = get_early_cashout_bps(env.clone())
-        .ok_or(ContractError::RoundEnded)?;
+        .ok_or(ContractError::EarlyCashoutDisabled)?;
+
+    if penalty_bps == 0 || penalty_bps > 10_000 {
+        return Err(ContractError::EarlyCashoutDisabled);
+    }
 
     // Single read of the active round
     let mut round: Round = env
@@ -713,13 +723,13 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // Only UpDown rounds supported
     if round.mode != RoundMode::UpDown {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::WrongModeForCashout);
     }
 
     // Must be in Running phase (betting closed, round not yet ended)
     let current_ledger = env.ledger().sequence();
     if current_ledger < round.bet_end_ledger || current_ledger >= round.end_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::InvalidPhaseForCashout);
     }
 
     // Retrieve user's position
@@ -728,7 +738,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
         .storage()
         .persistent()
         .get(&pos_key)
-        .ok_or(ContractError::CommitmentNotFound)?;
+        .ok_or(ContractError::PositionNotFound)?;
 
     let stake = position.amount;
     if stake <= 0 {

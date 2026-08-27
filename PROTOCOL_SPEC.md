@@ -229,26 +229,28 @@ Evidence:
 ### I14. Early Cash-Out
 
 When enabled by admin (`EarlyCashoutBps` set to a non-`None` penalty rate in
-basis points), a bettor in an UpDown round may exit their position during the
+basis points), a bettor in an UpDown round may exit their position early during the
 Running phase (`bet_end_ledger ≤ ledger < end_ledger`). The user receives
 `stake * (10000 - penalty_bps) / 10000` as pending winnings; the forfeited
 amount is credited to the protocol fee treasury. The full original stake is
 deducted from the pool so remaining participants are unaffected.
 
-Restrictions:
-- Default-off: feature is disabled unless admin explicitly configures.
-- UpDown rounds only (not Precision).
-- Running phase only; blocked after resolution.
-- Each user may cash out at most once per round (position is removed).
+#### Restrictions & Errors
+- **Disabled by default**: Rejects with `EarlyCashoutDisabled` if `EarlyCashoutBps` is unset or `0`.
+- **Mode restriction**: UpDown rounds only. Rejects with `WrongModeForCashout` if called on Precision rounds.
+- **Phase restriction**: Running phase only (`bet_end_ledger ≤ ledger < end_ledger`). Rejects with `InvalidPhaseForCashout` during Betting or after `end_ledger`.
+- **Position requirement**: User must hold an active position in the round. Rejects with `PositionNotFound` if no position exists or if user already cashed out.
+- **Operational pause**: Blocked with `ContractPaused` if the protocol is paused or in non-Normal mode.
 
-Conservation holds: `cashout + forfeit == stake` per exit. The pool reduction
-preserves the invariant that pool totals match the sum of remaining active
-positions.
+#### Invariant Conservation
+Exact conservation holds at all times:
+$$\text{cashout} + \text{forfeit} = \text{stake}$$
+The full stake is deducted from the respective side's pool (`pool_up` or `pool_down`), with `cashout` credited to pending winnings and `forfeit` transferred to protocol fees. Pool totals strictly match the sum of remaining active positions.
 
 Evidence:
-- Code: `cash_out_early` in `betting.rs`, `set_early_cashout_bps` in `config.rs`.
+- Code: `cash_out_early` in `betting.rs`, `set_early_cashout_bps` in `config.rs`, `errors.rs`.
 - Tests: `conservation.rs`.
-- Docs: `PROTOCOL_SPEC.md` (this section).
+- Docs: `PROTOCOL_SPEC.md` (this section), `docs/WALLET_ERROR_GUIDE.md`.
 
 ## Threat Model
 

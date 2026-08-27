@@ -140,6 +140,38 @@ The two codes are **independent** of each other:
 
 ---
 
+## `get_protocol_health()` → `ProtocolHealthStatus`
+
+Returns a composite snapshot of overall protocol health, designed for operator monitoring dashboards, Nagios-compatible probes, and CI smoke gates.
+
+### Health Status Codes (`status_code`)
+
+| Value | Label               | Severity | Meaning                                                                   |
+|:-----:|---------------------|:--------:|---------------------------------------------------------------------------|
+| `0`   | `HEALTHY`           | OK       | All subsystems nominal: oracle live, not paused, active round healthy.    |
+| `1`   | `PAUSED`            | CRIT     | Emergency-paused via `FullyPaused` runtime mode; mutations blocked.       |
+| `2`   | `ORACLE_STALE`      | WARN     | Oracle heartbeat timestamp exceeds stale threshold or status is offline. |
+| `3`   | `ROUND_STALE`       | WARN     | Active round is past its `end_ledger` and awaiting oracle resolution.     |
+| `4`   | `NO_ACTIVE_ROUND`   | OK       | Idle state: no active round, but oracle is live and contract is normal.   |
+| `5`   | `MULTIPLE_ISSUES`   | CRIT     | Two or more degradation conditions detected simultaneously.               |
+| `6`   | `CLAIMS_ONLY`       | WARN     | Protocol in `ClaimsOnly` runtime mode; round mutations blocked.           |
+
+---
+
+## `RuntimeMode` Entrypoint Policy Matrix
+
+The contract defines three operational runtime modes (`Normal`, `ClaimsOnly`, `FullyPaused`), enforced centrally via `_policy_gate`:
+
+| Entrypoint Category | `Normal` (0) | `ClaimsOnly` (1) | `FullyPaused` (2) | Examples / Methods                                                                                    |
+|---------------------|:------------:|:----------------:|:-----------------:|-------------------------------------------------------------------------------------------------------|
+| **RoundMutation**   | ✅ Allowed   | ❌ Blocked       | ❌ Blocked        | `place_bet`, `place_precision_prediction`, `predict_price`, `commit_prediction`, `reveal_prediction`, `mint_initial`, `cash_out_early` |
+| **Claim**           | ✅ Allowed   | ✅ Allowed       | ❌ Blocked        | `claim_winnings`                                                                                      |
+| **Settlement**      | ✅ Allowed   | ✅ Allowed       | ❌ Blocked        | `resolve_round`, `resolve_round_multi`, `cancel_round`                                                |
+| **AdminConfig**     | ✅ Allowed   | ✅ Allowed       | ❌ Blocked        | `set_runtime_mode`, `create_round`, `set_windows`, `set_oracle_max_deviation_bps`, etc.              |
+| **Read-Only / Hb**  | ✅ Allowed   | ✅ Allowed       | ✅ Allowed        | `update_oracle_heartbeat`, `get_protocol_health`, `get_protocol_status`, `balance`, `get_*`           |
+
+---
+
 ## TypeScript Usage
 
 ```typescript

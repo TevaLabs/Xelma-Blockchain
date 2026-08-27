@@ -648,9 +648,9 @@ fn early_cashout_disabled_rejects_call() {
     // Advance to Running phase
     env.ledger().with_mut(|li| li.sequence_number = 7);
 
-    // Feature not enabled — should fail
+    // Feature not enabled — should fail with EarlyCashoutDisabled
     let result = client.try_cash_out_early(&alice);
-    assert!(result.is_err());
+    assert_eq!(result, Err(Ok(ContractError::EarlyCashoutDisabled)));
 }
 
 /// Row 15 — Early cash-out during Betting phase: rejected.
@@ -668,7 +668,7 @@ fn early_cashout_betting_phase_rejected() {
 
     // Still in Betting phase (ledger 0 < bet_end_ledger 6)
     let result = client.try_cash_out_early(&alice);
-    assert!(result.is_err());
+    assert_eq!(result, Err(Ok(ContractError::InvalidPhaseForCashout)));
 }
 
 /// Row 16 — Early cash-out after round ended: rejected.
@@ -688,7 +688,7 @@ fn early_cashout_after_end_rejected() {
     env.ledger().with_mut(|li| li.sequence_number = 13);
 
     let result = client.try_cash_out_early(&alice);
-    assert!(result.is_err());
+    assert_eq!(result, Err(Ok(ContractError::InvalidPhaseForCashout)));
 }
 
 /// Row 17 — Early cash-out on Precision round: rejected.
@@ -708,7 +708,7 @@ fn early_cashout_precision_mode_rejected() {
     env.ledger().with_mut(|li| li.sequence_number = 7);
 
     let result = client.try_cash_out_early(&alice);
-    assert!(result.is_err());
+    assert_eq!(result, Err(Ok(ContractError::WrongModeForCashout)));
 }
 
 /// Row 18 — Conservation with fee enabled: early cash-out forfeit goes to
@@ -831,7 +831,7 @@ fn early_cashout_no_position_rejected() {
     // Bob never placed a bet
     env.ledger().with_mut(|li| li.sequence_number = 7);
     let result = client.try_cash_out_early(&bob);
-    assert!(result.is_err());
+    assert_eq!(result, Err(Ok(ContractError::PositionNotFound)));
 }
 
 /// Row 21 — Double cash-out: second call fails (position already removed).
@@ -852,7 +852,54 @@ fn early_cashout_double_call_rejected() {
 
     // Second call should fail — position was removed
     let result = client.try_cash_out_early(&alice);
-    assert!(result.is_err());
+    assert_eq!(result, Err(Ok(ContractError::PositionNotFound)));
+}
+
+/// Early cash-out rejected when contract is paused.
+#[test]
+fn early_cashout_paused_rejected() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    client.mint_initial(&alice);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &100, &BetSide::Up);
+    set_ec_bps_now(&env, &contract_id, 500);
+
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+    client.pause_contract();
+
+    let result = client.try_cash_out_early(&alice);
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+}
+
+/// Invariant: cashout + forfeit == stake verified explicitly.
+#[test]
+fn test_early_cashout_conservation_invariant() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    client.mint_initial(&alice);
+
+    client.create_round(&1_000u128, &None);
+    let stake = 100i128;
+    client.place_bet(&alice, &stake, &BetSide::Up);
+    let penalty_bps = 1000u32; // 10%
+    set_ec_bps_now(&env, &contract_id, penalty_bps);
+
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+
+    let expected_forfeit = stake * (penalty_bps as i128) / 10000i128;
+    let expected_cashout = stake - expected_forfeit;
+    assert_eq!(expected_cashout + expected_forfeit, stake, "cashout + forfeit == stake invariant holds");
+
+    client.cash_out_early(&alice);
+
+    let pending = client.get_pending_winnings(&alice);
+    assert_eq!(pending, expected_cashout);
 }
 
 // ─── Small-random coverage on top of the fixed matrix ───────────────────────

@@ -662,7 +662,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         return Err(ContractError::OracleNetworkMismatch);
     }
 
-    // ── Timestamp freshness ───────────────────────────────────────────────
+    // ── Timestamp window check (round-relative economic window) ───────────
     let current_time = env.ledger().timestamp();
     if payload.timestamp > current_time {
         _emit_action_rejected(
@@ -673,14 +673,61 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         );
         return Err(ContractError::FutureOracleData);
     }
-    if current_time > payload.timestamp + 300 {
+
+    let skew: u64 = env
+        .storage()
+        .instance()
+        .get(&symbol_short!("otskew"))
+        .unwrap_or(DEFAULT_ORACLE_TIMESTAMP_SKEW);
+
+    let round_start = round.start_timestamp;
+    let round_duration_ledgers = (round.end_ledger)
+        .checked_sub(round.start_ledger)
+        .ok_or(ContractError::Overflow)?;
+    let round_end_estimate = round_start
+        .checked_add((round_duration_ledgers as u64).checked_mul(SECONDS_PER_LEDGER).ok_or(ContractError::Overflow)?)
+        .ok_or(ContractError::Overflow)?;
+
+    let lower_bound = round_start.saturating_sub(skew);
+    let upper_bound = round_end_estimate.saturating_add(skew);
+
+    if payload.timestamp < lower_bound || payload.timestamp > upper_bound {
         _emit_action_rejected(
             &env,
             &oracle,
             symbol_short!("resolve"),
-            ContractError::StaleOracleData,
+            ContractError::OracleTimestampOutsideWindow,
         );
-        return Err(ContractError::StaleOracleData);
+        return Err(ContractError::OracleTimestampOutsideWindow);
+    }
+
+    // ── Oracle heartbeat health gate (parity with single-oracle) ─────────
+    let hb_config = crate::admin::_load_hb_config(&env);
+    if hb_config.strict_mode {
+        let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
+        if hb_blocked {
+            if hb_config.override_armed {
+                crate::admin::_consume_hb_override(&env);
+                #[allow(deprecated)]
+                env.events().publish(
+                    (symbol_short!("oracle"), symbol_short!("hoverride")),
+                    (round.round_id,),
+                );
+            } else {
+                #[allow(deprecated)]
+                env.events().publish(
+                    (symbol_short!("oracle"), symbol_short!("hblocked")),
+                    (round.round_id,),
+                );
+                _emit_action_rejected(
+                    &env,
+                    &oracle,
+                    symbol_short!("resolve"),
+                    ContractError::OracleNotLive,
+                );
+                return Err(ContractError::OracleNotLive);
+            }
+        }
     }
 
     // ── Nonce replay protection ───────────────────────────────────────────

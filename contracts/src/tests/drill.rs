@@ -65,6 +65,10 @@ fn test_claims_only_matrix_verification() {
     assert_eq!(client.get_runtime_mode(), 1u32);
     assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);
 
+    let health = client.get_protocol_health();
+    assert_eq!(health.status_code, 6u32); // CLAIMS_ONLY
+    assert!(!health.paused);
+
     // 1. Deposits / Initial Mint -> BLOCKED
     let user3 = Address::generate(&env);
     let mint_res = client.try_mint_initial(&user3);
@@ -218,6 +222,8 @@ fn test_emergency_incident_simulation_lifecycle() {
     // Step B: INCIDENT DETECTED - Transition to ClaimsOnly Mode
     client.set_runtime_mode(&1u32);
     assert_eq!(client.get_runtime_mode(), 1u32);
+    let health_incident = client.get_protocol_health();
+    assert_eq!(health_incident.status_code, 6u32);
 
     // Step C: Verify Incident Protections Active
     // New users cannot join

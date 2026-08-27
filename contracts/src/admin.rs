@@ -815,6 +815,8 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
     };
 
     let schema_version = _schema_version(&env).unwrap_or(1);
+    let mode = _current_mode(&env);
+    let is_claims_only = mode == RuntimeMode::ClaimsOnly;
 
     let mut issues: u32 = 0;
     if paused {
@@ -831,6 +833,8 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         1u32 // PAUSED
     } else if issues > 1 {
         5u32 // MULTIPLE_ISSUES
+    } else if is_claims_only {
+        6u32 // CLAIMS_ONLY
     } else if !oracle_live {
         2u32 // ORACLE_STALE
     } else if has_active_round && active_round_phase == 3 {

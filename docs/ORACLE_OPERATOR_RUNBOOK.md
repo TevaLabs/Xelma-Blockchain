@@ -404,17 +404,29 @@ and requires a quorum of feeds to agree.
    b. Checks `n >= min_observations` and `n <= 32` (gas cap).
    c. Sorts prices, computes **median**.
    d. Applies deviation guardrail (same `OracleMaxDeviationBps` as legacy).
-   e. **Outlier rejection**: each feed's price is compared to the median.
+   e. **Parity protections**:
+      - **Domain binding**: `network_id` and `contract_addr` verified against execution context.
+      - **Nonce tracking**: `(round_id, nonce)` uniqueness enforced against `ConsumedOracleNonce`.
+      - **Round binding**: `payload.round_id` must match `round.start_ledger`.
+      - **Timestamp window**: must fall inside `[start - skew, end + skew]` (`OracleTimestampOutsideWindow`).
+      - **Heartbeat gate**: strict mode requires live heartbeat (`OracleNotLive`) unless admin override is armed.
+   f. **Outlier rejection**: each feed's price is compared to the median.
       If `|price - median| / median * 10000 > outlier_threshold_bps`,
       the observation is rejected.
-   f. **Quorum check**: surviving count must be `>= quorum_threshold`.
-   g. If quorum passes, the **median price** is used for settlement.
+   g. **Quorum check**: surviving count must be `>= quorum_threshold`.
+   h. If quorum passes, the **median price** is used for settlement.
 
 5. **Events emitted:**
    - `("oracle", "multisum")` — summary of multi-feed resolution (round_id,
      observation_count, survivor_count, median_price, quorum_threshold).
    - `("round", "resolved")` — standard resolved event.
    - If quorum fails: `("oracle", "nofed")` — failure details.
+
+**Demo scenario:**
+Run the end-to-end multi-feed demo scenario via:
+```bash
+./scripts/demo_scenarios/scenario_multi_feed.sh
+```
 
 **Example multi-feed payload (3 feeds):**
 
