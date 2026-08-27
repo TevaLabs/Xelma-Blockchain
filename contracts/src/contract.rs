@@ -254,6 +254,36 @@ impl VirtualTokenContract {
         admin::get_hb_grace_seconds(env)
     }
 
+    /// Alias: arms a one-shot override to bypass the heartbeat health gate (Issue #264, #398).
+    pub fn arm_oracle_heartbeat_override(env: Env) -> Result<(), ContractError> {
+        admin::arm_hb_override(env)
+    }
+
+    /// Alias: returns whether the heartbeat override is currently armed.
+    pub fn is_oracle_heartbeat_override_armed(env: Env) -> bool {
+        admin::get_hb_override_armed(env)
+    }
+
+    /// Alias: enables or disables strict mode for oracle heartbeat health.
+    pub fn set_oracle_heartbeat_strict_mode(env: Env, enabled: bool) -> Result<(), ContractError> {
+        admin::set_hb_strict_mode(env, enabled)
+    }
+
+    /// Alias: returns whether oracle heartbeat strict mode is enabled.
+    pub fn get_oracle_heartbeat_strict_mode(env: Env) -> bool {
+        admin::get_hb_strict_mode(env)
+    }
+
+    /// Alias: sets the heartbeat grace period in seconds.
+    pub fn set_oracle_heartbeat_grace(env: Env, seconds: u64) -> Result<(), ContractError> {
+        admin::set_hb_grace_seconds(env, seconds)
+    }
+
+    /// Alias: returns the heartbeat grace period in seconds.
+    pub fn get_oracle_heartbeat_grace(env: Env) -> u64 {
+        admin::get_hb_grace_seconds(env)
+    }
+
     /// Records an oracle heartbeat (oracle only).
     pub fn update_oracle_heartbeat(env: Env, status: u32) -> Result<(), ContractError> {
         admin::update_oracle_heartbeat(env, status)

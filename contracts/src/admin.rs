@@ -367,6 +367,13 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
     let override_key = DataKeyCore::OracleDeviationOverrideArmed;
     env.storage().persistent().set(&override_key, &true);
     _extend_persistent_ttl(&env, &override_key);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("oracle"), symbol_short!("arm_ovr")),
+        (),
+    );
+
     Ok(())
 }
 
@@ -623,6 +630,13 @@ pub fn arm_hb_override(env: Env) -> Result<(), ContractError> {
     let mut config = _load_hb_config(&env);
     config.override_armed = true;
     _save_hb_config(&env, &config);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("oracle"), symbol_short!("hb_arm_ovr")),
+        (),
+    );
+
     Ok(())
 }
 

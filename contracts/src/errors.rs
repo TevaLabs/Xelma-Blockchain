@@ -60,7 +60,7 @@ pub enum ContractError {
     OracleTimestampOutsideWindow = 66,
     /// Pending winnings entry exists but has not yet reached the configured
     /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 86,
+    PendingWinningsNotExpired = 61,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
@@ -89,20 +89,6 @@ pub enum ContractError {
     PendingWinningsNotFound = 77,
     /// Pending winnings expiry is not configured (value is 0).
     ExpiryNotConfigured = 78,
-    /// Participant is blocked by the active allowlist or denylist policy.
-    AccessDenied = 79,
-    /// Governance proposal does not exist.
-    ProposalNotFound = 80,
-    /// Governance proposal is past its execution deadline.
-    ProposalExpired = 81,
-    /// Governance proposal cannot transition from its current state.
-    GovInvalidState = 82,
-    /// Caller is not authorized by the configured governance policy.
-    GovUnauthorized = 83,
-    /// Requested action is not valid in the round's current lifecycle phase.
-    IllegalPhaseTransition = 84,
-    /// Oracle heartbeat failed the configured freshness or health policy.
-    OracleHeartbeatUnhealthy = 85,
     /// Early cash-out feature is disabled or not configured
     EarlyCashoutDisabled = 79,
     /// User does not have an active position to cash out
@@ -111,30 +97,9 @@ pub enum ContractError {
     InvalidPhaseForCashout = 81,
     /// Early cash-out is only supported for UpDown rounds
     WrongModeForCashout = 82,
-    ProposalNotFound = 83,
-    ProposalExpired = 84,
-    GovInvalidState = 85,
-    GovUnauthorized = 86,
-    /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
-    ClaimBatchTooLarge = 87,
-    /// claim_many batch contains the same address more than once (Issue #277)
-    DuplicateClaimAddress = 88,
-    /// Caller is denylisted, or allowlist mode is enabled and caller is not
-    /// allowlisted (Issue #274 access-control gate).
-    AccessDenied = 89,
-    /// Oracle heartbeat is not live and strict mode blocks single-feed
-    /// settlement (Issue #264 sibling check for `resolve_round`).
-    OracleHeartbeatUnhealthy = 90,
-    /// The dispute window for `void_round` has expired, or dispute windows
-    /// are not configured (`dispute_ledgers == 0`).
-    DisputeWindowExpired = 91,
-    /// `finalize_round` was called before the dispute window elapsed.
-    ClaimLocked = 92,
-    /// A round cannot be created because the current ledger sequence has
-    /// already backed another round's `start_ledger`.
-    ///
-    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
-    /// sequence would make a payload signed for the earlier round valid for
-    /// the later one. Retry once the ledger has advanced.
-    RoundStartLedgerReused = 93,
+    /// Oracle heartbeat is unhealthy and blocks settlement (Issue #264).
+    /// Returned by the always-on heartbeat gate (`_enforce_heartbeat_health`)
+    /// regardless of strict-mode setting — covers no heartbeat, offline status,
+    /// and stale-beyond-grace conditions.
+    OracleHeartbeatUnhealthy = 83,
 }
