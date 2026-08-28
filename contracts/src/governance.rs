@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MIT
 //! Dual-Approval Governance Mechanism for Critical Administrative Actions (Issue #272).
 
-use crate::admin::{_require_supported_schema, _set_mode};
-use crate::common::{_emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_PROPOSAL_TTL_LEDGERS};
+use crate::admin::{_ensure_not_paused, _require_supported_schema, _set_mode};
+use crate::common::{
+    _emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_PROPOSAL_TTL_LEDGERS,
+};
 use crate::errors::ContractError;
-use crate::types::{DataKeyCore, DataKeyScoped, GovAction, GovProposal, GovProposalStatus, RuntimeMode};
+use crate::types::{
+    DataKeyCore, DataKeyScoped, GovAction, GovProposal, GovProposalStatus, RuntimeMode,
+};
 use soroban_sdk::{symbol_short, Address, Env};
 
 /// Returns whether `user` is an authorized governance administrator or approver.
@@ -154,7 +158,12 @@ pub fn propose(
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("gov"), symbol_short!("proposed")),
-        (proposal_id, proposer, _action_code(&action), expires_at_ledger),
+        (
+            proposal_id,
+            proposer,
+            _action_code(&action),
+            expires_at_ledger,
+        ),
     );
 
     Ok(proposal_id)
@@ -272,6 +281,27 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
         GovProposalStatus::Approved => {}
     }
 
+    // Pause rules must be respected on execute. Emergency pause/unpause must
+    // remain callable while the protocol is fully paused, but every other
+    // protected action is gated by the same policy that applies to the direct
+    // admin entrypoints (AdminConfig is blocked by `FullyPaused`).
+    if !matches!(
+        proposal.action,
+        GovAction::PauseProtocol | GovAction::UnpauseProtocol
+    ) {
+        _ensure_not_paused(&env).inspect_err(|&e| {
+            _emit_action_rejected(&env, &executor, symbol_short!("execute"), e);
+        })?;
+    }
+
+    // CEI: mark the proposal Executed before performing any external
+    // interaction so a racing/reentrant caller can never double-execute (or
+    // cancel) a proposal whose effects have begun. On a failed action Soroban
+    // reverts this write atomically, so it cannot burn spent approvals.
+    proposal.status = GovProposalStatus::Executed;
+    env.storage().persistent().set(&p_key, &proposal);
+    _extend_persistent_ttl(&env, &p_key);
+
     // Execute the action payload
     match &proposal.action {
         GovAction::PauseProtocol => {
@@ -294,22 +324,24 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
             _execute_withdraw_fee(&env, &recipient, *amount)?;
         }
         GovAction::SetTreasuryAddress(treasury) => {
-            env.storage().persistent().set(&DataKeyCore::ProtocolFeeTreasury, &treasury);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::ProtocolFeeTreasury, &treasury);
             _extend_persistent_ttl(&env, &DataKeyCore::ProtocolFeeTreasury);
         }
         GovAction::SetAdmin(new_admin) => {
-            env.storage().persistent().set(&DataKeyCore::Admin, &new_admin);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::Admin, &new_admin);
             _extend_persistent_ttl(&env, &DataKeyCore::Admin);
         }
         GovAction::SetOracle(new_oracle) => {
-            env.storage().persistent().set(&DataKeyCore::Oracle, &new_oracle);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::Oracle, &new_oracle);
             _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
         }
     }
-
-    proposal.status = GovProposalStatus::Executed;
-    env.storage().persistent().set(&p_key, &proposal);
-    _extend_persistent_ttl(&env, &p_key);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -401,7 +433,8 @@ pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
     let mut proposal: GovProposal = env.storage().persistent().get(&p_key)?;
 
     let current_ledger = env.ledger().sequence();
-    if (proposal.status == GovProposalStatus::Pending || proposal.status == GovProposalStatus::Approved)
+    if (proposal.status == GovProposalStatus::Pending
+        || proposal.status == GovProposalStatus::Approved)
         && current_ledger > proposal.expires_at_ledger
     {
         proposal.status = GovProposalStatus::Expired;
