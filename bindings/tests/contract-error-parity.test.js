@@ -35,6 +35,11 @@ while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
 const rustCodes = new Map(rustVariants.map(v => [v.code, v.name]));
 
 describe("Contract Error Parity", () => {
+  it("has unique Rust discriminants", () => {
+    const codes = rustVariants.map(({ code }) => code);
+    expect(new Set(codes).size).toBe(codes.length);
+  });
+
   it("has no missing error codes in TS", () => {
     const missingInTS = [];
     for (const [code, name] of rustCodes) {
