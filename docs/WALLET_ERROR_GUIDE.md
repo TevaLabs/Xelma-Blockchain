@@ -1,112 +1,85 @@
 # Wallet Error Integration Guide
 
-This guide maps each smart‑contract error defined in `contracts/src/errors.rs` to a consumer‑friendly message and usage example for wallet integrations (e.g., Freighter).
+This guide maps each smart-contract error defined in `contracts/src/errors.rs` to a consumer-friendly message and usage example for wallet integrations.
 
 ## Error Table
-| Hex Code | Decimal | Enum Identifier | Technical Meaning | Consumer‑Facing Message |
-|----------|---------|----------------|-------------------|------------------------|
-| `0x01` | 1 | AlreadyInitialized | Contract has already been initialized | "Contract already initialized."
-| `0x02` | 2 | AdminNotSet | Admin address not set - call initialize first | "Admin not set. Initialize contract first."
-| `0x03` | 3 | OracleNotSet | Oracle address not set - call initialize first | "Oracle not set. Initialize contract first."
-| `0x04` | 4 | UnauthorizedAdmin | Only admin can perform this action | "Admin only action."
-| `0x05` | 5 | UnauthorizedOracle | Only oracle can perform this action | "Oracle only action."
-| `0x06` | 6 | InvalidBetAmount | Bet amount must be greater than zero | "Bet amount must be > 0."
-| `0x07` | 7 | NoActiveRound | No active round exists | "No active round."
-| `0x08` | 8 | RoundEnded | Round has already ended | "Round already ended."
-| `0x09` | 9 | InsufficientBalance | User has insufficient balance | "Insufficient balance."
-| `0x0a` | 10 | AlreadyBet | User has already placed a bet in this round | "Bet already placed this round."
-| `0x0b` | 11 | Overflow | Arithmetic overflow occurred | "Arithmetic overflow."
-| `0x0c` | 12 | InvalidPrice | Invalid price value | "Invalid price."
-| `0x0d` | 13 | InvalidDuration | Invalid duration value | "Invalid duration."
-| `0x0e` | 14 | InvalidMode | Invalid round mode (must be 0 or 1) | "Invalid round mode."
-| `0x0f` | 15 | WrongModeForPrediction | Wrong prediction type for current round mode | "Wrong prediction type for round mode."
-| `0x10` | 16 | RoundNotEnded | Round has not reached end_ledger yet | "Round not yet ended."
-| `0x11` | 17 | InvalidPriceScale | Invalid price scale (must represent 4 decimal places) | "Invalid price scale."
-| `0x12` | 18 | StaleOracleData | Oracle data is too old (STALE) | "Stale oracle data."
-| `0x13` | 19 | InvalidOracleRound | Oracle payload round_id doesn't match ActiveRound | "Mismatched oracle round ID."
-| `0x14` | 20 | RoundAlreadyActive | An active round already exists and cannot be overwritten | "Active round already exists."
-| `0x15` | 21 | AdminIsOracle | Admin and Oracle addresses cannot be identical | "Admin cannot be Oracle."
-| `0x16` | 22 | ContractPaused | Contract is paused for emergency recovery | "Contract paused."
-| `0x17` | 23 | WindowOutOfRange | One or more window values exceed configured maximum bounds | "Window value out of range."
-| `0x18` | 24 | FutureOracleData | Oracle payload timestamp is in the future | "Future oracle timestamp."
-| `0x19` | 25 | PayoutOverflow | Arithmetic overflow in payout accumulation — no funds moved | "Payout overflow."
-| `0x1a` | 26 | RoundCancelled | Round has been cancelled and cannot be resolved | "Round cancelled."
-| `0x1b` | 27 | RoundNotCancellable | Round cannot be cancelled (no active round or already resolved) | "Round not cancellable."
-| `0x1c` | 28 | StakeExceedsMax | Bet amount exceeds the configured maximum stake | "Bet exceeds max stake."
-| `0x1d` | 29 | ExposureCapExceeded | User's cumulative exposure in this round exceeds the configured cap | "Exposure cap exceeded."
-| `0x1e` | 30 | PendingWinningsCapExceeded | Pending winnings accumulation would exceed the configured cap | "Pending winnings cap exceeded."
-| `0x1f` | 31 | StartPriceTooLow | Start price is below the minimum allowed value | "Start price too low."
-| `0x20` | 32 | StartPriceTooHigh | Start price exceeds the maximum allowed value | "Start price too high."
-| `0x21` | 33 | OracleNonceReused | Oracle payload nonce was already consumed for this round (replay) | "Oracle nonce reused."
-| `0x22` | 34 | InsufficientParticipants | Round has fewer participants than the configured minimum for competitive settlement | "Insufficient participants."
-| `0x23` | 35 | InvalidMinParticipants | Minimum participants value is out of valid range (must be 1–10000) | "Invalid min participants."| `0x24` | 36 | InvalidOracleStatus | Oracle heartbeat status is out of range (must be 0, 1, or 2) | "Invalid oracle status." |
-| `0x42` | 66 | OracleNotLive | Oracle heartbeat is not live and strict mode blocks settlement | "Oracle heartbeat not live." | `0x25` | 37 | InvalidStaleThreshold | Oracle stale threshold is out of valid range (must be 60–86400 seconds) | "Invalid stale threshold."
-| `0x26` | 38 | InvalidOracleDeviationBps | Oracle max deviation bps is invalid (must be > 0) | "Invalid oracle deviation BPS."
-| `0x27` | 39 | OracleDeviationExceeded | Oracle final price deviates beyond configured threshold | "Oracle deviation exceeded."
-| `0x28` | 40 | UnsupportedSchemaVersion | Stored schema version is unknown or unsupported by this contract build | "Unsupported schema version."
-| `0x29` | 41 | InvalidMigrationPath | Migration path is invalid for the stored schema version | "Invalid migration path."
-| `0x2a` | 42 | MigrationActiveRound | Migration cannot run while a round is active | "Migration not allowed during active round."
-| `0x2b` | 43 | CommitmentNotFound | Commitment for precision prediction not found | "Precision commitment not found."
-| `0x2c` | 44 | AlreadyRevealed | Precision prediction has already been revealed | "Prediction already revealed."
-| `0x2d` | 45 | InvalidRevealWindow | Attempted to reveal prediction outside the valid window | "Invalid reveal window."
-| `0x2e` | 46 | HashMismatch | Revealed prediction hash does not match committed hash | "Hash mismatch."
-| `0x2f` | 47 | PrecisionParticipantCapExceeded | Precision round has reached the configured participant cap | "Precision participant cap exceeded."
-| `0x30` | 48 | InvalidPrecisionParticipantCap | Precision participant cap is out of range (must be 1–10000) | "Invalid precision participant cap."
-| `0x3f` | 63 | InvalidCommitment | Commitment hash is malformed (e.g. all-zero placeholder) | "Invalid commitment hash."
-| `0x40` | 64 | InvalidSalt | Reveal salt fails minimum entropy rules | "Invalid reveal salt."
-| `0x41` | 65 | NoRoundTemplate | No round template configured | "No round template."
-| `0x4f` | 79 | EarlyCashoutDisabled | Early cash-out is disabled or penalty rate is unset | "Early cash-out is currently disabled."
-| `0x50` | 80 | PositionNotFound | User has no active position in the round to cash out | "No active position found to cash out."
-| `0x51` | 81 | InvalidPhaseForCashout | Early cash-out is only permitted during the running phase | "Early cash-out only available during running phase."
-| `0x52` | 82 | WrongModeForCashout | Early cash-out is only supported for UpDown rounds | "Early cash-out is not supported in Precision mode."
+| Hex Code | Decimal | Enum Identifier | Technical Meaning | Consumer-Facing Message |
+|----------|---------|-----------------|------------------|------------------------|
+| `0x01` | 1 | AlreadyInitialized | Contract has already been initialized | "Contract already initialized." |
+| `0x02` | 2 | AdminNotSet | Admin address is not set | "Admin not set. Initialize contract first." |
+| `0x03` | 3 | OracleNotSet | Oracle address is not set | "Oracle not set. Initialize contract first." |
+| `0x06` | 6 | InvalidBetAmount | Bet amount must be greater than zero | "Bet amount must be > 0." |
+| `0x07` | 7 | NoActiveRound | No active round exists | "No active round." |
+| `0x08` | 8 | RoundEnded | Round has already ended | "Round already ended." |
+| `0x09` | 9 | InsufficientBalance | User has insufficient balance | "Insufficient balance." |
+| `0x0a` | 10 | AlreadyBet | User already placed a bet | "Bet already placed this round." |
+| `0x0b` | 11 | Overflow | Arithmetic overflow occurred | "Arithmetic overflow." |
+| `0x0c` | 12 | InvalidPrice | Invalid price value | "Invalid price." |
+| `0x0d` | 13 | InvalidDuration | Invalid duration value | "Invalid duration." |
+| `0x0e` | 14 | InvalidMode | Invalid round mode | "Invalid round mode." |
+| `0x0f` | 15 | WrongModeForPrediction | Wrong prediction type for the round mode | "Wrong prediction type for round mode." |
+| `0x10` | 16 | RoundNotEnded | Round has not reached its end ledger | "Round not yet ended." |
+| `0x12` | 18 | StaleOracleData | Oracle data is too old | "Stale oracle data." |
+| `0x13` | 19 | InvalidOracleRound | Oracle round does not match the active round | "Mismatched oracle round ID." |
+| `0x14` | 20 | RoundAlreadyActive | An active round already exists | "Active round already exists." |
+| `0x16` | 22 | ContractPaused | Contract is paused | "Contract paused." |
+| `0x17` | 23 | WindowOutOfRange | Window value exceeds configured bounds | "Window value out of range." |
+| `0x18` | 24 | FutureOracleData | Oracle timestamp is in the future | "Future oracle timestamp." |
+| `0x19` | 25 | PayoutOverflow | Payout arithmetic overflowed | "Payout overflow." |
+| `0x1b` | 27 | RoundNotCancellable | Round cannot be cancelled | "Round not cancellable." |
+| `0x1c` | 28 | StakeExceedsMax | Bet exceeds maximum stake | "Bet exceeds max stake." |
+| `0x1d` | 29 | ExposureCapExceeded | User exposure exceeds its cap | "Exposure cap exceeded." |
+| `0x1e` | 30 | PendingWinningsCapExceeded | Pending winnings exceed their cap | "Pending winnings cap exceeded." |
+| `0x1f` | 31 | InvalidStartPrice | Start price is invalid | "Invalid start price." |
+| `0x21` | 33 | OracleNonceReused | Oracle nonce was already consumed | "Oracle nonce reused." |
+| `0x23` | 35 | InvalidMinParticipants | Minimum participants value is invalid | "Invalid min participants." |
+| `0x26` | 38 | InvalidPrecisionCap | Precision participant cap is invalid | "Invalid precision participant cap." |
+| `0x27` | 39 | PrecisionCapExceeded | Precision participant cap was reached | "Precision participant cap exceeded." |
+| `0x29` | 41 | OracleDeviationExceeded | Oracle price deviation exceeds the configured threshold | "Oracle deviation exceeded." |
+| `0x2a` | 42 | UnsupportedSchemaVersion | Stored schema version is unsupported | "Unsupported schema version." |
+| `0x2c` | 44 | MigrationActiveRound | Migration is blocked during an active round | "Migration not allowed during active round." |
+| `0x2d` | 45 | CommitmentNotFound | Precision commitment was not found | "Precision commitment not found." |
+| `0x2e` | 46 | AlreadyRevealed | Prediction was already revealed | "Prediction already revealed." |
+| `0x2f` | 47 | InvalidRevealWindow | Reveal was attempted outside the valid window | "Invalid reveal window." |
+| `0x30` | 48 | HashMismatch | Revealed prediction does not match its commitment | "Hash mismatch." |
+| `0x31` | 49 | OracleNetworkMismatch | Oracle payload targets another network | "Oracle network mismatch." |
+| `0x33` | 51 | InvalidProtocolFeeBps | Protocol fee is outside the allowed range | "Invalid protocol fee." |
+| `0x35` | 53 | MintLimitExceeded | Mint rate limit was exceeded | "Mint limit exceeded." |
+| `0x36` | 54 | NoPendingRotation | No pending oracle rotation exists | "No pending oracle rotation." |
+| `0x37` | 55 | RotationDelayNotElapsed | Oracle rotation delay has not elapsed | "Oracle rotation delay has not elapsed." |
+| `0x3e` | 62 | InvalidArchiveRetention | Archive retention limit is invalid | "Invalid archive retention limit." |
+| `0x3f` | 63 | InvalidCommitment | Commitment hash is malformed | "Invalid commitment hash." |
+| `0x40` | 64 | InvalidSalt | Reveal salt fails minimum entropy rules | "Invalid reveal salt." |
+| `0x41` | 65 | NoRoundTemplate | No round template is configured | "No round template." |
+| `0x43` | 67 | EpochBudgetExceeded | Epoch mint budget was fully consumed | "Epoch mint budget exceeded." |
+| `0x44` | 68 | OracleNotLive | Oracle heartbeat is not live | "Oracle heartbeat not live." |
+| `0x45` | 69 | InvalidPayoutPolicy | Precision payout policy is invalid | "Invalid payout policy." |
+| `0x46` | 70 | BelowMinBet | Stake is below the configured minimum bet | "Bet is below the minimum amount." |
+| `0x47` | 71 | InsufficientOracleQuorum | Too few observations survived outlier rejection | "Insufficient oracle quorum." |
+| `0x48` | 72 | TooFewObservations | Oracle payload contains too few observations | "Too few oracle observations." |
+| `0x49` | 73 | OracleOutlierRejected | Oracle outlier rejection prevented settlement | "Oracle outlier rejected." |
+| `0x4a` | 74 | DuplicateOracleSource | Oracle payload contains duplicate sources | "Duplicate oracle source." |
+| `0x4b` | 75 | InvalidObservationOrder | Oracle observations are not in the required order | "Invalid oracle observation order." |
+| `0x4c` | 76 | UnsupportedDataKeyForTtlTouch | Data key is not supported for TTL touch | "Unsupported data key for TTL touch." |
+| `0x4d` | 77 | PendingWinningsNotFound | Pending winnings entry does not exist | "Pending winnings not found." |
+| `0x4e` | 78 | ExpiryNotConfigured | Pending winnings expiry is not configured | "Pending winnings expiry is not configured." |
+| `0x4f` | 79 | EarlyCashoutDisabled | Early cash-out is disabled | "Early cash-out is currently disabled." |
+| `0x50` | 80 | PositionNotFound | User has no active position to cash out | "No active position found to cash out." |
+| `0x51` | 81 | InvalidPhaseForCashout | Cash-out is outside the running phase | "Early cash-out only available during running phase." |
+| `0x52` | 82 | WrongModeForCashout | Early cash-out is only supported for UpDown rounds | "Early cash-out is not supported in Precision mode." |
 
 ## Integration Walkthroughs
-### 1. Handling errors in a Freighter wallet
+
 ```ts
 import { ContractErrorDecoder } from "@xelma/contracts";
 
 function handleError(error: any) {
   const code = error.result?.xdr?.value?.val?.code ?? 0;
-  const message = ContractErrorDecoder(code);
-  alert(message);
+  alert(ContractErrorDecoder(code));
 }
 ```
 
-### 2. Displaying user‑friendly messages in a React UI
-```tsx
-import { ContractErrorDecoder } from "@xelma/contracts";
-
-function ErrorBanner({code}: {code: number}) {
-  return <div className="error">{ContractErrorDecoder(code)}</div>;
-}
-```
-
-### 3. Unit testing error mapping
-```ts
-import { ContractErrorDecoder } from "@xelma/contracts";
-import { expect } from "chai";
-
-describe("ContractErrorDecoder", () => {
-  it("maps known codes", () => {
-    expect(ContractErrorDecoder(1)).to.equal("Contract already initialized.");
-    expect(ContractErrorDecoder(22)).to.equal("Contract paused.");
-  });
-  it("handles unknown codes", () => {
-    expect(ContractErrorDecoder(999)).to.match(/Unknown error/);
-  });
-});
-```
-
-### 4. Automated UI test with Selenium (JavaScript)
-```js
-await driver.findElement(By.id("betButton")).click();
-await driver.wait(until.elementLocated(By.css(".error")));
-const errorText = await driver.findElement(By.css(".error")).getText();
-assert.include(errorText, "Insufficient balance");
-```
-
-### 5. Monitoring contract upgrades for documentation drift
-Add the script `scripts/check-doc-drift.js` to your CI pipeline. If the script exits with a non‑zero status, the CI job fails, prompting a documentation update before merging.
+Use `decodeContractError(code)` when the wallet needs the numeric code and enum identifier, and use `formatContractError(code)` for a compact user-facing fallback. Unknown codes must remain actionable rather than being silently discarded.
 
 ---
-*Last updated: 2026‑06‑27*
+*Last updated: 2026-08-28*

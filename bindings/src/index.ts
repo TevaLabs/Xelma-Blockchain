@@ -551,6 +551,7 @@ export const ContractError = {
    * No pending oracle rotation proposal to accept or cancel
    */
   54: {message:"NoPendingRotation"},
+  55: {message:"RotationDelayNotElapsed"},
   /**
    * Invalid archive retention limit
    */
@@ -558,7 +559,6 @@ export const ContractError = {
   /**
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
-  61: {message:"PendingWinningsNotExpired"},
   63: {message:"InvalidCommitment"},
   64: {message:"InvalidSalt"},
   65: {message:"NoRoundTemplate"},
@@ -579,6 +579,7 @@ export const ContractError = {
   80: {message:"PositionNotFound"},
   81: {message:"InvalidPhaseForCashout"},
   82: {message:"WrongModeForCashout"},
+  83: {message:"PendingWinningsNotExpired"},
 }
 
 /**
