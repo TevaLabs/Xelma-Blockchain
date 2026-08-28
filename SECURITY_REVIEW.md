@@ -43,7 +43,7 @@ Out of scope:
 | Metric | Current value | Notes |
 | --- | ---: | --- |
 | Contract implementation size | 1,304 LOC | `contracts/src/contract.rs` |
-| Error enum size | 25 variants | `contracts/src/errors.rs` |
+| Error enum size | 29 variants | `contracts/src/errors.rs` |
 | Type definitions size | 105 LOC | `contracts/src/types.rs` |
 | TypeScript bindings size | 765 LOC | `bindings/src/index.ts` |
 | Test modules | 13 | All modules included by `contracts/src/tests/mod.rs` |
@@ -125,7 +125,8 @@ Soroban-specific risk considerations:
 - **Auth:** state-changing role/user operations call `require_auth()` on the expected `Address`; pause/unpause and windows are admin-gated, resolution is oracle-gated, user actions are user-gated.
 - **Storage:** persistent storage uses indexed per-user keys plus `RoundParticipants(round_id)` to avoid rewriting full maps on each bet, with legacy map fallbacks for migration.
 - **Arithmetic:** critical arithmetic uses checked operations. Payout paths increasingly route through `payout_add` / `payout_mul`, but one Precision indexed path still returns generic `Overflow` rather than `PayoutOverflow`.
-- **Oracle inputs:** `OraclePayload` enforces non-zero price, timestamp not in the future, 300-second freshness, and round binding against `Round.start_ledger`.
+- **Oracle inputs:** `OraclePayload` enforces non-zero price, timestamp not in the future, round binding against `Round.start_ledger`, and (optionally) an ed25519 attestation. When an attestation key is configured (`set_attestation_key`), every payload must carry a detached signature over a domain-separated message (`XELMA_ORACLE_ATTESTATION_V1` + XDR of network_id, contract_addr, round_id, price, timestamp, nonce); a missing/bad signature is rejected fail-closed — on-chain a failed `ed25519_verify` traps the transaction before any state change (`settlement.rs` attestation gate; see `contracts/src/tests/attestation.rs`). When no key is configured the gate is a no-op, so behaviour is identical to the pre-attestation ABI (Issue #263).
+- **Attestation threat note:** the attestation (Issue #263) binds the payload to this network, contract, round, price, timestamp, and nonce, and is meant for deployments where the off-chain signer (e.g. HSM) differs from the Soroban account that submits `resolve_round`. It does **not** vouch for price *correctness* — a compromised or faulty signer can still attest wrong prices (see SR-2026-04-004). `confidence` is deliberately **excluded** from the signed message (advisory metadata only), so confidence changes cannot invalidate a valid attestation. The negative test suite in `contracts/src/tests/attestation.rs` asserts invalid/missing/malformed/wrong-key/tampered-field attestations are rejected and leave the round resolvable, and that disabled mode ignores an attacker-supplied signature field entirely.
 - **Resource limits:** resolution is O(n) over participants. Precision rounds include an admin-configurable participant cap; operators still need benchmark evidence before raising it near upper bounds.
 
 ## Findings
