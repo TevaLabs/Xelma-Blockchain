@@ -468,19 +468,11 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         _emit_action_rejected(&env, &oracle, symbol_short!("resolve"), e);
     })?;
 
-    // Heartbeat health enforcement (Issue #264) — must come before any
+    // Heartbeat health enforcement (Issue #264, #398) — must come before any
     // state mutation (nonce consumption) so a stale oracle cannot race
-    // the admin override.
-    let hb_config = _load_hb_config(&env);
-    if _check_heartbeat_health_blocked(&env, &hb_config) {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleHeartbeatUnhealthy,
-        );
-        return Err(ContractError::OracleHeartbeatUnhealthy);
-    }
+    // the admin override. Uses _enforce_heartbeat_health which handles
+    // the admin override for no-heartbeat and offline conditions.
+    _enforce_heartbeat_health(&env, &oracle)?;
 
     let round: Round = env
         .storage()
@@ -727,7 +719,9 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
     //
     // When `HbGateConfig.strict_mode` is enabled, `resolve_round` verifies
     // that the oracle heartbeat is live before allowing settlement.
-    let hb_config = crate::admin::_load_hb_config(&env);
+    // The always-on gate above handles no-heartbeat, offline, and degraded.
+    // This block additionally enforces staleness with grace period.
+    let hb_config = _load_hb_config(&env);
 
     if hb_config.strict_mode {
         let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
@@ -915,7 +909,9 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
     }
 
     // ── Oracle heartbeat health gate (parity with single-oracle) ─────────
-    let hb_config = crate::admin::_load_hb_config(&env);
+    // The always-on gate above handles no-heartbeat, offline, and degraded.
+    // This block additionally enforces staleness with grace period.
+    let hb_config = _load_hb_config(&env);
     if hb_config.strict_mode {
         let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
         if hb_blocked {
@@ -923,7 +919,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
                 crate::admin::_consume_hb_override(&env);
                 #[allow(deprecated)]
                 env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hoverride")),
+                    (symbol_short!("oracle"), symbol_short!("hb_override")),
                     (round.round_id,),
                 );
             } else {
@@ -2706,13 +2702,12 @@ pub fn _check_heartbeat_health_blocked(env: &Env, config: &HbGateConfig) -> bool
 /// - No heartbeat has been recorded
 /// - Status is offline (2)
 ///
-/// Staleness and degraded status are enforced separately by the strict-mode
-/// check later in `resolve_round` (which also handles grace periods and
-/// override consumption).
+/// Staleness beyond (threshold + grace) is enforced separately by the
+/// strict-mode check later in `resolve_round`.
 ///
 /// If the admin override is armed, it is consumed and settlement proceeds.
 pub fn _enforce_heartbeat_health(env: &Env, _oracle: &Address) -> Result<(), ContractError> {
-    let config = crate::admin::_load_hb_config(env);
+    let config = _load_hb_config(env);
 
     let heartbeat_key = DataKeyCore::OracleHeartbeat;
     _extend_persistent_ttl(env, &heartbeat_key);
@@ -2722,6 +2717,7 @@ pub fn _enforce_heartbeat_health(env: &Env, _oracle: &Address) -> Result<(), Con
         .get::<_, OracleHeartbeatRecord>(&heartbeat_key)
     {
         None => true,
+        // Offline (2) blocks settlement. Degraded (1) is allowed when current.
         Some(record) => record.status == 2,
     };
 
