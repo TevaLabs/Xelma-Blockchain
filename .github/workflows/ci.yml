@@ -47,9 +47,6 @@ jobs:
       - name: Run deterministic replay parity suite (Issue #369)
         run: cargo test -p xelma-replay --locked -- --nocapture
 
-      - name: Run emergency claims-only drill test
-        run: cargo test --package xelma-contract --lib tests::drill --locked -- --nocapture
-
       - name: Run adversarial CI-critical scenarios only
         run: cargo test --package xelma-contract --lib test_critical_ --locked -- --nocapture
 
@@ -599,10 +596,38 @@ jobs:
       - name: Measure WASM size and check budget
         run: ./scripts/check_wasm_size.sh target/wasm32v1-none/release/xelma_contract.wasm
 
+  emergency-drill-gate:
+    name: Emergency Drill Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Execute Emergency Drill (Pause -> Claims -> Resume)
+        run: cargo test --package xelma-contract --lib tests::drill --locked -- --nocapture
+
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [rust-test, contract-build, bindings-test, bindings-build, bindings-vitest, e2e-smoke, parity-check, coverage, format-check, license-header-check, security-audit, wasm-size-gate]
+    needs: [rust-test, contract-build, bindings-test, bindings-build, bindings-vitest, e2e-smoke, parity-check, coverage, format-check, license-header-check, security-audit, wasm-size-gate, emergency-drill-gate]
     if: always()
     steps:
       - name: Check all jobs status
@@ -618,7 +643,8 @@ jobs:
              [ "${{ needs.format-check.result }}" != "success" ] || \
              [ "${{ needs.license-header-check.result }}" != "success" ] || \
              [ "${{ needs.security-audit.result }}" != "success" ] || \
-             [ "${{ needs.wasm-size-gate.result }}" != "success" ]; then
+             [ "${{ needs.wasm-size-gate.result }}" != "success" ] || \
+             [ "${{ needs.emergency-drill-gate.result }}" != "success" ]; then
             echo "One or more CI jobs failed"
             echo "Rust Tests: ${{ needs.rust-test.result }}"
             echo "Contract Build: ${{ needs.contract-build.result }}"
@@ -632,6 +658,7 @@ jobs:
             echo "SPDX Headers: ${{ needs.license-header-check.result }}"
             echo "Security Audit: ${{ needs.security-audit.result }}"
             echo "WASM Size Gate: ${{ needs.wasm-size-gate.result }}"
+            echo "Emergency Drill Gate: ${{ needs.emergency-drill-gate.result }}"
             exit 1
           fi
           echo "All CI checks passed"
