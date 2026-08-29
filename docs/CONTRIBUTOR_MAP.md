@@ -54,6 +54,7 @@ Xelma-Blockchain/
 │   ├── CONTRIBUTOR_TASK_MATRIX.md # PR evidence requirements by task type
 │   ├── EVENT_SCHEMA.md            # Canonical event schema for indexers
 │   ├── event_schema_guide.md      # How to work with events
+│   ├── archive_queries_guide.md   # Consumer guide for archive participation queries
 │   └── storage_lifecycle.md       # TTL/rent policy reference
 ├── .github/
 │   ├── workflows/ci.yml           # CI pipeline definition
@@ -625,6 +626,7 @@ cd bindings && npm install && npm run build
 | `docs/CONTRIBUTOR_TASK_MATRIX.md` | PR evidence requirements by task type | New task categories, new domain rules |
 | `docs/EVENT_SCHEMA.md` | Canonical event topic/payload schema | New/changed events |
 | `docs/event_schema_guide.md` | How to work with events | Event tooling changes |
+| `docs/archive_queries_guide.md` | Consumer guide for archive participation queries | Query or indexer changes |
 | `docs/storage_lifecycle.md` | TTL/rent policy for persistent keys | New DataKey variants |
 | `PROTOCOL_SPEC.md` | Invariants I1–I13, threat model | Protocol changes, new invariants |
 | `SECURITY_REVIEW.md` | Security audit findings | New findings, mitigations |
