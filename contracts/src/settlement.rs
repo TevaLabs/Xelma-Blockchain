@@ -5,6 +5,7 @@ use crate::admin::{
     _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
     _require_supported_schema,
 };
+use crate::migration::_ensure_not_migration_frozen;
 use crate::common::{
     _accumulate_pending, _emit_action_rejected, _extend_persistent_ttl, _extend_ttl_symbol,
     _set_balance, balance, payout_add, payout_mul, sort_addresses, DEFAULT_ARCHIVE_RETENTION,
@@ -33,6 +34,7 @@ use soroban_sdk::{symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
 /// Cancels the active round and deterministically refunds all participant stakes.
 pub fn cancel_round(env: Env, _reason: u32) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    _ensure_not_migration_frozen(&env)?;
     let admin: Address = env
         .storage()
         .persistent()
@@ -353,6 +355,7 @@ pub fn claim_many(env: Env, users: Vec<Address>) -> Result<Vec<i128>, ContractEr
 
 pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    _ensure_not_migration_frozen(&env)?;
     if payload.price == 0 {
         return Err(ContractError::InvalidPrice);
     }
@@ -2535,6 +2538,7 @@ fn _round_from_settlement(stl: &RoundSettlement) -> Round {
 
 pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    _ensure_not_migration_frozen(&env)?;
     _ensure_not_paused(&env)?;
 
     let dispute_ledgers = crate::config::get_dispute_ledgers(&env);
@@ -2626,6 +2630,7 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
 
 pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    _ensure_not_migration_frozen(&env)?;
     _ensure_not_paused(&env)?;
 
     let dispute_ledgers = crate::config::get_dispute_ledgers(&env);

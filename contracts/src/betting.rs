@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use crate::access_control::_enforce_access_control;
 use crate::admin::{_ensure_normal_mode, _ensure_not_paused, _require_supported_schema};
-use crate::common::{
+use crate::migration::_ensure_not_migration_frozen;use crate::common::{
     _accumulate_pending, _current_epoch_id, _emit_action_rejected, _enforce_min_bet,
     _extend_persistent_ttl, _set_balance, assert_no_active_round, balance, BPS_DENOMINATOR,
     DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_RUN_WINDOW_LEDGERS, MAX_START_PRICE, MIN_START_PRICE,
@@ -59,6 +59,7 @@ fn salt_has_minimum_entropy(salt: &BytesN<32>) -> bool {
 /// Creates a new prediction round (admin only)
 pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    _ensure_not_migration_frozen(&env)?;
     if start_price < MIN_START_PRICE {
         return Err(ContractError::InvalidStartPrice);
     }
@@ -221,6 +222,7 @@ pub fn place_bet(
 ) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
@@ -353,6 +355,7 @@ pub fn place_precision_prediction(
 ) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
@@ -480,6 +483,7 @@ pub fn commit_prediction(
     amount: i128,
 ) -> Result<(), ContractError> {
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
@@ -596,6 +600,7 @@ pub fn reveal_prediction(
     salt: BytesN<32>,
 ) -> Result<(), ContractError> {
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
@@ -703,6 +708,7 @@ pub fn reveal_prediction(
 pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
@@ -845,6 +851,9 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 pub fn mint_initial(env: Env, user: Address) -> i128 {
     user.require_auth();
     if let Err(e) = _require_supported_schema(&env) {
+        soroban_sdk::panic_with_error!(&env, e);
+    }
+    if let Err(e) = _ensure_not_migration_frozen(&env) {
         soroban_sdk::panic_with_error!(&env, e);
     }
     if let Err(e) = _ensure_normal_mode(&env) {

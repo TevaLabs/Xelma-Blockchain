@@ -17,6 +17,7 @@ use crate::types::{
     RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
     SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
     UserRoundOutcome, UserStats, FeeModel, GovAction, GovProposal,
+    MigrationBalance, MigrationConfig, MigrationPending, MerkleProof,
 };
 
 // ─── Economic control limits ─────────────────────────────────────────────────
@@ -95,6 +96,7 @@ use crate::betting;
 use crate::common;
 use crate::config;
 use crate::leaderboard;
+use crate::migration;
 use crate::queries;
 use crate::settlement;
 
@@ -145,6 +147,93 @@ impl VirtualTokenContract {
     /// Clears a previously announced next schema version (admin only).
     pub fn clear_next_schema(env: Env) -> Result<(), ContractError> {
         admin::clear_next_schema(env)
+    }
+
+    // ─── Blue/green migration (Issue #366) ──────────────────────────────────
+    /// Opens a migration export session on the source contract (admin only).
+    pub fn migration_export_start(env: Env, dry_run: bool) -> Result<(), ContractError> {
+        migration::export_start(env, dry_run)
+    }
+
+    /// Exports balances for a batch of users from the source (admin only).
+    pub fn migration_export_balances(
+        env: Env,
+        users: Vec<Address>,
+        dry_run: bool,
+    ) -> Result<(), ContractError> {
+        migration::export_balances(env, users, dry_run)
+    }
+
+    /// Exports pending claims for a batch of users from the source (admin only).
+    pub fn migration_export_pendings(
+        env: Env,
+        users: Vec<Address>,
+        dry_run: bool,
+    ) -> Result<(), ContractError> {
+        migration::export_pendings(env, users, dry_run)
+    }
+
+    /// Finalizes the source export: computes the commitment and freezes the
+    /// source into claims-only drain mode (admin only).
+    pub fn migration_export_finalize(env: Env, dry_run: bool) -> Result<(), ContractError> {
+        migration::export_finalize(env, dry_run)
+    }
+
+    /// Returns the source migration lifecycle status (read-only).
+    pub fn migration_get_status(env: Env) -> migration::MigrationStatus {
+        migration::get_migration_status(env)
+    }
+
+    /// Initializes the destination import session bound to an expected
+    /// source commitment (admin only).
+    pub fn migration_import_init(
+        env: Env,
+        expected_root: BytesN<32>,
+        source_version: u32,
+        destination_version: u32,
+        leaf_count: u32,
+    ) -> Result<(), ContractError> {
+        migration::import_init(
+            env,
+            expected_root,
+            source_version,
+            destination_version,
+            leaf_count,
+        )
+    }
+
+    /// Imports a single canonical balance record with a Merkle proof (admin only).
+    pub fn migration_import_balance(
+        env: Env,
+        rec: MigrationBalance,
+        proof: MerkleProof,
+    ) -> Result<(), ContractError> {
+        migration::import_balance(env, rec, proof)
+    }
+
+    /// Imports a single canonical pending-claim record with a Merkle proof
+    /// (admin only).
+    pub fn migration_import_pending(
+        env: Env,
+        rec: MigrationPending,
+        proof: MerkleProof,
+    ) -> Result<(), ContractError> {
+        migration::import_pending(env, rec, proof)
+    }
+
+    /// Applies the canonical configuration subset to the destination (admin only).
+    pub fn migration_import_config(
+        env: Env,
+        cfg: MigrationConfig,
+        proof: MerkleProof,
+    ) -> Result<(), ContractError> {
+        migration::import_config(env, cfg, proof)
+    }
+
+    /// Finalizes the destination migration once the full expected subset has
+    /// been imported (admin only).
+    pub fn migration_import_finalize(env: Env) -> Result<(), ContractError> {
+        migration::import_finalize(env)
     }
 
     /// Returns whether the contract is currently paused

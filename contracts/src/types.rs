@@ -899,6 +899,134 @@ pub const PENDING_WINNINGS_EXPIRY_KEY: PendingWinningsExpiryKey = PendingWinning
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingWinningsUpdatedAtKey(pub Address);
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Blue/green migration (Issue #366)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Domain-separation marker prepended to every canonical migration leaf
+/// preimage. Guarantees that two different migration formats (or a future
+/// re-version of this one) can never accidentally collide on a commitment:
+/// the marker is part of the hashed input, so a different marker yields a
+/// different commitment with cryptographic certainty.
+///
+/// See `docs/UPGRADE_BLUE_GREEN.md` for the exact canonical encoding spec.
+pub const MIGRATION_DOMAIN: &[u8] = b"XELMA-CPAY-V1";
+
+/// Canonical configuration subset exported from vN and imported into vN+1.
+///
+/// This is the **only** set of contract-wide parameters the new contract
+/// needs to continue operating safely. It deliberately excludes ephemeral /
+/// voluminous storage (round archives, outcome records, leaderboards, oracle
+/// heartbeats) — those are history, not live economic state, and are not part
+/// of the canonical migration subset.
+///
+/// Field order is fixed and documented; the byte encoding in
+/// `migration::_config_bytes` matches this exact order, so identical logical
+/// state always serializes identically.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationConfig {
+    pub protocol_fee_bps: Option<u32>,
+    pub fee_model: FeeModel,
+    pub protocol_fee_treasury: i128,
+    pub bet_window_ledgers: u32,
+    pub run_window_ledgers: u32,
+    pub close_buffer_ledgers: u32,
+    pub max_stake: Option<i128>,
+    pub max_user_round_exposure: Option<i128>,
+    pub max_pending_winnings: Option<i128>,
+    pub min_bet: Option<i128>,
+    pub min_participants: Option<u32>,
+    pub max_precision_participants: u32,
+    pub precision_payout_policy: u32,
+    pub dispute_ledgers: u32,
+    pub early_cashout_bps: Option<u32>,
+}
+
+/// Canonical per-user balance record (vN `Balance(user)`).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationBalance {
+    pub user: Address,
+    pub amount: i128,
+}
+
+/// Canonical per-user pending-claim record (vN `PendingWinnings(user)`).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationPending {
+    pub user: Address,
+    pub amount: i128,
+}
+
+/// The finalized on-chain commitment of the canonical exported state.
+///
+/// `root` is the Merkle root over the canonical leaf set (config leaf +
+/// sorted balance leaves + sorted pending leaves), domain-separated and bound
+/// to the source schema version. `leaf_count` is the number of leaves
+/// committed (i.e. 1 + balances + pendings).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationCommitment {
+    pub source_version: u32,
+    pub destination_version: u32,
+    pub root: BytesN<32>,
+    pub leaf_count: u32,
+    pub finalized_at_ledger: u32,
+}
+
+/// A standard binary Merkle proof over the canonical leaf set.
+///
+/// `siblings` holds one hash per tree level (leaf level excluded); the
+/// left/right orientation at each level is derived from `leaf_index`
+/// (a node at even index is a left child). `tree_height` is the number of
+/// sibling steps required to reach the root (== `siblings.len()`).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MerkleProof {
+    pub leaf_index: u32,
+    pub tree_height: u32,
+    pub siblings: Vec<BytesN<32>>,
+}
+
+/// Storage keys for the blue/green migration subsystem (source export/drain
+/// and destination import). Kept in a dedicated enum so migration state never
+/// collides with contract business state and does not consume part of the
+/// `DataKeyCore` XDR-union budget.
+#[contracttype]
+#[derive(Clone)]
+pub enum MigrationKey {
+    /// Source: `true` once the source contract has entered claims-only drain mode.
+    Frozen,
+    /// Source: `true` while an export session is open (not yet finalized).
+    ExportInProgress,
+    /// Source: accumulated canonical balance records.
+    ExportBalances,
+    /// Source: accumulated canonical pending records.
+    ExportPendings,
+    /// Source: addresses already exported as balances (dedup/replay guard).
+    ExportedBalanceUsers,
+    /// Source: addresses already exported as pending (dedup/replay guard).
+    ExportedPendingUsers,
+    /// Source: the finalized commitment (present only after finalize).
+    Commitment,
+    /// Destination: the expected source commitment this session imports against.
+    ExpectedCommitment,
+    /// Destination: per-address replay guard for imported balances.
+    ImportedBalance(Address),
+    /// Destination: per-address replay guard for imported pending claims.
+    ImportedPending(Address),
+    /// Destination: `true` once migration is finalized.
+    ImportFinalized,
+    /// Destination: `true` once the import session is initialized.
+    ImportInitialized,
+    /// Source + destination: explicit count of records successfully imported
+    /// (used to verify import completeness without storage-key iteration).
+    ImportedRecords,
+    /// Destination: `true` once the canonical config has been imported.
+    ImportedConfig,
+}
+
 /// Legacy monolithic storage key — retained for a few migration/read paths.
 #[contracttype]
 #[derive(Clone)]

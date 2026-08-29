@@ -26,6 +26,7 @@ mod contract;
 mod errors;
 mod governance;
 mod leaderboard;
+mod migration;
 mod queries;
 mod settlement;
 mod storage;

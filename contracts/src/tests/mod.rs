@@ -28,6 +28,7 @@ mod leaderboard_seasons;
 mod lifecycle;
 mod market_snapshot;
 mod migration_versioning;
+mod migration_blue_green;
 mod min_bet;
 mod mode_tests;
 mod one_sided_settlement;

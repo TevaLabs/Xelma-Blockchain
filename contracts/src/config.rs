@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 use crate::admin::{_ensure_normal_mode, _ensure_not_paused, _require_supported_schema};
+use crate::migration::_ensure_not_migration_frozen;
 use crate::common::{
     _emit_action_rejected, _emit_config_updated, _extend_persistent_ttl, _extend_ttl_symbol,
     _set_balance, balance, payout_add, BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS,
@@ -16,7 +17,8 @@ use crate::common::{
 use crate::errors::ContractError;
 use crate::types::{
     ConfigChangeKind, ConfigChangePayload, DataKey, DataKeyCore, DataKeyScoped, FeeModel,
-    PendingConfigChange, PrecisionPayoutPolicy, RoundTemplate, PENDING_WINNINGS_EXPIRY_KEY,
+    MigrationConfig, PendingConfigChange, PrecisionPayoutPolicy, RoundTemplate,
+    PENDING_WINNINGS_EXPIRY_KEY,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
@@ -272,6 +274,7 @@ pub fn get_pending_config_change(env: Env, kind: ConfigChangeKind) -> Option<Pen
 
 pub fn apply_scheduled_changes(env: Env, kind: ConfigChangeKind) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
 
     let key = DataKeyScoped::PendingConfigChange(kind.clone());
@@ -1552,5 +1555,110 @@ pub fn _apply_config_payload(
         _ => return Err(ContractError::InvalidMode),
     }
     _emit_config_updated(env, kind.clone(), old_value, payload.clone());
+    Ok(())
+}
+
+/// Directly applies a canonical configuration subset to the destination
+/// contract during blue/green import (Issue #366). Unlike the timelocked
+/// setters, this bypasses the timelock because the value is administratively
+/// verified against the source commitment and the upgrade is already gated by
+/// a full migration freeze of the source. Storage writes mirror
+/// [`_apply_config_payload`] so both paths converge on identical state.
+pub fn _apply_imported_config(
+    env: &Env,
+    cfg: &MigrationConfig,
+) -> Result<(), ContractError> {
+    match cfg.protocol_fee_bps {
+        Some(v) => {
+            if v > MAX_PROTOCOL_FEE_BPS {
+                return Err(ContractError::InvalidProtocolFeeBps);
+            }
+            env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::ProtocolFeeBps);
+        }
+        None => {
+            env.storage().persistent().remove(&DataKeyCore::ProtocolFeeBps);
+        }
+    }
+    env.storage().persistent().set(&DataKeyCore::FeeModel, &(cfg.fee_model as u32));
+    _extend_persistent_ttl(env, &DataKeyCore::FeeModel);
+    env.storage().persistent().set(&DataKeyCore::ProtocolFeeTreasury, &cfg.protocol_fee_treasury);
+    _extend_persistent_ttl(env, &DataKeyCore::ProtocolFeeTreasury);
+    env.storage().persistent().set(&DataKeyCore::BetWindowLedgers, &cfg.bet_window_ledgers);
+    _extend_persistent_ttl(env, &DataKeyCore::BetWindowLedgers);
+    env.storage().persistent().set(&DataKeyCore::RunWindowLedgers, &cfg.run_window_ledgers);
+    _extend_persistent_ttl(env, &DataKeyCore::RunWindowLedgers);
+    env.storage().persistent().set(&DataKeyCore::CloseBufferLedgers, &cfg.close_buffer_ledgers);
+    _extend_persistent_ttl(env, &DataKeyCore::CloseBufferLedgers);
+    match cfg.max_stake {
+        Some(v) => {
+            _validate_max_stake(Some(v))?;
+            env.storage().persistent().set(&DataKeyCore::MaxStake, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MaxStake);
+        }
+        None => {
+            env.storage().persistent().remove(&DataKeyCore::MaxStake);
+        }
+    }
+    match cfg.max_user_round_exposure {
+        Some(v) => {
+            _validate_max_stake(Some(v))?;
+            env.storage().persistent().set(&DataKeyCore::MaxUserRoundExposure, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MaxUserRoundExposure);
+        }
+        None => {
+            env.storage().persistent().remove(&DataKeyCore::MaxUserRoundExposure);
+        }
+    }
+    match cfg.max_pending_winnings {
+        Some(v) => {
+            _validate_max_stake(Some(v))?;
+            env.storage().persistent().set(&DataKeyCore::MaxPendingWinnings, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MaxPendingWinnings);
+        }
+        None => {
+            env.storage().persistent().remove(&DataKeyCore::MaxPendingWinnings);
+        }
+    }
+    match cfg.min_bet {
+        Some(v) => {
+            _validate_min_bet(Some(v))?;
+            env.storage().persistent().set(&DataKeyCore::MinBet, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MinBet);
+        }
+        None => {
+            env.storage().persistent().remove(&DataKeyCore::MinBet);
+        }
+    }
+    match cfg.min_participants {
+        Some(v) => {
+            env.storage().persistent().set(&DataKeyCore::MinParticipants, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MinParticipants);
+        }
+        None => {
+            env.storage().persistent().remove(&DataKeyCore::MinParticipants);
+        }
+    }
+    env.storage().persistent().set(
+        &DataKeyCore::MaxPrecisionParticipants,
+        &cfg.max_precision_participants,
+    );
+    _extend_persistent_ttl(env, &DataKeyCore::MaxPrecisionParticipants);
+    env.storage().persistent().set(&DataKeyCore::PrecisionPayoutPolicy, &(cfg.precision_payout_policy as u32));
+    _extend_persistent_ttl(env, &DataKeyCore::PrecisionPayoutPolicy);
+    env.storage().persistent().set(&DataKeyCore::DisputeLedgers, &cfg.dispute_ledgers);
+    _extend_persistent_ttl(env, &DataKeyCore::DisputeLedgers);
+    match cfg.early_cashout_bps {
+        Some(v) => {
+            if v == 0 || v > MAX_PROTOCOL_FEE_BPS {
+                return Err(ContractError::InvalidProtocolFeeBps);
+            }
+            env.storage().persistent().set(&DataKeyCore::EarlyCashoutBps, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::EarlyCashoutBps);
+        }
+        None => {
+            env.storage().persistent().remove(&DataKeyCore::EarlyCashoutBps);
+        }
+    }
     Ok(())
 }

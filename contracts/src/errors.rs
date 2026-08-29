@@ -116,4 +116,35 @@ pub enum ContractError {
     DisputeWindowExpired = 91,
     /// `finalize_round` was called before the dispute window elapsed.
     ClaimLocked = 92,
+    // ─── Blue/green migration (Issue #366) ──────────────────────────────────
+    /// A migration commitment has not been finalized yet.
+    MigrationNotFinalized = 93,
+    /// The migration has already been finalized; further commits are rejected.
+    MigrationAlreadyFinalized = 94,
+    /// Attempted migration action failed an authorization check.
+    MigrationUnauthorized = 95,
+    /// The supplied proof/commitment does not match the expected migration root.
+    MigrationCommitmentMismatch = 96,
+    /// The migration source/destination version does not match what is in flight.
+    MigrationVersionMismatch = 97,
+    /// The source contract is already in the migration drain/frozen state.
+    MigrationAlreadyFrozen = 98,
+    /// The destination migration session has not been initialized.
+    MigrationNotInitialized = 99,
+    /// The destination migration session was already initialized.
+    MigrationAlreadyInitialized = 100,
+    /// A record has already been imported into the destination contract.
+    MigrationRecordAlreadyImported = 101,
+    /// The supplied Merkle proof is malformed or does not verify.
+    MigrationProofInvalid = 102,
+    /// The source-contract export has not produced a finalized commitment.
+    MigrationExportIncomplete = 103,
+    /// The source contract is frozen for migration; this action is disabled.
+    MigrationFrozen = 104,
+    /// The destination contract is not ready to accept imports.
+    MigrationNotReady = 105,
+    /// A canonical record was supplied for a value that does not match on-chain state.
+    MigrationRecordMismatch = 106,
+    /// Someone attempted to re-open rounds in a contract already migrated.
+    MigrationAlreadyMigrated = 107,
 }
