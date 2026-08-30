@@ -618,7 +618,23 @@ export const ContractError = {
   /** Oracle heartbeat failed the configured health policy. */
   85: {message:"OracleHeartbeatUnhealthy"},
   /** Pending winnings have not reached their expiry threshold. */
-  86: {message:"PendingWinningsNotExpired"}
+  86: {message:"PendingWinningsNotExpired"},
+  /** Early cash-out feature is disabled or not configured. */
+  87: {message:"EarlyCashoutDisabled"},
+  /** User does not have an active position to cash out. */
+  88: {message:"PositionNotFound"},
+  /** Early cash-out attempted outside the valid running phase. */
+  89: {message:"InvalidPhaseForCashout"},
+  /** Early cash-out is only supported for UpDown rounds. */
+  90: {message:"WrongModeForCashout"},
+  /** claim_many batch size exceeds the configured limit. */
+  91: {message:"ClaimBatchTooLarge"},
+  /** claim_many batch contains the same address more than once. */
+  92: {message:"DuplicateClaimAddress"},
+  /** Dispute window has expired or is not configured. */
+  93: {message:"DisputeWindowExpired"},
+  /** finalize_round called before the dispute window elapsed. */
+  94: {message:"ClaimLocked"}
 }
 
 /**
