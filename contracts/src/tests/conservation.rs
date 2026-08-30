@@ -1043,3 +1043,436 @@ proptest! {
         }
     }
 }
+
+// ─── Cross-product: FeeModel × One-Sided × Precision-Tie ─────────────────
+//
+// These tests cover every cell in the matrix:
+//   FeeModel   × One-Sided Pool  × Precision Tie
+//   {OnPot,
+//    OnWinnings} × {Up-only,
+//                    Down-only}    × {2-way, 3-way}
+//
+// One-sided pools always refund (no winner), so fee must never apply.
+// Precision ties split the pot among tied winners; conservation must hold
+// exactly regardless of which fee model is active.
+//
+// Helper: set FeeModel directly in storage (bypasses timelock).
+fn set_fee_model_now(env: &Env, contract_id: &Address, model: crate::types::FeeModel) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::FeeModel, &model);
+    });
+}
+
+// ─── Row 22–25: One-sided pools × FeeModel ────────────────────────────────
+
+/// Row 22 — Up-only pool + FeeOnPot + fee enabled: refund all, fee must not apply.
+#[test]
+fn one_sided_up_fee_on_pot_full_refund() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &30, &BetSide::Up);
+    client.place_bet(&bob, &70, &BetSide::Up);
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+    set_fee_model_now(&env, &contract_id, crate::types::FeeModel::FeeOnPot);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 2_000u128); // price up, but down pool empty
+
+    let alice_pay = client.get_pending_winnings(&alice);
+    let bob_pay = client.get_pending_winnings(&bob);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+
+    assert_eq!(alice_pay, 30);
+    assert_eq!(bob_pay, 70);
+    assert_eq!(treasury_delta, 0);
+    assert_eq!(alice_pay + bob_pay + treasury_delta, 100);
+}
+
+/// Row 23 — Up-only pool + FeeOnWinnings + fee enabled: refund all, fee must not apply.
+#[test]
+fn one_sided_up_fee_on_winnings_full_refund() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &25, &BetSide::Up);
+    client.place_bet(&bob, &75, &BetSide::Up);
+    set_fee_bps_now(&env, &contract_id, 500); // 5%
+    set_fee_model_now(&env, &contract_id, crate::types::FeeModel::FeeOnWinnings);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 900u128); // price down, but down pool empty
+
+    assert_eq!(client.get_pending_winnings(&alice), 25);
+    assert_eq!(client.get_pending_winnings(&bob), 75);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0);
+}
+
+/// Row 24 — Down-only pool + FeeOnPot + fee enabled: refund all, fee must not apply.
+#[test]
+fn one_sided_down_fee_on_pot_full_refund() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &40, &BetSide::Down);
+    client.place_bet(&bob, &60, &BetSide::Down);
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+    set_fee_model_now(&env, &contract_id, crate::types::FeeModel::FeeOnPot);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 2_000u128); // price up, but up pool empty
+
+    assert_eq!(client.get_pending_winnings(&alice), 40);
+    assert_eq!(client.get_pending_winnings(&bob), 60);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0);
+}
+
+/// Row 25 — Down-only pool + FeeOnWinnings + fee enabled: refund all, fee must not apply.
+#[test]
+fn one_sided_down_fee_on_winnings_full_refund() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &35, &BetSide::Down);
+    client.place_bet(&bob, &65, &BetSide::Down);
+    set_fee_bps_now(&env, &contract_id, 700); // 7%
+    set_fee_model_now(&env, &contract_id, crate::types::FeeModel::FeeOnWinnings);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 900u128); // price down, but up pool empty
+
+    assert_eq!(client.get_pending_winnings(&alice), 35);
+    assert_eq!(client.get_pending_winnings(&bob), 65);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0);
+}
+
+// ─── Row 26–29: Precision Tie × FeeModel ───────────────────────────────────
+
+/// Row 26 — Precision 2-way tie + FeeOnPot + fee enabled: exact conservation.
+#[test]
+fn precision_tie_two_way_fee_on_pot_exact_conservation() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&charlie);
+
+    client.create_round(&1_000u128, &Some(1));
+    client.place_precision_prediction(&alice, &50, &1_005u128); // diff 5
+    client.place_precision_prediction(&bob, &50, &995u128); // diff 5 (tie)
+    client.place_precision_prediction(&charlie, &50, &1_200u128); // diff 200 (loser)
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+    set_fee_model_now(&env, &contract_id, crate::types::FeeModel::FeeOnPot);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_000u128); // final = 1000, tied at 5
+
+    let alice_pay = client.get_pending_winnings(&alice);
+    let bob_pay = client.get_pending_winnings(&bob);
+    let charlie_pay = client.get_pending_winnings(&charlie);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+
+    // FeeOnPot: fee = 150 * 10% = 15, distributable = 135
+    // Split by stake (both 50): 67 + 68 = 135
+    let (lo, hi) = if alice_pay < bob_pay { (alice_pay, bob_pay) } else { (bob_pay, alice_pay) };
+    assert_eq!(lo, 67);
+    assert_eq!(hi, 68);
+    assert_eq!(charlie_pay, 0);
+    assert_eq!(treasury_delta, 15);
+    assert_eq!(
+        alice_pay + bob_pay + charlie_pay + treasury_delta,
+        150,
+        "FeeOnPot precision tie conservation must be exact"
+    );
+}
+
+/// Row 27 — Precision 2-way tie + FeeOnWinnings + fee enabled: exact conservation.
+/// FeeOnWinnings: fee is on profit only. With a tie, all winners have zero profit
+/// relative to their own stake, so fee = 0 regardless of bps.
+#[test]
+fn precision_tie_two_way_fee_on_winnings_exact_conservation() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &Some(1));
+    client.place_precision_prediction(&alice, &80, &1_005u128); // diff 5
+    client.place_precision_prediction(&bob, &20, &995u128); // diff 5 (tie)
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+    set_fee_model_now(&env, &contract_id, crate::types::FeeModel::FeeOnWinnings);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_000u128);
+
+    let alice_pay = client.get_pending_winnings(&alice);
+    let bob_pay = client.get_pending_winnings(&bob);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+
+    assert_eq!(alice_pay, 80);
+    assert_eq!(bob_pay, 20);
+    assert_eq!(treasury_delta, 0, "FeeOnWinnings tie must not charge a fee");
+    assert_eq!(alice_pay + bob_pay + treasury_delta, 100);
+}
+
+/// Row 28 — Precision 3-way tie + FeeOnPot + fee enabled: exact conservation.
+#[test]
+fn precision_tie_three_way_fee_on_pot_exact_conservation() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&charlie);
+
+    client.create_round(&1_000u128, &Some(1));
+    // All three tied at distance 10 from final price 1000
+    client.place_precision_prediction(&alice, &40, &1_010u128); // diff 10
+    client.place_precision_prediction(&bob, &40, &990u128); // diff 10 (tie)
+    client.place_precision_prediction(&charlie, &40, &1_010u128); // diff 10 (tie)
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+    set_fee_model_now(&env, &contract_id, crate::types::FeeModel::FeeOnPot);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_000u128);
+
+    let alice_pay = client.get_pending_winnings(&alice);
+    let bob_pay = client.get_pending_winnings(&bob);
+    let charlie_pay = client.get_pending_winnings(&charlie);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+
+    // FeeOnPot: fee = 120 * 10% = 12, distributable = 108
+    // 3 winners at equal stake (40 each): 36 + 36 + 36 = 108
+    assert_eq!(treasury_delta, 12);
+    assert_eq!(alice_pay + bob_pay + charlie_pay, 108);
+    assert_eq!(alice_pay + bob_pay + charlie_pay + treasury_delta, 120);
+}
+
+/// Row 29 — Precision 3-way tie + FeeOnWinnings + fee enabled: exact conservation.
+#[test]
+fn precision_tie_three_way_fee_on_winnings_exact_conservation() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&charlie);
+
+    client.create_round(&1_000u128, &Some(1));
+    client.place_precision_prediction(&alice, &30, &1_010u128); // diff 10
+    client.place_precision_prediction(&bob, &30, &990u128); // diff 10 (tie)
+    client.place_precision_prediction(&charlie, &30, &1_010u128); // diff 10 (tie)
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+    set_fee_model_now(&env, &contract_id, crate::types::FeeModel::FeeOnWinnings);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_000u128);
+
+    let alice_pay = client.get_pending_winnings(&alice);
+    let bob_pay = client.get_pending_winnings(&bob);
+    let charlie_pay = client.get_pending_winnings(&charlie);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+
+    // FeeOnWinnings tie: all winners have zero profit → fee = 0
+    assert_eq!(alice_pay, 30);
+    assert_eq!(bob_pay, 30);
+    assert_eq!(charlie_pay, 30);
+    assert_eq!(treasury_delta, 0);
+    assert_eq!(alice_pay + bob_pay + charlie_pay + treasury_delta, 90);
+}
+
+// ─── Small-random cross-product property tests ─────────────────────────────
+//
+// Randomized coverage over the full FeeModel × OneSided × PrecisionTie matrix.
+// Deterministic seeds from proptest; readable diagnostics on every failure.
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(25))]
+
+    /// Cross-product: FeeModel × one-sided UpDown pool.
+    /// Vary fee model (FeeOnPot / FeeOnWinnings), fee bps, one-sided direction,
+    /// and stake amounts. One-sided pools always refund, so fee must never
+    /// apply regardless of which model is configured.
+    #[test]
+    fn cross_product_fee_model_one_sided_updown(
+        a_stake in 1i128..=500i128,
+        b_stake in 1i128..=500i128,
+        fee_bps_raw in 100u32..=1_000u32,
+        side in 0u8..=1u8, // 0 = up-only, 1 = down-only
+    ) {
+        let env = Env::default();
+        let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        client.mint_initial(&alice);
+        client.mint_initial(&bob);
+
+        client.create_round(&1_000u128, &None);
+
+        let bet_side = match side {
+            0 => BetSide::Up,
+            _ => BetSide::Down,
+        };
+        client.place_bet(&alice, &a_stake, &bet_side);
+        client.place_bet(&bob, &b_stake, &bet_side);
+        set_fee_bps_now(&env, &contract_id, fee_bps_raw);
+        let fee_model = match side {
+            0 => crate::types::FeeModel::FeeOnPot,
+            _ => crate::types::FeeModel::FeeOnWinnings,
+        };
+        set_fee_model_now(&env, &contract_id, fee_model);
+
+        let total_pot = a_stake + b_stake;
+
+        // Resolve with a price that would "win" the other side
+        let final_price = if side == 0 { 900u128 } else { 1_100u128 };
+        env.ledger().with_mut(|li| li.sequence_number = 12);
+        let treasury_before = client.get_protocol_fee_treasury();
+        resolve_at(&env, &client, &contract_id, final_price);
+
+        let alice_pay = client.get_pending_winnings(&alice);
+        let bob_pay = client.get_pending_winnings(&bob);
+        let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+        let accounted = alice_pay + bob_pay + treasury_delta;
+
+        prop_assert!(alice_pay >= 0,
+            "one-sided refund negative: alice_pay={} side={} fee_model={:?}",
+            alice_pay, side, fee_model);
+        prop_assert!(bob_pay >= 0,
+            "one-sided refund negative: bob_pay={} side={} fee_model={:?}",
+            bob_pay, side, fee_model);
+        prop_assert_eq!(treasury_delta, 0,
+            "fee charged on one-sided refund: delta={} side={} fee_bps={} fee_model={:?}",
+            treasury_delta, side, fee_bps_raw, fee_model);
+        prop_assert_eq!(accounted, total_pot,
+            "one-sided conservation violated: accounted={} pot={} side={} fee_bps={} fee_model={:?}",
+            accounted, total_pot, side, fee_bps_raw, fee_model);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(25))]
+
+    /// Cross-product: FeeModel × precision tie.
+    /// Vary fee model, fee bps, stake amounts, and whether a tie occurs.
+    /// When tied, all winners split the (fee-adjusted) pot; conservation
+    /// must hold exactly.
+    #[test]
+    fn cross_product_fee_model_precision_tie(
+        stake_a in 1i128..=500i128,
+        stake_b in 1i128..=500i128,
+        stake_c in 1i128..=500i128,
+        fee_bps_raw in 0u32..=1_000u32,
+        tie_ab in any::<bool>(),
+    ) {
+        let env = Env::default();
+        let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let charlie = Address::generate(&env);
+        client.mint_initial(&alice);
+        client.mint_initial(&bob);
+        client.mint_initial(&charlie);
+
+        client.create_round(&1_000u128, &Some(1));
+
+        let final_price = 1_000u128;
+        if tie_ab {
+            // Alice and Bob tied at same distance; Charlie loses
+            client.place_precision_prediction(&alice, &stake_a, &1_010u128);
+            client.place_precision_prediction(&bob, &stake_b, &990u128);
+            client.place_precision_prediction(&charlie, &stake_c, &1_500u128);
+        } else {
+            // Alice closest, Bob second, Charlie third
+            client.place_precision_prediction(&alice, &stake_a, &1_001u128);
+            client.place_precision_prediction(&bob, &stake_b, &1_005u128);
+            client.place_precision_prediction(&charlie, &stake_c, &1_050u128);
+        }
+        if fee_bps_raw > 0 {
+            set_fee_bps_now(&env, &contract_id, fee_bps_raw);
+        }
+        let fee_model = if tie_ab {
+            crate::types::FeeModel::FeeOnPot
+        } else {
+            crate::types::FeeModel::FeeOnWinnings
+        };
+        set_fee_model_now(&env, &contract_id, fee_model);
+
+        let total_pot = stake_a + stake_b + stake_c;
+
+        env.ledger().with_mut(|li| li.sequence_number = 12);
+        let treasury_before = client.get_protocol_fee_treasury();
+        resolve_at(&env, &client, &contract_id, final_price);
+
+        let alice_pay = client.get_pending_winnings(&alice);
+        let bob_pay = client.get_pending_winnings(&bob);
+        let charlie_pay = client.get_pending_winnings(&charlie);
+        let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+        let accounted = alice_pay + bob_pay + charlie_pay + treasury_delta;
+
+        prop_assert!(alice_pay >= 0,
+            "precision tie negative payout: alice_pay={} tie_ab={} fee_model={:?}",
+            alice_pay, tie_ab, fee_model);
+        prop_assert!(bob_pay >= 0,
+            "precision tie negative payout: bob_pay={} tie_ab={} fee_model={:?}",
+            bob_pay, tie_ab, fee_model);
+        prop_assert!(charlie_pay >= 0,
+            "precision tie negative payout: charlie_pay={} tie_ab={} fee_model={:?}",
+            charlie_pay, tie_ab, fee_model);
+        prop_assert!(treasury_delta >= 0,
+            "precision tie negative treasury: delta={} tie_ab={} fee_bps={} fee_model={:?}",
+            treasury_delta, tie_ab, fee_bps_raw, fee_model);
+        prop_assert_eq!(accounted, total_pot,
+            "precision tie conservation violated: accounted={} pot={} tie_ab={} fee_bps={} fee_model={:?}",
+            accounted, total_pot, tie_ab, fee_bps_raw, fee_model);
+    }
+}
