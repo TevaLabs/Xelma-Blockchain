@@ -17,6 +17,7 @@ fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Addres
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     (client, contract_id, admin, oracle)
 }
@@ -51,6 +52,7 @@ fn test_claims_only_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     assert!(client.get_pending_winnings(&user1) > 0);
@@ -127,6 +129,7 @@ fn test_claims_only_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
     assert_eq!(resolve_res, Ok(Ok(())));
 
@@ -183,6 +186,7 @@ fn test_fully_paused_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
     assert_eq!(resolve_res, Err(Ok(ContractError::ContractPaused)));
 
@@ -248,6 +252,7 @@ fn test_emergency_incident_simulation_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Step E: Claim Winnings Executed Successfully During Emergency Mode

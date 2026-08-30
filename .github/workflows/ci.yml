@@ -53,6 +53,23 @@ jobs:
       - name: Run adversarial CI-critical scenarios only
         run: cargo test --package xelma-contract --lib test_critical_ --locked -- --nocapture
 
+      - name: Verify settlement_math golden vectors (Issue #412)
+        run: |
+          set -o pipefail
+          mkdir -p golden-vectors-report
+          cargo test --package xelma-contract --lib tests::settlement_math_vectors:: --locked -- --nocapture \
+            | tee golden-vectors-report/settlement-math-golden-vectors.log
+          cp contracts/test_vectors/settlement_math.json golden-vectors-report/
+
+      - name: Upload settlement_math golden vectors artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: settlement-math-golden-vectors
+          path: golden-vectors-report/
+          retention-days: 30
+          if-no-files-found: ignore
+
       - name: Benchmark report (cost/gas regression guardrails)
         run: |
           set -o pipefail

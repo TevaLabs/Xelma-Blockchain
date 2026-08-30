@@ -4,11 +4,11 @@
 use super::config_helpers::{apply_max_stake, apply_max_user_exposure, apply_windows};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKey, OraclePayload, RoundMode};
+use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, RoundMode};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, BytesN, Env, TryIntoVal,
+    Address, BytesN, Env, TryIntoVal, Vec,
 };
 
 /// Salt satisfying on-chain minimum entropy (non-zero, non-constant).
@@ -1652,6 +1652,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // --- Step 2: Run an UpDown round (mode switch) ---
@@ -1669,13 +1670,14 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // --- Step 3: Verify no stale Precision data leaks into UpDown round ---
     // Use as_contract to check raw storage
     env.as_contract(&contract_id, || {
         // Stale PrecisionPosition from the first round should be cleared
-        let stale_pred_key = DataKey::PrecisionPosition(precision_round_id, alice.clone());
+        let stale_pred_key = DataKeyScoped::PrecisionPosition(precision_round_id, alice.clone());
         let has_stale_pred = env.storage().persistent().has(&stale_pred_key);
         assert!(
             !has_stale_pred,
@@ -1685,7 +1687,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
 
         // Stale PrecisionCommitment from the first round should be cleared
         let stale_commit_key =
-            DataKey::PrecisionCommitment(precision_round_id, alice.clone());
+            DataKeyScoped::PrecisionCommitment(precision_round_id, alice.clone());
         let has_stale_commit = env.storage().persistent().has(&stale_commit_key);
         assert!(
             !has_stale_commit,
@@ -1694,7 +1696,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         );
 
         // Stale Position from the UpDown round should be cleared
-        let stale_pos_key = DataKey::Position(updown_round_id, alice.clone());
+        let stale_pos_key = DataKeyScoped::Position(updown_round_id, alice.clone());
         let has_stale_pos = env.storage().persistent().has(&stale_pos_key);
         assert!(
             !has_stale_pos,
@@ -1703,10 +1705,10 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         );
 
         // Legacy keys should also be cleared
-        let has_legacy_updown = env.storage().persistent().has(&DataKey::UpDownPositions);
+        let has_legacy_updown = env.storage().persistent().has(&DataKeyCore::UpDownPositions);
         assert!(!has_legacy_updown, "Legacy UpDownPositions should be cleared");
 
-        let has_legacy_precision = env.storage().persistent().has(&DataKey::PrecisionPositions);
+        let has_legacy_precision = env.storage().persistent().has(&DataKeyCore::PrecisionPositions);
         assert!(
             !has_legacy_precision,
             "Legacy PrecisionPositions should be cleared"
@@ -1742,6 +1744,7 @@ fn test_alternation_precision_after_updown_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // --- Step 2: Run a Precision round (mode switch) ---
@@ -1758,11 +1761,12 @@ fn test_alternation_precision_after_updown_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // --- Step 3: Verify no stale UpDown data leaks into Precision round ---
     env.as_contract(&contract_id, || {
-        let stale_pos_key = DataKey::Position(updown_round_id, alice.clone());
+        let stale_pos_key = DataKeyScoped::Position(updown_round_id, alice.clone());
         let has_stale_pos = env.storage().persistent().has(&stale_pos_key);
         assert!(
             !has_stale_pos,
@@ -1770,7 +1774,7 @@ fn test_alternation_precision_after_updown_no_stale_data() {
             updown_round_id
         );
 
-        let stale_pred_key = DataKey::PrecisionPosition(precision_round_id, alice.clone());
+        let stale_pred_key = DataKeyScoped::PrecisionPosition(precision_round_id, alice.clone());
         let has_stale_pred = env.storage().persistent().has(&stale_pred_key);
         assert!(
             !has_stale_pred,
@@ -1803,18 +1807,18 @@ fn test_alternation_cancel_clears_both_modes() {
 
     // Verify all position keys are cleared after cancellation
     env.as_contract(&contract_id, || {
-        let pred_key = DataKey::PrecisionPosition(round_id, alice.clone());
+        let pred_key = DataKeyScoped::PrecisionPosition(round_id, alice.clone());
         assert!(!env.storage().persistent().has(&pred_key));
 
-        let commit_key = DataKey::PrecisionCommitment(round_id, alice.clone());
+        let commit_key = DataKeyScoped::PrecisionCommitment(round_id, alice.clone());
         assert!(!env.storage().persistent().has(&commit_key));
 
         // Cross-mode key should also be absent (never set, but verify no phantom data)
-        let pos_key = DataKey::Position(round_id, alice.clone());
+        let pos_key = DataKeyScoped::Position(round_id, alice.clone());
         assert!(!env.storage().persistent().has(&pos_key));
 
         // Round participants should be cleared
-        let participants_key = DataKey::RoundParticipants(round_id);
+        let participants_key = DataKeyScoped::RoundParticipants(round_id);
         assert!(!env.storage().persistent().has(&participants_key));
     });
 }
@@ -1848,6 +1852,7 @@ fn test_alternation_three_round_cycle_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Round 2: UpDown
@@ -1863,6 +1868,7 @@ fn test_alternation_three_round_cycle_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Round 3: Precision again
@@ -1878,16 +1884,17 @@ fn test_alternation_three_round_cycle_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Verify NO stale data from any round
     env.as_contract(&contract_id, || {
         for i in 0..round_ids.len() {
             if let Some(rid) = round_ids.get(i) {
-                let pos_key = DataKey::Position(rid, alice.clone());
-                let pred_key = DataKey::PrecisionPosition(rid, alice.clone());
-                let commit_key = DataKey::PrecisionCommitment(rid, alice.clone());
-                let participants_key = DataKey::RoundParticipants(rid);
+                let pos_key = DataKeyScoped::Position(rid, alice.clone());
+                let pred_key = DataKeyScoped::PrecisionPosition(rid, alice.clone());
+                let commit_key = DataKeyScoped::PrecisionCommitment(rid, alice.clone());
+                let participants_key = DataKeyScoped::RoundParticipants(rid);
 
                 assert!(
                     !env.storage().persistent().has(&pos_key),

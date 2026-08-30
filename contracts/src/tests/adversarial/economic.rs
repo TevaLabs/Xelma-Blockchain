@@ -5,7 +5,7 @@ use super::super::config_helpers::{apply_max_stake, apply_max_user_exposure};
 use super::{emit_result, oracle_payload, setup_contract};
 use crate::errors::ContractError;
 use crate::types::{BetSide, ConfigChangeKind};
-use soroban_sdk::{testutils::Ledger, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
 
 /// Malicious admin schedules a fee change mid-round via the public timelock API,
 /// hoping to skim the active pot before settlement.

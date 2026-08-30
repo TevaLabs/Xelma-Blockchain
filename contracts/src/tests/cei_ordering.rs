@@ -14,7 +14,7 @@ use crate::errors::ContractError;
 use crate::types::{BetSide, ConfigChangeKind};
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Ledger as _},
+    testutils::{Address as _, Events, Ledger as _},
     Address, Env, TryIntoVal,
 };
 
@@ -251,6 +251,7 @@ fn test_claim_winnings_respects_runtime_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     });
 
     let pending = client.get_pending_winnings(&alice);
@@ -284,6 +285,7 @@ fn test_claim_winnings_respects_runtime_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     });
 
     let pending2 = client.get_pending_winnings(&alice);
@@ -321,6 +323,7 @@ fn test_claim_winnings_respects_runtime_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     });
 
     let pending3 = client.get_pending_winnings(&alice);

@@ -205,6 +205,7 @@ fn test_claim_winnings_clears_tracking_key() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Verify tracking key exists after resolve

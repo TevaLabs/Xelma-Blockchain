@@ -492,11 +492,17 @@ pub struct RoundPoolStats {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct MarketSnapshot {
-    /// Current round's lifecycle phase, or `None` if no round is active.
-    pub phase: Option<RoundPhase>,
-    /// Full pool-composition breakdown for the active round, or `None` if no
-    /// round is active.
-    pub pool_stats: Option<RoundPoolStats>,
+    /// Current round's lifecycle phase, or empty if no round is active.
+    ///
+    /// Modeled as a 0-or-1-element `Vec` rather than `Option<RoundPhase>`:
+    /// this soroban-sdk version's `#[contracttype]` derive does not generate
+    /// an XDR (`ScVal`) conversion for `Option<T>` wrapping a user-defined
+    /// type, only for `Vec<T>`.
+    pub phase: Vec<RoundPhase>,
+    /// Full pool-composition breakdown for the active round, or empty if no
+    /// round is active. See `phase` for why this is a `Vec` and not an
+    /// `Option`.
+    pub pool_stats: Vec<RoundPoolStats>,
     /// Number of ledgers the betting window stays open after round creation.
     pub bet_window_ledgers: u32,
     /// Number of ledgers after round creation before the round becomes

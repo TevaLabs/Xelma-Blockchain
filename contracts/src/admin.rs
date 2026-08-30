@@ -521,6 +521,9 @@ pub fn set_oracle_min_confidence_bps(env: Env, min_bps: Option<u32>) -> Result<(
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("omin_cnf"), e);
+    })?;
     if let Some(bps) = min_bps {
         if bps > 10_000 {
             return Err(ContractError::WindowOutOfRange);
@@ -550,6 +553,9 @@ pub fn set_oracle_strict_mode(env: Env, enabled: bool) -> Result<(), ContractErr
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("ostrict"), e);
+    })?;
     env.storage()
         .persistent()
         .set(&DataKeyCore::OracleStrictMode, &enabled);
@@ -583,6 +589,9 @@ pub fn set_hb_strict_mode(env: Env, enabled: bool) -> Result<(), ContractError> 
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("hbstrict"), e);
+    })?;
     let mut config = _load_hb_config(&env);
     config.strict_mode = enabled;
     _save_hb_config(&env, &config);
@@ -635,6 +644,9 @@ pub fn set_hb_grace_seconds(env: Env, seconds: u64) -> Result<(), ContractError>
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("hbgrace"), e);
+    })?;
     let mut config = _load_hb_config(&env);
     config.grace_seconds = seconds;
     _save_hb_config(&env, &config);
@@ -904,18 +916,30 @@ fn _current_mode(env: &Env) -> RuntimeMode {
 ///
 /// - `RoundMutation`: `place_bet`, `place_precision_prediction`,
 ///   `predict_price`, `commit_prediction`, `reveal_prediction`,
-///   `mint_initial`.
+///   `mint_initial`, `apply_scheduled_changes` (activating a timelocked
+///   config change is treated as mutation-adjacent — it is deliberately
+///   blocked in `ClaimsOnly` too, unlike the rest of the config surface, so
+///   an incident freezes pending config activations along with new bets).
+///   `cancel_config_change` is *not* in this class — cancelling a pending
+///   change is `AdminConfig` below, so an operator can always back out a
+///   scheduled change even while `ClaimsOnly`.
 /// - `Claim`: `claim_winnings`.
 /// - `Settlement`: `resolve_round`, `cancel_round`.
-/// - `AdminConfig`: `pause_contract`, `unpause_contract`, `set_runtime_mode`,
-///   `migrate_schema_v1_to_v2`, `migrate_schema_v2_to_v3`,
+/// - Mode-transition controls — `pause_contract`, `unpause_contract`,
+///   `set_runtime_mode` — call `_set_mode` directly and are **not** routed
+///   through `_policy_gate` at all: they must stay callable in every mode,
+///   `FullyPaused` included, or there would be no way to escape an incident.
+///   (They are still `Some(admin)`-authenticated and blocked by
+///   `GovUnauthorized` when a governance approver is configured — just not by
+///   the runtime-mode gate.) Do not add a `_policy_gate` call to these.
+/// - `AdminConfig`: `migrate_schema_v1_to_v2`, `migrate_schema_v2_to_v3`,
 ///   `set_oracle_max_deviation_bps`, `arm_oracle_deviation_override`,
 ///   `set_oracle_min_confidence_bps`, `set_oracle_strict_mode`,
 ///   `set_hb_strict_mode`, `arm_hb_override`, `set_hb_grace_seconds`,
 ///   `propose_oracle_rotation`, `accept_oracle_rotation`,
 ///   `cancel_oracle_rotation`, `set_windows`, `set_max_stake`,
 ///   `set_max_user_exposure`, `set_max_pending_winnings`, `set_min_bet`,
-///   `schedule_*` variants, `apply_scheduled_changes`, `cancel_config_change`,
+///   `schedule_*` variants, `cancel_config_change`,
 ///   `set_protocol_fee_bps`, `withdraw_protocol_fee`, `set_min_participants`,
 ///   `set_max_precision_participants`, `set_mint_limit`,
 ///   `set_archive_retention`, `set_close_buffer_ledgers`,

@@ -127,8 +127,14 @@ pub fn get_round_phase(env: Env) -> Result<RoundPhase, ContractError> {
 /// (Issue #280). See [`MarketSnapshot`] for empty-round semantics and the
 /// exact getters each field is sourced from.
 pub fn get_market_snapshot(env: Env) -> MarketSnapshot {
-    let phase = get_round_phase(env.clone()).ok();
-    let pool_stats = get_round_pool_stats(env.clone());
+    let mut phase: Vec<RoundPhase> = Vec::new(&env);
+    if let Ok(p) = get_round_phase(env.clone()) {
+        phase.push_back(p);
+    }
+    let mut pool_stats: Vec<RoundPoolStats> = Vec::new(&env);
+    if let Some(s) = get_round_pool_stats(env.clone()) {
+        pool_stats.push_back(s);
+    }
 
     let bet_window_ledgers = get_bet_window_ledgers(env.clone());
     let run_window_ledgers = get_run_window_ledgers(env.clone());

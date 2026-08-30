@@ -18,7 +18,22 @@ The contract supports two round modes:
 | Mode | Value | Settlement rule |
 |---|---:|---|
 | Up/Down | `0` | Correct side receives stake plus a proportional share of the losing pool. Unchanged price refunds all participants. |
-| Precision | `1` | Closest price prediction wins the pot. Ties split the pot evenly; deterministic remainder goes to the first winner in resolution order. |
+| Precision | `1` | Closest price prediction wins the pot. Ties split the pot evenly; deterministic remainder goes to the first winner in resolution order (see below). |
+
+**Remainder ordering.** "Resolution order" means participants sorted by
+`Address` ascending (ties broken lexicographically by the address's
+underlying bytes — `common::sort_addresses`), not bet order or generation
+order. `settlement.rs` sorts `RoundParticipants` this way before handing the
+list to `settlement_math::compute_precision_payouts`, so among tied
+winners, the indivisible remainder from splitting the pot always goes to
+whichever tied winner has the lexicographically-lowest address — regardless
+of stake size or who bet first. See
+`contracts/test_vectors/settlement_math.json`'s `precision_remainder_ordering`
+section for pure-math golden vectors (2/3/5-way ties, including one with an
+unrevealed non-winner) and
+`tests::resolution::precision::test_precision_remainder_goes_to_lexicographically_lowest_winner`
+(plus its 3-way sibling) for the end-to-end contract-level proof with real
+addresses.
 
 ### Precision commit-reveal (user-visible rules)
 
@@ -303,7 +318,7 @@ Evidence:
 |---|---|---|---|---|
 | I1 | Single active round | `create_round`, `assert_no_active_round` | `guard_tests.rs`, `lifecycle.rs` | Covered |
 | I2 | Role authorization | `require_auth()` gates | `initialization.rs`, `lifecycle.rs`, `pause.rs`, `windows.rs`, `security.rs` | Covered |
-| I3 | Pause safety | `_ensure_not_paused` | `pause.rs`, `chaos_recovery.rs` | Covered |
+| I3 | Pause safety | `_policy_gate`, `_ensure_not_paused` | `pause.rs`, `chaos_recovery.rs`, `policy_gate.rs`, `drill.rs`, `pause_policy_matrix.rs` (full `AdminConfig` action × mode matrix) | Covered — see `docs/EMERGENCY_DRILL.md` for the operational matrix |
 | I4 | Round timing | `set_windows`, betting/resolution ledger checks | `windows.rs` | Covered |
 | I5 | One position per user | indexed position keys | `betting.rs`, `mode_tests.rs` | Covered |
 | I6 | Mode isolation | `RoundMode` checks | `mode_tests.rs` | Covered |
@@ -311,7 +326,7 @@ Evidence:
 | I8 | Settlement conservation | payout/refund helpers | `resolution.rs`, `property_invariants.rs` | Covered |
 | I9 | Checked arithmetic | `checked_*`, `payout_add`, `payout_mul` | `overflow_tests.rs`, `edge_cases.rs` | Covered with noted precision-error caveat in `SECURITY_REVIEW.md` |
 | I10 | Oracle payload binding | `resolve_round` | `security.rs` | Covered |
-| I11 | Cancellation/fallback refunds | `cancel_round`, `_refund_under_threshold` | `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs` | Covered |
+| I11 | Cancellation/fallback refunds | `cancel_round`, `_refund_under_threshold` | `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs`, `cancel_refund_matrix.rs` (UpDown + Precision, including unrevealed commitments, zero-fee, `Cancelled` archive status) | Covered |
 | I12 | Storage cleanup/migration | indexed cleanup and legacy fallbacks | `storage_benchmarks.rs` | Covered |
 | I13 | Event semantics | event publishing calls | `lifecycle.rs`, `mode_tests.rs`, `resolution.rs`, `security.rs` | Covered; canonical schema in `docs/EVENT_SCHEMA.md` |
 | I14 | Early cash-out | `cash_out_early`, `set_early_cashout_bps` | `conservation.rs` | Covered |

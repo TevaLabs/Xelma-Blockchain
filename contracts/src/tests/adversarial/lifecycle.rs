@@ -4,7 +4,7 @@
 use super::{emit_result, oracle_payload, setup_contract};
 use crate::errors::ContractError;
 use crate::types::BetSide;
-use soroban_sdk::{testutils::Ledger, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
 
 /// Attacker calls `claim_winnings` twice to double-spend pending payouts.
 /// Defense: second call is idempotent and returns 0.

@@ -23,9 +23,9 @@ fn test_market_snapshot_empty_round_semantics() {
 
     let snapshot = client.get_market_snapshot();
 
-    // No active round: phase and pool_stats are both None.
-    assert_eq!(snapshot.phase, None);
-    assert_eq!(snapshot.pool_stats, None);
+    // No active round: phase and pool_stats are both empty.
+    assert!(snapshot.phase.is_empty());
+    assert!(snapshot.pool_stats.is_empty());
 
     // Contract-wide config fields are always populated, matching the
     // default values reported by their individual getters.
@@ -56,10 +56,10 @@ fn test_market_snapshot_active_round_matches_individual_getters() {
 
     let snapshot = client.get_market_snapshot();
 
-    assert_eq!(snapshot.phase, Some(client.get_round_phase().unwrap()));
-    assert_eq!(snapshot.pool_stats, client.get_round_pool_stats());
+    assert_eq!(snapshot.phase.get(0), Some(client.get_round_phase()));
+    assert_eq!(snapshot.pool_stats.get(0), client.get_round_pool_stats());
 
-    let pool_stats = snapshot.pool_stats.expect("active round should have pool stats");
+    let pool_stats = snapshot.pool_stats.get(0).expect("active round should have pool stats");
     assert_eq!(pool_stats.total_up_stake, 500);
     assert_eq!(pool_stats.total_down_stake, 300);
     assert_eq!(pool_stats.up_participant_count, 1);

@@ -486,7 +486,7 @@ pub fn commit_prediction(
     // Reject clearly invalid commitment placeholders early (before balance
     // reads / deductions) so griefing commits cannot lock liquidity.
     if is_zero_bytes32(&env, &hash) {
-        return Err(ContractError::InvalidPrice);
+        return Err(ContractError::InvalidCommitment);
     }
 
     if amount <= 0 {
@@ -602,7 +602,7 @@ pub fn reveal_prediction(
     // Enforce salt entropy before any storage reads so malformed reveals fail
     // fast with an explicit error (not HashMismatch after a wasted lookup).
     if !salt_has_minimum_entropy(&salt) {
-        return Err(ContractError::InvalidPrice);
+        return Err(ContractError::InvalidSalt);
     }
 
     // Single read of the active round

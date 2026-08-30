@@ -3,11 +3,13 @@
 
 mod adversarial;
 mod archive_retention;
+mod cancel_refund_matrix;
 mod attestation;
 mod access_control;
 mod betting;
 mod cei_ordering;
 mod chaos_recovery;
+mod commit_reveal_e2e;
 mod claim_many;
 // mod commit_reveal_e2e; // upstream bug: all-unrevealed refunds test expects behavior contract doesn't implement
 mod config_helpers;
@@ -15,6 +17,7 @@ mod config_helpers;
 mod conservation;
 mod cost_benchmarks;
 mod deviation_reference;
+mod dispute_window;
 mod edge_cases;
 mod drill;
 mod event_coverage;
@@ -32,6 +35,7 @@ mod mode_tests;
 mod one_sided_settlement;
 mod overflow_tests;
 mod pause;
+mod pause_policy_matrix;
 mod pending_winnings_expiry;
 mod policy_gate;
 mod property_invariants;
@@ -39,6 +43,7 @@ mod reference_model;
 mod resolution;
 mod rotation;
 mod security;
+mod settlement_math_vectors;
 mod status;
 mod storage_benchmarks;
 mod ttl_tests;
