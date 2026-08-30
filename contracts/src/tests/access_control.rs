@@ -302,5 +302,8 @@ fn test_protocol_health_reports_access_mode() {
 
     client.set_access_control_enabled(&true);
     let after = client.get_protocol_health();
-    assert_eq!(after.status_code, 6, "allowlist mode should surface ACCESS_RESTRICTED");
+    assert_eq!(
+        after.status_code, 6,
+        "allowlist mode should surface ACCESS_RESTRICTED"
+    );
 }

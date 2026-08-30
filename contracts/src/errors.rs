@@ -58,9 +58,6 @@ pub enum ContractError {
     NoRoundTemplate = 65,
     /// Oracle payload timestamp is outside the round-relative economic window
     OracleTimestampOutsideWindow = 66,
-    /// Pending winnings entry exists but has not yet reached the configured
-    /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 86,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
@@ -89,20 +86,6 @@ pub enum ContractError {
     PendingWinningsNotFound = 77,
     /// Pending winnings expiry is not configured (value is 0).
     ExpiryNotConfigured = 78,
-    /// Participant is blocked by the active allowlist or denylist policy.
-    AccessDenied = 79,
-    /// Governance proposal does not exist.
-    ProposalNotFound = 80,
-    /// Governance proposal is past its execution deadline.
-    ProposalExpired = 81,
-    /// Governance proposal cannot transition from its current state.
-    GovInvalidState = 82,
-    /// Caller is not authorized by the configured governance policy.
-    GovUnauthorized = 83,
-    /// Requested action is not valid in the round's current lifecycle phase.
-    IllegalPhaseTransition = 84,
-    /// Oracle heartbeat failed the configured freshness or health policy.
-    OracleHeartbeatUnhealthy = 85,
     /// Early cash-out feature is disabled or not configured
     EarlyCashoutDisabled = 79,
     /// User does not have an active position to cash out
@@ -111,9 +94,13 @@ pub enum ContractError {
     InvalidPhaseForCashout = 81,
     /// Early cash-out is only supported for UpDown rounds
     WrongModeForCashout = 82,
+    /// Governance proposal does not exist.
     ProposalNotFound = 83,
+    /// Governance proposal is past its execution deadline.
     ProposalExpired = 84,
+    /// Governance proposal cannot transition from its current state.
     GovInvalidState = 85,
+    /// Caller is not authorized by the configured governance policy.
     GovUnauthorized = 86,
     /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
     ClaimBatchTooLarge = 87,
@@ -161,4 +148,9 @@ pub enum ContractError {
     MigrationRecordMismatch = 106,
     /// Someone attempted to re-open rounds in a contract already migrated.
     MigrationAlreadyMigrated = 107,
+    /// Requested action is not valid in the round's current lifecycle phase.
+    IllegalPhaseTransition = 108,
+    /// Pending winnings entry exists but has not yet reached the configured
+    /// expiry threshold — caller must wait before reclaiming.
+    PendingWinningsNotExpired = 109,
 }
