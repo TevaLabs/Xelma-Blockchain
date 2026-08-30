@@ -53,6 +53,17 @@ field is validated in order; a failure at any step rejects the entire submission
 | `nonce`         | `u64`       | Yes      | Per-round replay protection. Must be unique per round. |
 | `network_id`    | `BytesN<32>`| Yes      | SHA-256 hash of the network passphrase. Prevents cross-network replay. |
 | `contract_addr` | `Address`   | Yes      | The contract this payload targets. Prevents cross-contract replay. |
+| `attestation`   | `BytesN<64>` | Only when a key is configured | Detached ed25519 signature over the domain-separated message (see attestation threat note below). Rejected if missing or invalid when an attestation key is set. |
+| `confidence`    | `Option<u32>` | No      | Advisory belief strength in basis points. **Not** covered by the attestation signature. |
+
+> **Attestation threat note (Issue #263):** when `set_attestation_key` is configured, the
+> oracle signs a domain-separated message (`XELMA_ORACLE_ATTESTATION_V1` + the XDR encoding
+> of network_id, contract_addr, round_id, price, timestamp, nonce) with a key that may differ
+> from the submitting Soroban account. Verification is fail-closed: an invalid signature
+> aborts the transaction before any state change, and the round is left resolvable. When no
+> key is configured this gate is a no-op, preserving pre-#263 behaviour. The signature vouches
+> for *binding* (correct network/contract/round/price/time/nonce), not for the correctness of
+> the price itself — the oracle remains a trusted signer for price accuracy (§1).
 
 ### Validation order (`settlement.rs`)
 
