@@ -161,3 +161,158 @@ fn test_stale_oracle_timestamp_griefing_blocked() {
         false,
     );
 }
+
+/// Same-ledger round recreation is refused, closing the cross-round replay path.
+///
+/// `OraclePayload.round_id` binds to `Round.start_ledger`, which is
+/// `env.ledger().sequence()` at creation time and is therefore not unique on its
+/// own. A round can be cancelled and a replacement created within the same
+/// ledger, giving both rounds an identical `start_ledger` but distinct monotonic
+/// `Round.round_id` values — so a payload signed for the first round also
+/// satisfies the binding check for the second.
+///
+/// The nonce guard does not close this gap: consumed nonces are keyed by
+/// `ConsumedOracleNonce(round.round_id, nonce)` — the monotonic id — so a nonce
+/// burned in the first round is unconsumed in the second.
+///
+/// A replacement round sharing a `start_ledger` could not be settled
+/// unambiguously at all, so `create_round` refuses it up front with
+/// `RoundStartLedgerReused`.
+#[test]
+fn test_same_ledger_round_recreation_rejected() {
+    let env = Env::default();
+    let (client, _contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 5;
+        li.timestamp = 100;
+    });
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user, &100_0000000, &BetSide::Up);
+
+    let first_round = client.get_active_round().unwrap();
+    assert_eq!(first_round.start_ledger, 5);
+
+    // Cancelling frees the active-round slot, but the ledger sequence stays claimed.
+    client.cancel_round(&0u32);
+    assert!(client.get_active_round().is_none());
+
+    let recreated = client.try_create_round(&1_0000000, &None);
+    assert_eq!(
+        recreated,
+        Err(Ok(ContractError::RoundStartLedgerReused)),
+        "a ledger sequence must back at most one round"
+    );
+
+    emit_result(
+        "same_ledger_round_recreation",
+        "pass",
+        "RoundStartLedgerReused",
+        "none",
+        "high",
+        true,
+    );
+}
+
+/// Recovery path: once the ledger advances, a replacement round is created
+/// normally and settles with its own payload.
+///
+/// The binding defense must not strand an operator who cancelled a bad round —
+/// it only forces the replacement onto a distinct `start_ledger`.
+#[test]
+fn test_round_recreation_allowed_after_ledger_advances() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 5;
+        li.timestamp = 100;
+    });
+    client.create_round(&1_0000000, &None);
+    let first_round = client.get_active_round().unwrap();
+    client.cancel_round(&0u32);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 6;
+        li.timestamp = 120;
+    });
+    client.create_round(&1_2000000, &None);
+
+    let second_round = client.get_active_round().unwrap();
+    assert_eq!(second_round.price_start, 1_2000000);
+    assert_eq!(second_round.start_ledger, 6);
+    assert_ne!(second_round.round_id, first_round.round_id);
+
+    client.place_bet(&user, &100_0000000, &BetSide::Up);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 20;
+        li.timestamp = 200;
+    });
+
+    let fresh = oracle_payload(&env, &contract_id, 1_5000000, second_round.start_ledger, 7);
+    client.resolve_round(&fresh);
+    assert!(client.get_active_round().is_none());
+}
+
+/// A payload bound to a settled round must not settle the round that follows it.
+///
+/// End-to-end consequence of the `start_ledger` uniqueness invariant: the
+/// replacement round necessarily has a different `start_ledger`, so the stale
+/// payload fails the binding check.
+#[test]
+fn test_payload_from_previous_round_rejected_after_recreation() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 5;
+        li.timestamp = 100;
+    });
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user, &100_0000000, &BetSide::Up);
+
+    let first_start_ledger = client.get_active_round().unwrap().start_ledger;
+
+    // The operator signs a payload bound to the first round.
+    let stale_payload = oracle_payload(&env, &contract_id, 1_5000000, first_start_ledger, 1);
+
+    client.cancel_round(&0u32);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 6;
+        li.timestamp = 120;
+    });
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user, &50_0000000, &BetSide::Down);
+
+    let second_round = client.get_active_round().unwrap();
+    assert_ne!(second_round.start_ledger, first_start_ledger);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 20;
+        li.timestamp = 200;
+    });
+
+    let replay = client.try_resolve_round(&stale_payload);
+    assert_eq!(replay, Err(Ok(ContractError::InvalidOracleRound)));
+    assert!(client.get_active_round().is_some());
+
+    emit_result(
+        "previous_round_payload_replay",
+        "pass",
+        "InvalidOracleRound",
+        "none",
+        "high",
+        true,
+    );
+}
