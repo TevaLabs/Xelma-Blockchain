@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 #![cfg(test)]
 
-use alloc::vec;
 use crate::settlement_math::{
     compute_precision_payouts_with_policy, find_precision_winners_with_policy,
     split_pot_stake_weighted, PrecisionEntry, PrecisionPayoutPolicy, PrecisionScoringMode,
     PrecisionScoringPolicy,
 };
+use alloc::vec;
 
 #[test]
 fn test_absolute_vs_relative_scoring_modes() {
@@ -99,11 +99,11 @@ fn test_stake_weighted_split_exact_value_conservation() {
 
     // Uneven remainder test: 100 distributable, stakes 100 & 100
     // 50 + 50 = 100
-    let payouts_even = split_pot_stake_weighted(100, &vec![100, 100]).unwrap();
+    let payouts_even = split_pot_stake_weighted(100, &[100, 100]).unwrap();
     assert_eq!(payouts_even.iter().sum::<i128>(), 100);
 
     // Uneven stakes: 100 distributable, stakes 33 & 67
-    let payouts_uneven = split_pot_stake_weighted(100, &vec![33, 67]).unwrap();
+    let payouts_uneven = split_pot_stake_weighted(100, &[33, 67]).unwrap();
     assert_eq!(payouts_uneven.iter().sum::<i128>(), 100);
 }
 

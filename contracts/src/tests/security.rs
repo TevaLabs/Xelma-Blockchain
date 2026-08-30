@@ -11,7 +11,7 @@ use crate::types::{
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    vec, Address, BytesN, Env, IntoVal, TryIntoVal, Vec,
+    vec, Address, BytesN, Env, IntoVal, TryIntoVal,
 };
 #[test]
 fn test_resolve_round_stale_timestamp() {
@@ -42,7 +42,8 @@ fn test_resolve_round_stale_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::StaleOracleData)));
@@ -75,7 +76,8 @@ fn test_resolve_round_invalid_round_id() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
@@ -109,7 +111,8 @@ fn test_resolve_round_valid_payload() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     client.resolve_round(&payload);
     assert_eq!(client.get_active_round(), None);
@@ -144,7 +147,8 @@ fn test_resolve_round_future_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::FutureOracleData)));
@@ -250,9 +254,10 @@ fn test_resolve_round_duplicate_nonce_rejected() {
 
     // Simulate a prior submission having consumed nonce 42 for this round.
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64),
+            &true,
+        );
     });
 
     let result = client.try_resolve_round(&OraclePayload {
@@ -1033,7 +1038,10 @@ fn test_arm_heartbeat_override_emits_event() {
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
             && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_arm_o"))
     });
-    assert!(arm_event.is_some(), "hb_arm_ovr event must be emitted on arm");
+    assert!(
+        arm_event.is_some(),
+        "hb_arm_ovr event must be emitted on arm"
+    );
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
@@ -1258,9 +1266,10 @@ fn test_resolve_round_nonce_boundary_values() {
 
     // Pre-seed both boundary nonces as consumed for this round.
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64),
+            &true,
+        );
         env.storage().persistent().set(
             &DataKeyScoped::ConsumedOracleNonce(round.round_id, u64::MAX),
             &true,
@@ -2014,7 +2023,10 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
                 override_armed: false,
                 grace_seconds: 0,
             });
-        assert!(!config.override_armed, "heartbeat override must be cleared after use");
+        assert!(
+            !config.override_armed,
+            "heartbeat override must be cleared after use"
+        );
     });
 }
 
@@ -2483,9 +2495,10 @@ fn test_resolve_round_multi_duplicate_nonce_rejected() {
 
     // Pre-consume nonce 42 for this round
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64),
+            &true,
+        );
     });
 
     let result = client.try_resolve_round_multi(&MultiFeedPayload {
@@ -2655,7 +2668,7 @@ fn test_resolve_round_multi_cross_round_replay_rejected() {
         li.sequence_number = 15;
     });
     client.create_round(&1_0500000, &None);
-    let round1 = client.get_active_round().unwrap();
+    let _round1 = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 27;
@@ -2790,7 +2803,6 @@ fn test_resolve_round_multi_too_few_observations_rejected() {
     assert_eq!(result, Err(Ok(ContractError::TooFewObservations)));
 }
 
-
 // ─── Economic Window Timestamp Tests ─────────────────────────────────────────
 
 #[test]
@@ -2849,7 +2861,9 @@ fn test_resolve_round_timestamp_before_round_window() {
     });
 
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("otskew"), &30u64);
     });
 
     let payload = OraclePayload {
@@ -2890,7 +2904,9 @@ fn test_resolve_round_timestamp_boundary_lower() {
     });
 
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("otskew"), &30u64);
     });
 
     client.resolve_round(&OraclePayload {

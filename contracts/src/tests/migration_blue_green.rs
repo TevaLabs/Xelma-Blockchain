@@ -10,9 +10,7 @@ use crate::migration::{
     _balance_leaf, _config_leaf, _merkle_root, _null_leaf, _read_canonical_config,
     MIGRATION_DESTINATION_VERSION,
 };
-use crate::types::{
-    BetSide, MerkleProof, MigrationBalance, MigrationCommitment, MigrationKey,
-};
+use crate::types::{BetSide, MerkleProof, MigrationBalance, MigrationCommitment, MigrationKey};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{vec, Address, Bytes, BytesN, Env, Vec};
 
@@ -37,7 +35,7 @@ fn hash_pair(env: &Env, left: &BytesN<32>, right: &BytesN<32>) -> BytesN<32> {
 /// Recomputes the padded Merkle tree and returns the siblings and height for
 /// the given leaf index (test-side mirror of the contract implementation).
 fn compute_proof(env: &Env, leaves: &Vec<BytesN<32>>, target: u32) -> MerkleProof {
-    if leaves.len() == 0 {
+    if leaves.is_empty() {
         panic!("no leaves");
     }
     let mut size = 1u32;
@@ -67,7 +65,11 @@ fn compute_proof(env: &Env, leaves: &Vec<BytesN<32>>, target: u32) -> MerkleProo
             let lone = lvl.get(i).unwrap();
             next.push_back(lone);
         }
-        let sib_index = if index % 2 == 0 { index + 1 } else { index - 1 };
+        let sib_index = if index.is_multiple_of(2) {
+            index + 1
+        } else {
+            index - 1
+        };
         if sib_index < lvl.len() {
             siblings.push_back(lvl.get(sib_index).unwrap());
         } else {
@@ -89,7 +91,7 @@ fn sorted_balance_leaves(env: &Env, version: u32, recs: &Vec<MigrationBalance>) 
     for r in recs.iter() {
         std_v.push(r);
     }
-    std_v.sort_by(|a, b| a.user.to_string().cmp(&b.user.to_string()));
+    std_v.sort_by_key(|a| a.user.to_string());
     let mut v: Vec<BytesN<32>> = Vec::new(env);
     for r in std_v {
         v.push_back(_balance_leaf(env, version, &r));
@@ -122,8 +124,14 @@ fn test_canonical_merkle_commitment_matches_spec() {
         version,
         &vec![
             &env,
-            MigrationBalance { user: u1.clone(), amount: 1000_0000000i128 },
-            MigrationBalance { user: u2.clone(), amount: 1000_0000000i128 },
+            MigrationBalance {
+                user: u1.clone(),
+                amount: 1000_0000000i128,
+            },
+            MigrationBalance {
+                user: u2.clone(),
+                amount: 1000_0000000i128,
+            },
         ],
     )
     .iter()
@@ -135,11 +143,14 @@ fn test_canonical_merkle_commitment_matches_spec() {
     client.migration_export_finalize(&false);
 
     env.as_contract(&cid, || {
-        let c: MigrationCommitment =
-            env.storage().persistent().get(&MigrationKey::Commitment).unwrap();
+        let c: MigrationCommitment = env
+            .storage()
+            .persistent()
+            .get(&MigrationKey::Commitment)
+            .unwrap();
         assert_eq!(c.source_version, 3);
         assert_eq!(c.destination_version, MIGRATION_DESTINATION_VERSION);
-        assert_eq!(c.leaf_count, leaves.len() as u32);
+        assert_eq!(c.leaf_count, leaves.len());
         assert_eq!(c.root, expected_root);
     });
 }
@@ -211,20 +222,25 @@ fn test_import_completeness_replay_and_conservation() {
     src.migration_export_balances(&vec![&env, u1.clone(), u2.clone()], &false);
     src.migration_export_finalize(&false);
 
-    let commitment: MigrationCommitment = env
-        .as_contract(&sid, || {
-            env.storage()
-                .persistent()
-                .get(&MigrationKey::Commitment)
-                .unwrap()
-        });
+    let commitment: MigrationCommitment = env.as_contract(&sid, || {
+        env.storage()
+            .persistent()
+            .get(&MigrationKey::Commitment)
+            .unwrap()
+    });
     let version = commitment.source_version;
     let config = env.as_contract(&sid, || _read_canonical_config(&env));
 
     let bal_recs = vec![
         &env,
-        MigrationBalance { user: u1.clone(), amount: 1000_0000000i128 },
-        MigrationBalance { user: u2.clone(), amount: 1000_0000000i128 },
+        MigrationBalance {
+            user: u1.clone(),
+            amount: 1000_0000000i128,
+        },
+        MigrationBalance {
+            user: u2.clone(),
+            amount: 1000_0000000i128,
+        },
     ];
 
     // --- destination ---
@@ -251,7 +267,10 @@ fn test_import_completeness_replay_and_conservation() {
     assert_eq!(res, Err(Ok(ContractError::MigrationExportIncomplete)));
 
     // Forged amount fails proof (leaf hash mismatch with root).
-    let bad_rec = MigrationBalance { user: u1.clone(), amount: 999_i128 };
+    let bad_rec = MigrationBalance {
+        user: u1.clone(),
+        amount: 999_i128,
+    };
     let u1_index = leaves.len() - 2; // leaves = [config, u1, u2] sorted
     let forged_proof = compute_proof(&env, &leaves, u1_index);
     let res = dst.try_migration_import_balance(&bad_rec, &forged_proof);

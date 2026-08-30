@@ -47,9 +47,9 @@ use crate::admin::{_ensure_not_paused, _require_supported_schema, _set_mode, get
 use crate::common::{_extend_persistent_ttl, CURRENT_SCHEMA_VERSION};
 use crate::config::{
     _read_fee_model, _read_precision_payout_policy, _read_protocol_fee_bps, get_bet_window_ledgers,
-    get_close_buffer_ledgers, get_dispute_ledgers, get_early_cashout_bps,
-    get_max_pending_winnings, get_max_precision_participants, get_max_stake, get_min_bet,
-    get_min_participants, get_protocol_fee_treasury, get_run_window_ledgers, get_max_user_exposure,
+    get_close_buffer_ledgers, get_dispute_ledgers, get_early_cashout_bps, get_max_pending_winnings,
+    get_max_precision_participants, get_max_stake, get_max_user_exposure, get_min_bet,
+    get_min_participants, get_protocol_fee_treasury, get_run_window_ledgers,
 };
 use crate::errors::ContractError;
 use crate::types::{
@@ -82,7 +82,7 @@ fn _append_opt_flag(env: &Env, out: &mut Bytes, is_some: bool) {
 
 fn _append_addr(env: &Env, out: &mut Bytes, addr: &Address) {
     let b = addr.to_string().to_bytes();
-    _append_u32le(env, out, b.len() as u32);
+    _append_u32le(env, out, b.len());
     out.append(&b);
 }
 
@@ -195,7 +195,7 @@ pub fn _merkle_root(env: &Env, leaves: &Vec<BytesN<32>>) -> BytesN<32> {
     for l in leaves.iter() {
         level.push_back(l);
     }
-    if level.len() == 0 {
+    if level.is_empty() {
         return _null_leaf(env);
     }
     let mut target = 1u32;
@@ -253,7 +253,7 @@ pub fn _merkle_verify(
     let mut cur = leaf_hash.clone();
     let mut idx = proof.leaf_index;
     for sib in proof.siblings.iter() {
-        if idx % 2 == 0 {
+        if idx.is_multiple_of(2) {
             cur = _hash_pair(env, &cur, &sib);
         } else {
             cur = _hash_pair(env, &sib, &cur);
@@ -287,7 +287,10 @@ pub fn _read_canonical_config(env: &Env) -> MigrationConfig {
 pub fn _is_frozen(env: &Env) -> bool {
     let key = MigrationKey::Frozen;
     _extend_persistent_ttl(env, &key);
-    env.storage().persistent().get::<_, bool>(&key).unwrap_or(false)
+    env.storage()
+        .persistent()
+        .get::<_, bool>(&key)
+        .unwrap_or(false)
 }
 
 /// Blocks state-creating actions on a frozen source contract; claims and
@@ -344,27 +347,54 @@ pub fn export_start(env: Env, dry_run: bool) -> Result<(), ContractError> {
     }
 
     let in_progress = MigrationKey::ExportInProgress;
-    if !env.storage().persistent().get::<_, bool>(&in_progress).unwrap_or(false) {
+    if !env
+        .storage()
+        .persistent()
+        .get::<_, bool>(&in_progress)
+        .unwrap_or(false)
+    {
         env.storage().persistent().set(&in_progress, &true);
         _extend_persistent_ttl(&env, &in_progress);
     }
-    if !env.storage().persistent().has(&MigrationKey::ExportBalances) {
+    if !env
+        .storage()
+        .persistent()
+        .has(&MigrationKey::ExportBalances)
+    {
         env.storage().persistent().set(
             &MigrationKey::ExportBalances,
             &Vec::<MigrationBalance>::new(&env),
         );
     }
-    if !env.storage().persistent().has(&MigrationKey::ExportPendings) {
+    if !env
+        .storage()
+        .persistent()
+        .has(&MigrationKey::ExportPendings)
+    {
         env.storage().persistent().set(
             &MigrationKey::ExportPendings,
             &Vec::<MigrationPending>::new(&env),
         );
     }
-    if !env.storage().persistent().has(&MigrationKey::ExportedBalanceUsers) {
-        env.storage().persistent().set(&MigrationKey::ExportedBalanceUsers, &Vec::<Address>::new(&env));
+    if !env
+        .storage()
+        .persistent()
+        .has(&MigrationKey::ExportedBalanceUsers)
+    {
+        env.storage().persistent().set(
+            &MigrationKey::ExportedBalanceUsers,
+            &Vec::<Address>::new(&env),
+        );
     }
-    if !env.storage().persistent().has(&MigrationKey::ExportedPendingUsers) {
-        env.storage().persistent().set(&MigrationKey::ExportedPendingUsers, &Vec::<Address>::new(&env));
+    if !env
+        .storage()
+        .persistent()
+        .has(&MigrationKey::ExportedPendingUsers)
+    {
+        env.storage().persistent().set(
+            &MigrationKey::ExportedPendingUsers,
+            &Vec::<Address>::new(&env),
+        );
     }
     Ok(())
 }
@@ -374,7 +404,7 @@ fn _user_already_exported(env: &Env, key: MigrationKey, user: &Address) -> bool 
         .storage()
         .persistent()
         .get(&key)
-        .unwrap_or_else(|| Vec::new(&env));
+        .unwrap_or_else(|| Vec::new(env));
     for u in list.iter() {
         if u == user.clone() {
             return true;
@@ -395,7 +425,12 @@ pub fn export_balances(env: Env, users: Vec<Address>, dry_run: bool) -> Result<(
     if _has_commitment(&env) {
         return Err(ContractError::MigrationAlreadyFinalized);
     }
-    if !env.storage().persistent().get::<_, bool>(&MigrationKey::ExportInProgress).unwrap_or(false) {
+    if !env
+        .storage()
+        .persistent()
+        .get::<_, bool>(&MigrationKey::ExportInProgress)
+        .unwrap_or(false)
+    {
         return Err(ContractError::MigrationExportIncomplete);
     }
     if dry_run {
@@ -413,17 +448,24 @@ pub fn export_balances(env: Env, users: Vec<Address>, dry_run: bool) -> Result<(
             return Err(ContractError::MigrationRecordAlreadyImported);
         }
         let amount = crate::common::balance(env.clone(), user.clone());
-        list.push_back(MigrationBalance { user: user.clone(), amount });
+        list.push_back(MigrationBalance {
+            user: user.clone(),
+            amount,
+        });
         let mut seen: Vec<Address> = env
             .storage()
             .persistent()
             .get(&MigrationKey::ExportedBalanceUsers)
             .unwrap_or_else(|| Vec::new(&env));
         seen.push_back(user.clone());
-        env.storage().persistent().set(&MigrationKey::ExportedBalanceUsers, &seen);
+        env.storage()
+            .persistent()
+            .set(&MigrationKey::ExportedBalanceUsers, &seen);
         _extend_persistent_ttl(&env, &MigrationKey::ExportedBalanceUsers);
     }
-    env.storage().persistent().set(&MigrationKey::ExportBalances, &list);
+    env.storage()
+        .persistent()
+        .set(&MigrationKey::ExportBalances, &list);
     _extend_persistent_ttl(&env, &MigrationKey::ExportBalances);
     Ok(())
 }
@@ -439,7 +481,12 @@ pub fn export_pendings(env: Env, users: Vec<Address>, dry_run: bool) -> Result<(
     if _has_commitment(&env) {
         return Err(ContractError::MigrationAlreadyFinalized);
     }
-    if !env.storage().persistent().get::<_, bool>(&MigrationKey::ExportInProgress).unwrap_or(false) {
+    if !env
+        .storage()
+        .persistent()
+        .get::<_, bool>(&MigrationKey::ExportInProgress)
+        .unwrap_or(false)
+    {
         return Err(ContractError::MigrationExportIncomplete);
     }
     if dry_run {
@@ -458,17 +505,24 @@ pub fn export_pendings(env: Env, users: Vec<Address>, dry_run: bool) -> Result<(
         }
         let key = DataKeyScoped::PendingWinnings(user.clone());
         let amount: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        list.push_back(MigrationPending { user: user.clone(), amount });
+        list.push_back(MigrationPending {
+            user: user.clone(),
+            amount,
+        });
         let mut seen: Vec<Address> = env
             .storage()
             .persistent()
             .get(&MigrationKey::ExportedPendingUsers)
             .unwrap_or_else(|| Vec::new(&env));
         seen.push_back(user.clone());
-        env.storage().persistent().set(&MigrationKey::ExportedPendingUsers, &seen);
+        env.storage()
+            .persistent()
+            .set(&MigrationKey::ExportedPendingUsers, &seen);
         _extend_persistent_ttl(&env, &MigrationKey::ExportedPendingUsers);
     }
-    env.storage().persistent().set(&MigrationKey::ExportPendings, &list);
+    env.storage()
+        .persistent()
+        .set(&MigrationKey::ExportPendings, &list);
     _extend_persistent_ttl(&env, &MigrationKey::ExportPendings);
     Ok(())
 }
@@ -484,12 +538,16 @@ pub fn _build_leaves(env: &Env, source_version: u32) -> Vec<BytesN<32>> {
         .storage()
         .persistent()
         .get(&MigrationKey::ExportBalances)
-        .unwrap_or_else(|| Vec::new(&env));
+        .unwrap_or_else(|| Vec::new(env));
     let mut sorted_b = alloc::vec::Vec::with_capacity(balances.len() as usize);
     for b in balances.iter() {
         sorted_b.push(b);
     }
-    sorted_b.sort_by(|a, b2| addr_key(&a.user).cmp(&addr_key(&b2.user)).then(a.amount.cmp(&b2.amount)));
+    sorted_b.sort_by(|a, b2| {
+        addr_key(&a.user)
+            .cmp(&addr_key(&b2.user))
+            .then(a.amount.cmp(&b2.amount))
+    });
     for b in sorted_b {
         leaves.push_back(_balance_leaf(env, source_version, &b));
     }
@@ -498,12 +556,16 @@ pub fn _build_leaves(env: &Env, source_version: u32) -> Vec<BytesN<32>> {
         .storage()
         .persistent()
         .get(&MigrationKey::ExportPendings)
-        .unwrap_or_else(|| Vec::new(&env));
+        .unwrap_or_else(|| Vec::new(env));
     let mut sorted_p = alloc::vec::Vec::with_capacity(pendings.len() as usize);
     for p in pendings.iter() {
         sorted_p.push(p);
     }
-    sorted_p.sort_by(|a, b2| addr_key(&a.user).cmp(&addr_key(&b2.user)).then(a.amount.cmp(&b2.amount)));
+    sorted_p.sort_by(|a, b2| {
+        addr_key(&a.user)
+            .cmp(&addr_key(&b2.user))
+            .then(a.amount.cmp(&b2.amount))
+    });
     for p in sorted_p {
         leaves.push_back(_pending_leaf(env, source_version, &p));
     }
@@ -537,7 +599,7 @@ pub fn export_finalize(env: Env, dry_run: bool) -> Result<(), ContractError> {
 
     let leaves = _build_leaves(&env, source_version);
     let root = _merkle_root(&env, &leaves);
-    let leaf_count = leaves.len() as u32;
+    let leaf_count = leaves.len();
 
     let commitment = MigrationCommitment {
         source_version,
@@ -547,9 +609,13 @@ pub fn export_finalize(env: Env, dry_run: bool) -> Result<(), ContractError> {
         finalized_at_ledger: env.ledger().sequence(),
     };
 
-    env.storage().persistent().set(&MigrationKey::Commitment, &commitment);
+    env.storage()
+        .persistent()
+        .set(&MigrationKey::Commitment, &commitment);
     _extend_persistent_ttl(&env, &MigrationKey::Commitment);
-    env.storage().persistent().set(&MigrationKey::ExportInProgress, &false);
+    env.storage()
+        .persistent()
+        .set(&MigrationKey::ExportInProgress, &false);
 
     _set_mode(&env, RuntimeMode::ClaimsOnly)?;
     env.storage().persistent().set(&MigrationKey::Frozen, &true);
@@ -558,7 +624,11 @@ pub fn export_finalize(env: Env, dry_run: bool) -> Result<(), ContractError> {
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("migrate"), symbol_short!("committed")),
-        (commitment.source_version, commitment.destination_version, commitment.leaf_count),
+        (
+            commitment.source_version,
+            commitment.destination_version,
+            commitment.leaf_count,
+        ),
     );
     Ok(())
 }
@@ -636,8 +706,12 @@ pub fn import_init(
         leaf_count,
         finalized_at_ledger: env.ledger().sequence(),
     };
-    env.storage().persistent().set(&MigrationKey::ExpectedCommitment, &expected);
-    env.storage().persistent().set(&MigrationKey::ImportInitialized, &true);
+    env.storage()
+        .persistent()
+        .set(&MigrationKey::ExpectedCommitment, &expected);
+    env.storage()
+        .persistent()
+        .set(&MigrationKey::ImportInitialized, &true);
     _extend_persistent_ttl(&env, &MigrationKey::ExpectedCommitment);
     _extend_persistent_ttl(&env, &MigrationKey::ImportInitialized);
     Ok(())
@@ -657,7 +731,9 @@ fn _bump_imported_count(env: &Env) {
         .get::<_, u32>(&MigrationKey::ImportedRecords)
         .unwrap_or(0)
         + 1;
-    env.storage().persistent().set(&MigrationKey::ImportedRecords, &new_count);
+    env.storage()
+        .persistent()
+        .set(&MigrationKey::ImportedRecords, &new_count);
 }
 
 fn _check_import_ready(env: &Env) -> Result<MigrationCommitment, ContractError> {
@@ -682,7 +758,11 @@ pub fn import_balance(
     let _admin = _require_admin(&env)?;
     let expected = _check_import_ready(&env)?;
 
-    if env.storage().persistent().has(&MigrationKey::ImportedBalance(rec.user.clone())) {
+    if env
+        .storage()
+        .persistent()
+        .has(&MigrationKey::ImportedBalance(rec.user.clone()))
+    {
         return Err(ContractError::MigrationRecordAlreadyImported);
     }
     let leaf = _balance_leaf(&env, expected.source_version, &rec);
@@ -709,7 +789,11 @@ pub fn import_pending(
     let _admin = _require_admin(&env)?;
     let expected = _check_import_ready(&env)?;
 
-    if env.storage().persistent().has(&MigrationKey::ImportedPending(rec.user.clone())) {
+    if env
+        .storage()
+        .persistent()
+        .has(&MigrationKey::ImportedPending(rec.user.clone()))
+    {
         return Err(ContractError::MigrationRecordAlreadyImported);
     }
     let leaf = _pending_leaf(&env, expected.source_version, &rec);
@@ -721,7 +805,9 @@ pub fn import_pending(
     env.storage().persistent().set(&key, &rec.amount);
     _extend_persistent_ttl(&env, &key);
     let updated_key = crate::types::PendingWinningsUpdatedAtKey(rec.user.clone());
-    env.storage().persistent().set(&updated_key, &env.ledger().sequence());
+    env.storage()
+        .persistent()
+        .set(&updated_key, &env.ledger().sequence());
     _extend_persistent_ttl(&env, &updated_key);
     env.storage()
         .persistent()
@@ -741,7 +827,12 @@ pub fn import_config(
     let _admin = _require_admin(&env)?;
     let expected = _check_import_ready(&env)?;
 
-    if env.storage().persistent().get::<_, bool>(&MigrationKey::ImportedConfig).unwrap_or(false) {
+    if env
+        .storage()
+        .persistent()
+        .get::<_, bool>(&MigrationKey::ImportedConfig)
+        .unwrap_or(false)
+    {
         return Err(ContractError::MigrationRecordAlreadyImported);
     }
     let leaf = _config_leaf(&env, expected.source_version, &cfg);
@@ -750,7 +841,9 @@ pub fn import_config(
     }
 
     crate::config::_apply_imported_config(&env, &cfg)?;
-    env.storage().persistent().set(&MigrationKey::ImportedConfig, &true);
+    env.storage()
+        .persistent()
+        .set(&MigrationKey::ImportedConfig, &true);
     _bump_imported_count(&env);
     Ok(())
 }
@@ -772,7 +865,9 @@ pub fn import_finalize(env: Env) -> Result<(), ContractError> {
         return Err(ContractError::MigrationExportIncomplete);
     }
 
-    env.storage().persistent().set(&MigrationKey::ImportFinalized, &true);
+    env.storage()
+        .persistent()
+        .set(&MigrationKey::ImportFinalized, &true);
     _extend_persistent_ttl(&env, &MigrationKey::ImportFinalized);
     Ok(())
 }

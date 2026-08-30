@@ -7,7 +7,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{DataKeyCore, DataKeyScoped, OraclePayload, Round};
+use crate::types::{DataKeyCore, OraclePayload, Round};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, Env,
@@ -75,7 +75,8 @@ fn test_guard_passes_after_round_resolved() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert!(client.get_active_round().is_none());
 

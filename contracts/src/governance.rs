@@ -2,9 +2,13 @@
 //! Dual-Approval Governance Mechanism for Critical Administrative Actions (Issue #272).
 
 use crate::admin::{_require_supported_schema, _set_mode};
-use crate::common::{_emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_PROPOSAL_TTL_LEDGERS};
+use crate::common::{
+    _emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_PROPOSAL_TTL_LEDGERS,
+};
 use crate::errors::ContractError;
-use crate::types::{DataKeyCore, DataKeyScoped, GovAction, GovProposal, GovProposalStatus, RuntimeMode};
+use crate::types::{
+    DataKeyCore, DataKeyScoped, GovAction, GovProposal, GovProposalStatus, RuntimeMode,
+};
 use soroban_sdk::{symbol_short, Address, Env};
 
 /// Returns whether `user` is an authorized governance administrator or approver.
@@ -154,7 +158,12 @@ pub fn propose(
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("gov"), symbol_short!("proposed")),
-        (proposal_id, proposer, _action_code(&action), expires_at_ledger),
+        (
+            proposal_id,
+            proposer,
+            _action_code(&action),
+            expires_at_ledger,
+        ),
     );
 
     Ok(proposal_id)
@@ -281,7 +290,7 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
             _set_mode(&env, RuntimeMode::Normal)?;
         }
         GovAction::SetProtocolFeeBps(bps) => {
-            crate::config::_validate_protocol_fee_bps(bps.clone())?;
+            crate::config::_validate_protocol_fee_bps(*bps)?;
             let key = DataKeyCore::ProtocolFeeBps;
             if let Some(ref v) = bps {
                 env.storage().persistent().set(&key, v);
@@ -291,18 +300,24 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
             }
         }
         GovAction::WithdrawProtocolFee(recipient, amount) => {
-            _execute_withdraw_fee(&env, &recipient, *amount)?;
+            _execute_withdraw_fee(&env, recipient, *amount)?;
         }
         GovAction::SetTreasuryAddress(treasury) => {
-            env.storage().persistent().set(&DataKeyCore::ProtocolFeeTreasury, &treasury);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::ProtocolFeeTreasury, &treasury);
             _extend_persistent_ttl(&env, &DataKeyCore::ProtocolFeeTreasury);
         }
         GovAction::SetAdmin(new_admin) => {
-            env.storage().persistent().set(&DataKeyCore::Admin, &new_admin);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::Admin, &new_admin);
             _extend_persistent_ttl(&env, &DataKeyCore::Admin);
         }
         GovAction::SetOracle(new_oracle) => {
-            env.storage().persistent().set(&DataKeyCore::Oracle, &new_oracle);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::Oracle, &new_oracle);
             _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
         }
     }
@@ -401,7 +416,8 @@ pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
     let mut proposal: GovProposal = env.storage().persistent().get(&p_key)?;
 
     let current_ledger = env.ledger().sequence();
-    if (proposal.status == GovProposalStatus::Pending || proposal.status == GovProposalStatus::Approved)
+    if (proposal.status == GovProposalStatus::Pending
+        || proposal.status == GovProposalStatus::Approved)
         && current_ledger > proposal.expires_at_ledger
     {
         proposal.status = GovProposalStatus::Expired;

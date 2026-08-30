@@ -29,8 +29,7 @@ use crate::common::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    DataKeyCore, DataKeyExt, DataKeyScoped, LeaderboardEntry, SeasonArchive,
-    SeasonLeaderboardEntry, UserStats,
+    DataKeyCore, DataKeyExt, DataKeyScoped, SeasonArchive, SeasonLeaderboardEntry, UserStats,
 };
 use soroban_sdk::{symbol_short, Address, Env, Vec};
 
@@ -168,68 +167,6 @@ pub fn _update_leaderboards(env: &Env, user: Address) {
     candidates.push_back(user);
     let sorted = reinsert_sorted_by_streak(env, candidates, |addr| lifetime_user_stats(env, addr));
     upsert_bounded_index(env, &streak_key, sorted);
-}
-
-/// Returns a paginated slice of the lifetime wins leaderboard, ordered by
-/// total wins descending (address ascending as a tie-breaker).
-pub fn get_leaderboard_by_wins(env: Env, offset: u32, limit: u32) -> Vec<LeaderboardEntry> {
-    let limit = limit.min(MAX_PAGE_SIZE);
-    if limit == 0 {
-        return Vec::new(&env);
-    }
-    let key = DataKeyCore::Ext(DataKeyExt::LeaderboardWins);
-    _extend_persistent_ttl(&env, &key);
-    let list: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Vec::new(&env));
-
-    let total = list.len();
-    if offset >= total {
-        return Vec::new(&env);
-    }
-    let end = offset.saturating_add(limit).min(total);
-
-    let mut result = Vec::new(&env);
-    for i in offset..end {
-        if let Some(user) = list.get(i) {
-            let stats = lifetime_user_stats(&env, &user);
-            result.push_back(LeaderboardEntry { user, stats });
-        }
-    }
-    result
-}
-
-/// Returns a paginated slice of the lifetime best-streak leaderboard,
-/// ordered by best streak descending (address ascending as a tie-breaker).
-pub fn get_leaderboard_by_streak(env: Env, offset: u32, limit: u32) -> Vec<LeaderboardEntry> {
-    let limit = limit.min(MAX_PAGE_SIZE);
-    if limit == 0 {
-        return Vec::new(&env);
-    }
-    let key = DataKeyCore::Ext(DataKeyExt::LeaderboardStreak);
-    _extend_persistent_ttl(&env, &key);
-    let list: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Vec::new(&env));
-
-    let total = list.len();
-    if offset >= total {
-        return Vec::new(&env);
-    }
-    let end = offset.saturating_add(limit).min(total);
-
-    let mut result = Vec::new(&env);
-    for i in offset..end {
-        if let Some(user) = list.get(i) {
-            let stats = lifetime_user_stats(&env, &user);
-            result.push_back(LeaderboardEntry { user, stats });
-        }
-    }
-    result
 }
 
 // ─── Seasons ───────────────────────────────────────────────────────────────
