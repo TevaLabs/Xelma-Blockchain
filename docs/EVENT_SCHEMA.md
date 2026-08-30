@@ -114,6 +114,24 @@ The salt is intentionally omitted from the event payload.
 
 ---
 
+### `("cashout", "early")`
+
+Emitted when a user exits an active UpDown position early during the running
+phase. The payload order matches the contract implementation exactly.
+
+| Position | Field        | Type      | Description                                              |
+|----------|--------------|-----------|----------------------------------------------------------|
+| 0        | `user`       | `Address` | User who cashed out                                      |
+| 1        | `round_id`   | `u64`     | Active round being exited                                |
+| 2        | `side`       | `u32`     | Side exited: `0` = Up, `1` = Down                         |
+| 3        | `stake`      | `i128`    | Original position stake in stroops                       |
+| 4        | `cashout`    | `i128`    | Net amount credited to pending winnings in stroops        |
+| 5        | `forfeit`    | `i128`    | Amount retained as protocol fee / forfeit in stroops     |
+
+Example payload: `(alice, 42, 1, 1_0000000, 9500000, 500000)`.
+
+---
+
 ### `("forfeit", "predict")`
 
 Emitted at competitive Precision settlement for each commitment that was not
@@ -174,6 +192,12 @@ For dispute-enabled rounds, competitive settlement is staged before this
 terminal summary is emitted. The archive status additionally uses `3` =
 `Voided` when the permissionless refund path is selected.
 
+Indexer note: the historical archive state is the canonical way to interpret the
+terminal result. `status` maps directly to `RoundArchiveStatus` values:
+`0 = Resolved`, `1 = Cancelled`, `2 = FallbackRefund`, `3 = Voided`.
+Consumers should prefer this event over legacy topic names and treat the
+summary as the single source of truth for archive status.
+
 ### `("round", "pending")`
 
 Emitted after a valid oracle result is staged and all payouts and protocol fees
@@ -190,7 +214,7 @@ are deferred for the configured dispute window.
 
 Emitted when any caller voids a staged round strictly before its deadline. Each
 participant is credited exactly their recorded stake and the protocol fee is
-zero.
+zero. The payload order matches the contract implementation exactly.
 
 | Position | Field               | Type   | Description                              |
 |----------|---------------------|--------|------------------------------------------|
@@ -198,10 +222,13 @@ zero.
 | 1        | `participant_count` | `u32`  | Number of refunded participants          |
 | 2        | `total_refund`      | `i128` | Sum of full-stake refunds in stroops      |
 
+Example payload: `(42, 5, 25_0000000)`.
+
 ### `("round", "finalized")`
 
 Emitted when any caller finalizes a staged round at or after its frozen
 deadline. The standard settlement and fee policy has completed before emission.
+The payload order matches the contract implementation exactly.
 
 | Position | Field               | Type   | Description                              |
 |----------|---------------------|--------|------------------------------------------|
@@ -209,6 +236,8 @@ deadline. The standard settlement and fee policy has completed before emission.
 | 1        | `final_price`       | `u128` | Staged oracle settlement price           |
 | 2        | `participant_count` | `u32`  | Number of settled participants           |
 | 3        | `fee_amount`        | `i128` | Protocol fee collected in stroops        |
+
+Example payload: `(42, 1_2345000, 6, 500000)`.
 
 Emitted once per participant during round resolution after that participant's settlement
 outcome is known. Indexers can use these events to reconstruct the complete participant-level
@@ -417,7 +446,8 @@ enum variants in `contracts/src/errors.rs`.
 
 Emitted when `resolve_round_multi` successfully computes the median price and
 passes quorum. Provides a compact summary of the multi-feed resolution before
-round settlement proceeds.
+round settlement proceeds. The payload ordering matches the contract exactly:
+`(round_id, observation_count, survivor_count, median_price, quorum_threshold)`.
 
 | Position | Field               | Type   | Description                                               |
 |----------|---------------------|--------|-----------------------------------------------------------|
@@ -426,6 +456,8 @@ round settlement proceeds.
 | 2        | `survivor_count`    | `u32`  | Observations that passed outlier rejection                |
 | 3        | `median_price`      | `u128` | Computed median settlement price (4 decimal places)       |
 | 4        | `quorum_threshold`  | `u32`  | Configured quorum threshold that was satisfied            |
+
+Example payload: `(42, 5, 4, 1234500, 3)`.
 
 ---
 
@@ -454,6 +486,20 @@ application.
 | 0        | `min_observations`     | `u32`  | Minimum observations per multi-feed payload (0 if cleared)|
 | 1        | `quorum_threshold`     | `u32`  | Minimum surviving observations for quorum (0 if cleared)  |
 | 2        | `outlier_threshold_bps`| `u32`  | Max deviation from median before outlier rejection        |
+
+---
+
+## `("oracle", "attkey")` — Attestation key configured (Issue #263)
+
+Emitted when the admin sets or clears the oracle attestation signing key
+via `set_attestation_key`. The payload is a single boolean flag indicating
+whether attestation verification is enabled for subsequent oracle payloads.
+
+| Position | Field       | Type   | Description                                                |
+|----------|-------------|--------|------------------------------------------------------------|
+| 0        | `enabled`   | `bool` | `true` when a key is configured; `false` when cleared      |
+
+Example payload: `(true)`.
 
 ---
 
