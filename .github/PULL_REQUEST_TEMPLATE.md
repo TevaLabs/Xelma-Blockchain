@@ -72,7 +72,3 @@
   *If yes, note details:*
   > [Provide details here]
 
-## Snapshot policy
-
-- [ ] If snapshot files under `contracts/test_snapshots/` changed, I reviewed the diff and confirmed every change is intentional
-- [ ] If snapshot drift was reported in CI, I either regenerated snapshots or marked the drift as expected in the PR description

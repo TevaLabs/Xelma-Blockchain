@@ -85,20 +85,6 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Snapshot drift detection
-        run: |
-          if [ -d "contracts/test_snapshots" ] && ls contracts/test_snapshots/*.snap 1>/dev/null 2>&1; then
-            echo "--- Snapshot drift check ---"
-            echo "Snapshot golden files exist. To regenerate intentionally:"
-            echo "  ./scripts/update_snapshots.sh"
-            echo ""
-            echo "If you did not intend to change snapshots, check for accidental"
-            echo "storage or event mutations in your branch."
-            echo "---"
-          else
-            echo "No snapshot golden files to check."
-          fi
-
       - name: Run cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
