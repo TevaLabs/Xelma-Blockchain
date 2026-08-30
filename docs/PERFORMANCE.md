@@ -20,20 +20,25 @@ and a markdown table row that can be copied into this document.
 
 ## Latest local benchmark table
 
-The exact numbers depend on the Soroban SDK version and host runtime. Regenerate the table before release and replace the rows below with the `--nocapture` output.
+Measured on commit `fbc2ec4` (2026-08-30) with `cargo test --package xelma-contract cost_benchmarks -- --nocapture`.
+
+To refresh, run the command above and replace the table rows with the `[cost-benchmark]` output.
 
 | Function / path | CPU instructions | Memory bytes |
 |---|---:|---:|
-| `create_round` | _regenerate_ | _regenerate_ |
-| `place_bet` | _regenerate_ | _regenerate_ |
-| `resolve_round` | _regenerate_ | _regenerate_ |
-| `claim_winnings` | _regenerate_ | _regenerate_ |
-| `get_updown_positions_page` | _regenerate_ | _regenerate_ |
-| `get_precision_predictions_page` | _regenerate_ | _regenerate_ |
-| `get_precision_predictions_cursor` | _regenerate_ | _regenerate_ |
-| `get_updown_positions_cursor` | _regenerate_ | _regenerate_ |
-| `get_leaderboard_by_wins` | _regenerate_ | _regenerate_ |
-| `get_leaderboard_by_streak` | _regenerate_ | _regenerate_ |
+| `create_round` | 238,185 | 28,297 |
+| `place_bet` | 308,350 | 49,060 |
+| `precision_submit` | 317,168 | 50,054 |
+| `resolve_round` | 2,500,588 | 502,344 |
+| `claim_winnings` | 216,792 | 42,210 |
+| `get_updown_positions_page` | 286,563 | 29,661 |
+| `get_precision_predictions_page` | 303,654 | 32,499 |
+| `get_leaderboard_by_wins` | 26,885 | 10,517 |
+| `get_leaderboard_by_streak` | 26,887 | 10,517 |
+
+> **Note:** `get_precision_predictions_cursor` and `get_updown_positions_cursor` are defined in
+> `queries.rs` but are not wired into the contract client and therefore cannot be benchmarked
+> end-to-end. They will be added once the public contract interface is extended.
 
 ## Regression policy
 

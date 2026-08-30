@@ -348,3 +348,66 @@ fn bench_cost_resolve_precision_round_max_cap() {
     assert!(cpu <= RESOLVE_CPU_MAX);
     assert!(mem <= RESOLVE_MEM_MAX);
 }
+
+/// Helper: complete a single round (create → bets → resolve → claim).
+/// Each call creates its own round at the current ledger and advances
+/// the ledger past the run window (12 ledgers) so the round is resolvable.
+fn complete_one_round(
+    env: &Env,
+    cid: &Address,
+    client: &VirtualTokenContractClient,
+    users: &[(Address, BetSide)],
+) {
+    client.create_round(&1_0000000u128, &None);
+    for (user, side) in users {
+        client.place_bet(user, &1_0000000, side);
+    }
+    // Advance past both bet (6) and run (12) windows → +18 from start
+    env.ledger().with_mut(|li| li.sequence_number += 18);
+    let round = client.get_active_round().unwrap();
+    let nonce = round.start_ledger as u64; // unique nonce per round
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000, // UP wins
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce,
+        network_id: env.ledger().network_id(),
+        contract_addr: cid.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    for (user, _) in users {
+        client.claim_winnings(user);
+    }
+}
+
+#[test]
+fn bench_cost_get_leaderboard_by_wins() {
+    let (env, cid, _admin, _oracle, client) = setup();
+    // Complete 5 rounds, each with one winner, to populate the leaderboard.
+    for _ in 0..5 {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        complete_one_round(&env, &cid, &client, &[(user, BetSide::Up)]);
+    }
+
+    let (cpu, mem, _page) = measure(&env, || client.get_leaderboard_by_wins(&None, &10));
+    report("get_leaderboard_by_wins", cpu, mem);
+    assert!(cpu <= TX_CPU_BUDGET, "get_leaderboard_by_wins CPU regression: {cpu}");
+    assert!(mem <= TX_MEM_BUDGET, "get_leaderboard_by_wins MEM regression: {mem}");
+}
+
+#[test]
+fn bench_cost_get_leaderboard_by_streak() {
+    let (env, cid, _admin, _oracle, client) = setup();
+    for _ in 0..5 {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        complete_one_round(&env, &cid, &client, &[(user, BetSide::Up)]);
+    }
+
+    let (cpu, mem, _page) = measure(&env, || client.get_leaderboard_by_streak(&None, &10));
+    report("get_leaderboard_by_streak", cpu, mem);
+    assert!(cpu <= TX_CPU_BUDGET, "get_leaderboard_by_streak CPU regression: {cpu}");
+    assert!(mem <= TX_MEM_BUDGET, "get_leaderboard_by_streak MEM regression: {mem}");
+}
