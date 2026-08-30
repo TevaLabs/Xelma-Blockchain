@@ -119,5 +119,12 @@ pub enum ContractError {
     /// are not configured (`dispute_ledgers == 0`).
     DisputeWindowExpired = 93,
     /// `finalize_round` was called before the dispute window elapsed.
-    ClaimLocked = 94,
+    ClaimLocked = 92,
+    /// A round cannot be created because the current ledger sequence has
+    /// already backed another round's `start_ledger`.
+    ///
+    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
+    /// sequence would make a payload signed for the earlier round valid for
+    /// the later one. Retry once the ledger has advanced.
+    RoundStartLedgerReused = 93,
 }
