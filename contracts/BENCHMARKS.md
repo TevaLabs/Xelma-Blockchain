@@ -8,13 +8,24 @@ Benchmarks live in [`src/tests/cost_benchmarks.rs`](src/tests/cost_benchmarks.rs
 
 ## Covered paths
 
-| Path                | Benchmark                      |
-| ------------------- | ------------------------------ |
-| `create_round`      | `bench_cost_create_round`      |
-| `place_bet`         | `bench_cost_place_bet`         |
-| precision submit    | `bench_cost_precision_submit`  |
-| `resolve_round`     | `bench_cost_resolve_round`     |
-| `claim_winnings`    | `bench_cost_claim_winnings`    |
+| Path                | Benchmark                              |
+| ------------------- | -------------------------------------- |
+| `create_round`      | `bench_cost_create_round`              |
+| `place_bet`         | `bench_cost_place_bet`                 |
+| precision submit    | `bench_cost_precision_submit`          |
+| `resolve_round`     | `bench_cost_resolve_round`             |
+| `claim_winnings`    | `bench_cost_claim_winnings`            |
+
+### Precision participant-cap scaling (Issue #428)
+
+These benchmarks measure how `resolve_round` cost scales with participant count in Precision rounds. They feed the operator-facing cap↔CPU table in `docs/PERFORMANCE.md`.
+
+| Participants | Benchmark                                       |
+| -----------: | ----------------------------------------------- |
+| 10           | `bench_cost_resolve_precision_round_n10`         |
+| 25           | `bench_cost_resolve_precision_round_n25`         |
+| 50           | `bench_cost_resolve_precision_round_n50`         |
+| 100          | `bench_cost_resolve_precision_round_max_cap`     |
 
 ## Running locally
 

@@ -35,6 +35,34 @@ The exact numbers depend on the Soroban SDK version and host runtime. Regenerate
 | `get_leaderboard_by_wins` | _regenerate_ | _regenerate_ |
 | `get_leaderboard_by_streak` | _regenerate_ | _regenerate_ |
 
+## Precision participant-cap vs CPU budget
+
+Operators call `set_max_precision_participants` to limit how many predictions a Precision round can accept. The table below shows how the **resolve** CPU cost scales with participant count, so operators can choose a safe cap that leaves headroom for the rest of the transaction budget.
+
+The standard Soroban per-transaction CPU budget is **100,000,000 instructions**. Every value below that limit means headroom is available for create-round, oracle submission, and other entrypoints sharing the same transaction budget.
+
+| Participants | CPU instructions | Memory bytes | CPU headroom | Memory headroom |
+|---:|---:|---:|---:|---:|
+| 1 (submit only) | _regenerate_ | _regenerate_ | _regenerate_ | _regenerate_ |
+| 10 | _regenerate_ | _regenerate_ | _regenerate_ | _regenerate_ |
+| 25 | _regenerate_ | _regenerate_ | _regenerate_ | _regenerate_ |
+| 50 | _regenerate_ | _regenerate_ | _regenerate_ | _regenerate_ |
+| 100 | _regenerate_ | _regenerate_ | _regenerate_ | _regenerate_ |
+
+### Reading the table
+
+- **CPU headroom** = `100,000,000 − CPU instructions`. This is the budget remaining for other contract logic within the same transaction.
+- **Memory headroom** = `104,857,600 − memory bytes`. Soroban memory is per-transaction, not per-entrypoint.
+- If headroom drops below ~20% of the budget, the cap is too aggressive for production use — choose the next lower row.
+- Regenerate with the same command as the entrypoint table; the `resolve_precision_*` benchmarks produce these rows.
+
+### Operator guidance
+
+1. Start with a conservative cap (e.g. **25 participants**) and monitor actual CPU usage in CI artifact logs.
+2. Raise the cap only after confirming the headroom column stays above 20% of the budget in your target Soroban host version.
+3. The cap applies globally to all Precision rounds — there is no per-round override.
+4. Changing the cap does **not** affect rounds that are already open; only new rounds respect the updated value.
+
 ## Regression policy
 
 Every benchmark asserts the measured CPU instructions and memory bytes stay within the standard Soroban per-transaction resource budget. Treat any benchmark failure as a hard regression. If a passing run still shows a spike of more than 20% versus the last published table, call it out in the pull request and either optimize the path or document the reason for the higher cost.

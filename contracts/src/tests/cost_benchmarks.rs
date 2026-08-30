@@ -348,3 +348,97 @@ fn bench_cost_resolve_precision_round_max_cap() {
     assert!(cpu <= RESOLVE_CPU_MAX);
     assert!(mem <= RESOLVE_MEM_MAX);
 }
+
+// ─── Precision participant-cap scaling points (Issue #428) ─────────────────
+// These intermediate participant counts let operators interpolate the safe
+// `max_precision_participants` cap for their expected load. Each test builds
+// a Precision round with exactly N predictions, then resolves it end-to-end
+// and records the CPU/memory cost. The results feed the cap↔CPU table in
+// `docs/PERFORMANCE.md`.
+
+#[test]
+fn bench_cost_resolve_precision_round_n10() {
+    let (env, contract_id, _admin, _oracle, client) = setup();
+    client.create_round(&1_0000000u128, &Some(1));
+    let round = client.get_active_round().unwrap();
+
+    for i in 0..10u128 {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        client.predict_price(&user, &(1_0000000 + i * 10_000), &10_0000000);
+    }
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let payload = OraclePayload {
+        price: 1_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    };
+    let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
+    report("resolve_precision_n10", cpu, mem);
+    assert!(cpu <= RESOLVE_CPU_MAX, "resolve_precision_n10 CPU regression: {cpu}");
+    assert!(mem <= RESOLVE_MEM_MAX, "resolve_precision_n10 MEM regression: {mem}");
+}
+
+#[test]
+fn bench_cost_resolve_precision_round_n25() {
+    let (env, contract_id, _admin, _oracle, client) = setup();
+    client.create_round(&1_0000000u128, &Some(1));
+    let round = client.get_active_round().unwrap();
+
+    for i in 0..25u128 {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        client.predict_price(&user, &(1_0000000 + i * 10_000), &10_0000000);
+    }
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let payload = OraclePayload {
+        price: 1_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    };
+    let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
+    report("resolve_precision_n25", cpu, mem);
+    assert!(cpu <= RESOLVE_CPU_MAX, "resolve_precision_n25 CPU regression: {cpu}");
+    assert!(mem <= RESOLVE_MEM_MAX, "resolve_precision_n25 MEM regression: {mem}");
+}
+
+#[test]
+fn bench_cost_resolve_precision_round_n50() {
+    let (env, contract_id, _admin, _oracle, client) = setup();
+    client.create_round(&1_0000000u128, &Some(1));
+    let round = client.get_active_round().unwrap();
+
+    for i in 0..50u128 {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        client.predict_price(&user, &(1_0000000 + i * 10_000), &10_0000000);
+    }
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let payload = OraclePayload {
+        price: 1_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    };
+    let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
+    report("resolve_precision_n50", cpu, mem);
+    assert!(cpu <= RESOLVE_CPU_MAX, "resolve_precision_n50 CPU regression: {cpu}");
+    assert!(mem <= RESOLVE_MEM_MAX, "resolve_precision_n50 MEM regression: {mem}");
+}
