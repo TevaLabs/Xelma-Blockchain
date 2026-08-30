@@ -55,6 +55,7 @@ fn test_denylist_blocks_bet_in_open_mode() {
     client.create_round(&1_0000000, &None);
     let result = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
     assert_eq!(result, Err(Ok(ContractError::AccessDenied)));
+    assert_eq!(ContractError::AccessDenied as u32, 79);
 }
 
 /// `test_allowlist_enforced` — once allowlist mode is enabled, only allowlisted
@@ -301,8 +302,5 @@ fn test_protocol_health_reports_access_mode() {
 
     client.set_access_control_enabled(&true);
     let after = client.get_protocol_health();
-    assert_eq!(
-        after.status_code, 6,
-        "allowlist mode should surface ACCESS_RESTRICTED"
-    );
+    assert_eq!(after.status_code, 6, "allowlist mode should surface ACCESS_RESTRICTED");
 }

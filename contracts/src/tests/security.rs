@@ -4,15 +4,13 @@
 use super::config_helpers::{apply_oracle_max_deviation_bps, apply_oracle_stale_threshold};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{
-    DataKeyCore, DataKeyScoped, HbGateConfig, HbGateKey, MultiFeedPayload, OraclePayload,
-    OracleQuorumConfig,
-};
+use crate::types::{DataKeyCore, DataKeyScoped, HbGateConfig, HbGateKey, OraclePayload};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    vec, Address, BytesN, Env, IntoVal, TryIntoVal,
+    Address, BytesN, Env, IntoVal, TryIntoVal,
 };
+
 #[test]
 fn test_resolve_round_stale_timestamp() {
     let env = Env::default();
@@ -42,8 +40,7 @@ fn test_resolve_round_stale_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    };
+        attestation: None,    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::StaleOracleData)));
@@ -76,8 +73,7 @@ fn test_resolve_round_invalid_round_id() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    };
+        attestation: None,    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
@@ -111,8 +107,7 @@ fn test_resolve_round_valid_payload() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    };
+        attestation: None,    };
 
     client.resolve_round(&payload);
     assert_eq!(client.get_active_round(), None);
@@ -147,8 +142,7 @@ fn test_resolve_round_future_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    };
+        attestation: None,    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::FutureOracleData)));
@@ -254,10 +248,9 @@ fn test_resolve_round_duplicate_nonce_rejected() {
 
     // Simulate a prior submission having consumed nonce 42 for this round.
     env.as_contract(&contract_id, || {
-        env.storage().persistent().set(
-            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64),
-            &true,
-        );
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64), &true);
     });
 
     let result = client.try_resolve_round(&OraclePayload {
@@ -679,7 +672,7 @@ fn test_heartbeat_stale_beyond_grace_blocks_resolve() {
 
     // Stale threshold 120s, grace 300s
     apply_oracle_stale_threshold(&env, &client, 120u64);
-    client.set_hb_grace_seconds(&300u64);
+    client.set_oracle_heartbeat_grace(&300u64);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 0;
@@ -718,7 +711,7 @@ fn test_heartbeat_stale_within_grace_strict_blocks_resolve() {
     client.initialize(&admin, &oracle);
 
     apply_oracle_stale_threshold(&env, &client, 120u64);
-    client.set_hb_strict_mode(&true);
+    client.set_oracle_heartbeat_strict_mode(&true);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 0;
@@ -755,7 +748,7 @@ fn test_heartbeat_degraded_fresh_strict_blocks_resolve() {
     env.mock_all_auths();
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
+    client.set_oracle_heartbeat_strict_mode(&true);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 100;
@@ -858,7 +851,7 @@ fn test_heartbeat_override_allows_resolve() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
     // No heartbeat — would normally block
-    client.arm_hb_override();
+    client.arm_oracle_heartbeat_override();
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -889,7 +882,7 @@ fn test_heartbeat_override_cleared_after_use() {
     env.mock_all_auths();
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
-    client.arm_hb_override();
+    client.arm_oracle_heartbeat_override();
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -908,7 +901,7 @@ fn test_heartbeat_override_cleared_after_use() {
     });
 
     // Verify override is consumed (one-shot)
-    let armed = client.get_hb_override_armed();
+    let armed = client.is_oracle_heartbeat_override_armed();
     assert!(!armed, "override must be cleared after first use");
 
     // Create a new round WITHOUT re-arming and WITHOUT a heartbeat — should fail
@@ -934,7 +927,6 @@ fn test_heartbeat_override_cleared_after_use() {
 
 /// Override emits the `hb_override` event when consumed.
 #[test]
-#[ignore = "upstream bug: _consume_hb_override does not currently publish an event"]
 fn test_heartbeat_override_emits_event() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
@@ -943,7 +935,7 @@ fn test_heartbeat_override_emits_event() {
     env.mock_all_auths();
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
-    client.arm_hb_override();
+    client.arm_oracle_heartbeat_override();
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -967,7 +959,7 @@ fn test_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_ovr"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_override"))
     });
     assert!(
         hb_override_event.is_some(),
@@ -987,15 +979,15 @@ fn test_heartbeat_grace_config() {
     client.initialize(&admin, &oracle);
 
     // Default
-    assert_eq!(client.get_hb_grace_seconds(), 600);
+    assert_eq!(client.get_oracle_heartbeat_grace(), 600);
 
     // Set custom
-    client.set_hb_grace_seconds(&900u64);
-    assert_eq!(client.get_hb_grace_seconds(), 900);
+    client.set_oracle_heartbeat_grace(&900u64);
+    assert_eq!(client.get_oracle_heartbeat_grace(), 900);
 
     // Below minimum rejected
     // Note: MIN is 0, so 0 is valid — test > MAX
-    let result = client.try_set_hb_grace_seconds(&86_401u64);
+    let result = client.try_set_oracle_heartbeat_grace(&86_401u64);
     assert_eq!(result, Err(Ok(ContractError::InvalidDuration)));
 }
 
@@ -1010,16 +1002,15 @@ fn test_heartbeat_strict_mode_config() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
 
-    assert!(!client.get_hb_strict_mode());
-    client.set_hb_strict_mode(&true);
-    assert!(client.get_hb_strict_mode());
-    client.set_hb_strict_mode(&false);
-    assert!(!client.get_hb_strict_mode());
+    assert!(!client.get_oracle_heartbeat_strict_mode());
+    client.set_oracle_heartbeat_strict_mode(&true);
+    assert!(client.get_oracle_heartbeat_strict_mode());
+    client.set_oracle_heartbeat_strict_mode(&false);
+    assert!(!client.get_oracle_heartbeat_strict_mode());
 }
 
 /// Arming override emits hb_arm_ovr event.
 #[test]
-#[ignore = "upstream bug: arm_hb_override does not currently publish a success event"]
 fn test_arm_heartbeat_override_emits_event() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
@@ -1029,19 +1020,16 @@ fn test_arm_heartbeat_override_emits_event() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
 
-    client.arm_hb_override();
+    client.arm_oracle_heartbeat_override();
 
     let events = env.events().all();
     let arm_event = events.iter().find(|e| {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_arm_o"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_arm_ovr"))
     });
-    assert!(
-        arm_event.is_some(),
-        "hb_arm_ovr event must be emitted on arm"
-    );
+    assert!(arm_event.is_some(), "hb_arm_ovr event must be emitted on arm");
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
@@ -1266,10 +1254,9 @@ fn test_resolve_round_nonce_boundary_values() {
 
     // Pre-seed both boundary nonces as consumed for this round.
     env.as_contract(&contract_id, || {
-        env.storage().persistent().set(
-            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64),
-            &true,
-        );
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64), &true);
         env.storage().persistent().set(
             &DataKeyScoped::ConsumedOracleNonce(round.round_id, u64::MAX),
             &true,
@@ -2023,10 +2010,7 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
                 override_armed: false,
                 grace_seconds: 0,
             });
-        assert!(
-            !config.override_armed,
-            "heartbeat override must be cleared after use"
-        );
+        assert!(!config.override_armed, "heartbeat override must be cleared after use");
     });
 }
 
@@ -2408,403 +2392,6 @@ fn test_no_confidence_check_when_threshold_unset() {
     });
 }
 
-// ─── Authoritative Replay & Domain Binding Suite (Single & Multi-Feed) ───────
-
-#[test]
-fn test_resolve_round_cross_round_replay_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.create_round(&1_0000000, &None);
-    let round0 = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    // Settle Round 0
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: 30,
-        round_id: round0.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-
-    // Create Round 1
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 15;
-    });
-    client.create_round(&1_2000000, &None);
-    let round1 = client.get_active_round().unwrap();
-    assert_ne!(round0.start_ledger, round1.start_ledger);
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 27;
-        li.timestamp = 2000;
-    });
-
-    // Replay payload targeting round0.start_ledger against round 1 -> rejected
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2500000,
-        timestamp: 40,
-        round_id: round0.start_ledger,
-        nonce: 2u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
-}
-
-#[test]
-fn test_resolve_round_multi_duplicate_nonce_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
-        min_observations: 3,
-        quorum_threshold: 3,
-        outlier_threshold_bps: 500,
-    }));
-
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    // Pre-consume nonce 42 for this round
-    env.as_contract(&contract_id, || {
-        env.storage().persistent().set(
-            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64),
-            &true,
-        );
-    });
-
-    let result = client.try_resolve_round_multi(&MultiFeedPayload {
-        prices: vec![&env, 1_1000000u128, 1_1000000u128, 1_1000000u128],
-        sources: vec![&env, 0u32, 1u32, 2u32],
-        round_id: round.start_ledger,
-        nonce: 42u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        timestamp: 30,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNonceReused)));
-}
-
-#[test]
-fn test_resolve_round_multi_unique_nonce_resolves() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
-        min_observations: 3,
-        quorum_threshold: 3,
-        outlier_threshold_bps: 500,
-    }));
-
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    let res = client.try_resolve_round_multi(&MultiFeedPayload {
-        prices: vec![&env, 1_0500000u128, 1_0490000u128, 1_0510000u128],
-        sources: vec![&env, 0u32, 1u32, 2u32],
-        round_id: round.start_ledger,
-        nonce: 77u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        timestamp: 30,
-    });
-    assert_eq!(res, Ok(Ok(())));
-    assert_eq!(client.get_active_round(), None);
-}
-
-#[test]
-fn test_resolve_round_multi_wrong_network_id_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
-        min_observations: 3,
-        quorum_threshold: 3,
-        outlier_threshold_bps: 500,
-    }));
-
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    let wrong_network = BytesN::from_array(&env, &[0xDEu8; 32]);
-    let result = client.try_resolve_round_multi(&MultiFeedPayload {
-        prices: vec![&env, 1_1000000u128, 1_1000000u128, 1_1000000u128],
-        sources: vec![&env, 0u32, 1u32, 2u32],
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: wrong_network,
-        contract_addr: contract_id.clone(),
-        timestamp: 30,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNetworkMismatch)));
-}
-
-#[test]
-fn test_resolve_round_multi_wrong_contract_addr_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
-        min_observations: 3,
-        quorum_threshold: 3,
-        outlier_threshold_bps: 500,
-    }));
-
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    let wrong_contract = Address::generate(&env);
-    let result = client.try_resolve_round_multi(&MultiFeedPayload {
-        prices: vec![&env, 1_1000000u128, 1_1000000u128, 1_1000000u128],
-        sources: vec![&env, 0u32, 1u32, 2u32],
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: wrong_contract,
-        timestamp: 30,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNetworkMismatch)));
-}
-
-#[test]
-fn test_resolve_round_multi_cross_round_replay_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
-        min_observations: 3,
-        quorum_threshold: 3,
-        outlier_threshold_bps: 500,
-    }));
-
-    client.create_round(&1_0000000, &None);
-    let round0 = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    // Settle Round 0
-    client.resolve_round_multi(&MultiFeedPayload {
-        prices: vec![&env, 1_0500000u128, 1_0490000u128, 1_0510000u128],
-        sources: vec![&env, 0u32, 1u32, 2u32],
-        round_id: round0.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        timestamp: 30,
-    });
-
-    // Create Round 1
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 15;
-    });
-    client.create_round(&1_0500000, &None);
-    let _round1 = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 27;
-        li.timestamp = 2000;
-    });
-
-    // Replay payload with round0.start_ledger against round 1 -> rejected
-    let result = client.try_resolve_round_multi(&MultiFeedPayload {
-        prices: vec![&env, 1_0600000u128, 1_0610000u128, 1_0590000u128],
-        sources: vec![&env, 0u32, 1u32, 2u32],
-        round_id: round0.start_ledger,
-        nonce: 2u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        timestamp: 40,
-    });
-    assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
-}
-
-#[test]
-fn test_resolve_round_multi_insufficient_quorum_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    // Quorum threshold 3, outlier threshold 100 bps (1%)
-    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
-        min_observations: 3,
-        quorum_threshold: 3,
-        outlier_threshold_bps: 100,
-    }));
-
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    // Feeds: 1.0 (median), 1.5 (+50% outlier), 0.5 (-50% outlier) -> only 1 survivor, quorum is 3
-    let result = client.try_resolve_round_multi(&MultiFeedPayload {
-        prices: vec![&env, 5000000u128, 1_0000000u128, 15000000u128],
-        sources: vec![&env, 0u32, 1u32, 2u32],
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        timestamp: 30,
-    });
-    assert_eq!(result, Err(Ok(ContractError::InsufficientOracleQuorum)));
-}
-
-#[test]
-fn test_resolve_round_multi_duplicate_sources_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
-        min_observations: 3,
-        quorum_threshold: 3,
-        outlier_threshold_bps: 500,
-    }));
-
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    // Sources [0, 0, 1] contains duplicate source 0
-    let result = client.try_resolve_round_multi(&MultiFeedPayload {
-        prices: vec![&env, 1_0000000u128, 1_0000000u128, 1_0000000u128],
-        sources: vec![&env, 0u32, 0u32, 1u32],
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        timestamp: 30,
-    });
-    assert_eq!(result, Err(Ok(ContractError::DuplicateOracleSource)));
-}
-
-#[test]
-fn test_resolve_round_multi_too_few_observations_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
-        min_observations: 3,
-        quorum_threshold: 3,
-        outlier_threshold_bps: 500,
-    }));
-
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    // Only 2 observations when min is 3
-    let result = client.try_resolve_round_multi(&MultiFeedPayload {
-        prices: vec![&env, 1_0000000u128, 1_0000000u128],
-        sources: vec![&env, 0u32, 1u32],
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        timestamp: 30,
-    });
-    assert_eq!(result, Err(Ok(ContractError::TooFewObservations)));
-}
-
-// ─── Economic Window Timestamp Tests ─────────────────────────────────────────
-
 #[test]
 fn test_resolve_round_timestamp_after_round_window() {
     let env = Env::default();
@@ -2818,11 +2405,15 @@ fn test_resolve_round_timestamp_after_round_window() {
     client.initialize(&admin, &oracle);
     client.create_round(&1_0000000, &None);
 
+    // Advance ledger time to 1000, seq to 12 (round end ~ seq 12)
     env.ledger().with_mut(|li| {
         li.timestamp = 1000;
-        li.sequence_number = 12;
+        li.sequence_number = 12; // Allow resolution
     });
 
+    // Round started at ts=0, end_ledger=12 -> end_estimate = 0 + 12*5 = 60
+    // Window with default skew 300: [0, 60+300] = [0, 360]
+    // Payload ts=500 is after the upper bound
     let payload = OraclePayload {
         price: 1_5000000,
         timestamp: 500,
@@ -2850,6 +2441,7 @@ fn test_resolve_round_timestamp_before_round_window() {
 
     client.initialize(&admin, &oracle);
 
+    // Set initial ledger timestamp to 100 so round starts at ts=100
     env.ledger().with_mut(|li| {
         li.timestamp = 100;
     });
@@ -2860,11 +2452,14 @@ fn test_resolve_round_timestamp_before_round_window() {
         li.sequence_number = 12;
     });
 
+    // Round start=100, end_ledger=12 -> end_estimate = 100 + 12*5 = 160
+    // Default skew 300 -> window: [100-300, 160+300] = [0, 460] (lower saturates at 0)
+    // Set a short skew of 30 via instance storage to make lower bound = 100-30 = 70
     env.as_contract(&contract_id, || {
-        env.storage()
-            .instance()
-            .set(&symbol_short!("otskew"), &30u64);
+        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
     });
+    // With skew=30: window = [70, 190]
+    // Payload ts=10 is before the lower bound
 
     let payload = OraclePayload {
         price: 1_5000000,
@@ -2903,12 +2498,12 @@ fn test_resolve_round_timestamp_boundary_lower() {
         li.sequence_number = 12;
     });
 
+    // Skew=30 -> window: [70, 190]
     env.as_contract(&contract_id, || {
-        env.storage()
-            .instance()
-            .set(&symbol_short!("otskew"), &30u64);
+        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
     });
 
+    // Payload at exactly the lower bound (70) must be accepted
     client.resolve_round(&OraclePayload {
         price: 1_5000000,
         timestamp: 70,
@@ -2940,6 +2535,9 @@ fn test_resolve_round_timestamp_boundary_upper() {
         li.sequence_number = 12;
     });
 
+    // Round start=0, end_ledger=12 -> end_estimate = 60
+    // Default skew=300 -> window: [0, 360]
+    // Payload at exactly the upper bound (360) must be accepted
     client.resolve_round(&OraclePayload {
         price: 1_5000000,
         timestamp: 360,

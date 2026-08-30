@@ -35,6 +35,11 @@ while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
 const rustCodes = new Map(rustVariants.map(v => [v.code, v.name]));
 
 describe("Contract Error Parity", () => {
+  it("maps AccessDenied to its stable contract code", () => {
+    expect(rustCodes.get(79)).toBe("AccessDenied");
+    expect(tsCodes.get(79)).toBe("AccessDenied");
+  });
+
   it("has no missing error codes in TS", () => {
     const missingInTS = [];
     for (const [code, name] of rustCodes) {

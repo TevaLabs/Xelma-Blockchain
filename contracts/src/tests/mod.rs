@@ -9,6 +9,7 @@ mod betting;
 mod cancel_refund_matrix;
 mod cei_ordering;
 mod chaos_recovery;
+mod commit_reveal_e2e;
 mod claim_many;
 // mod commit_reveal_e2e; // upstream bug: all-unrevealed refunds test expects behavior contract doesn't implement
 mod config_helpers;
@@ -16,6 +17,8 @@ mod config_helpers;
 mod conservation;
 mod cost_benchmarks;
 mod deviation_reference;
+mod dispute_window;
+mod edge_cases;
 mod drill;
 mod edge_cases;
 mod event_coverage;

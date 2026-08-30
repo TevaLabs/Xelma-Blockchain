@@ -229,6 +229,9 @@ pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
 ///    must win even on open deployments.
 /// 2. If allowlist mode is enabled, an `user` that is not allowlisted is rejected.
 /// 3. Otherwise, the call proceeds (default open).
+///
+/// Both rejection paths return the stable, dedicated
+/// [`ContractError::AccessDenied`] error (code `79`).
 pub fn _enforce_access_control(env: &Env, user: &Address) -> Result<(), ContractError> {
     if env
         .storage()
