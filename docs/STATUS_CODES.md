@@ -155,6 +155,7 @@ Returns a composite snapshot of overall protocol health, designed for operator m
 | `4`   | `NO_ACTIVE_ROUND`   | OK       | Idle state: no active round, but oracle is live and contract is normal.   |
 | `5`   | `MULTIPLE_ISSUES`   | CRIT     | Two or more degradation conditions detected simultaneously.               |
 | `6`   | `CLAIMS_ONLY`       | WARN     | Protocol in `ClaimsOnly` runtime mode; round mutations blocked.           |
+| `7`   | `ACCESS_RESTRICTED` | OK       | Allowlist mode enabled; protocol is healthy but admission is gated.       |
 
 ---
 

@@ -829,6 +829,7 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
     let schema_version = _schema_version(&env).unwrap_or(1);
     let mode = _current_mode(&env);
     let is_claims_only = mode == RuntimeMode::ClaimsOnly;
+    let access_restricted = crate::access_control::is_access_control_enabled(env.clone());
 
     let mut issues: u32 = 0;
     if paused {
@@ -853,6 +854,8 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         3u32 // ROUND_STALE
     } else if !has_active_round {
         4u32 // NO_ACTIVE_ROUND
+    } else if access_restricted {
+        7u32 // ACCESS_RESTRICTED
     } else {
         0u32 // HEALTHY
     };
