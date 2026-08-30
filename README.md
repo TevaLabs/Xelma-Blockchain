@@ -842,6 +842,7 @@ Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Bloc
 
 ## 📚 Documentation
 
+- **[Architecture](./docs/architecture.md)** — Entrypoints, layers, data stores, and Soroban boundaries (start here!)
 - **[Contributor Map](./docs/CONTRIBUTOR_MAP.md)** — Module → test → task map (new contributors start here!)
 - **[Contributor Task Matrix](./docs/CONTRIBUTOR_TASK_MATRIX.md)** — PR evidence requirements for every task type
 - **[Smart Contract](./contracts/src/)** - Modular Rust code (contract, types, errors)
