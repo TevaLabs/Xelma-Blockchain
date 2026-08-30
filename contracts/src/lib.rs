@@ -17,12 +17,14 @@ extern crate alloc;
 extern crate std;
 
 
+mod access_control;
 mod admin;
 mod betting;
 pub mod common;
 mod config;
 mod contract;
 mod errors;
+mod governance;
 mod leaderboard;
 mod queries;
 mod settlement;

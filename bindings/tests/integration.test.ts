@@ -12,6 +12,7 @@ import {
   StakeExceedsMaxError,
   ExposureCapExceededError,
   NoRoundTemplateError,
+  AccessDeniedError,
   wrapContractError,
   type MintResult,
   type ClaimResult,
@@ -210,6 +211,12 @@ describe("wrapContractError", () => {
   it("passes through NoRoundTemplateError for code 65", () => {
     const err = wrapContractError({ code: 65 });
     expect(err).toBeInstanceOf(NoRoundTemplateError);
+  });
+
+  it("maps access-control rejection code 79 to AccessDeniedError", () => {
+    const err = wrapContractError({ code: 79 });
+    expect(err).toBeInstanceOf(AccessDeniedError);
+    expect((err as AccessDeniedError).variant).toBe("AccessDenied");
   });
 });
 

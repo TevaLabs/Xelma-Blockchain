@@ -422,3 +422,43 @@ fn test_protocol_fee_timelock_disable_via_none() {
     assert_eq!(client.get_protocol_fee_bps(), None,
         "re-issuing with None must remove the storage key entirely");
 }
+
+/// Regression: every ConfigChangeKind variant must have a unique discriminant (Issue #383).
+#[test]
+fn config_change_kind_discriminants_are_unique() {
+    use core::mem::discriminant;
+    use crate::types::ConfigChangeKind;
+
+    let kinds = [
+        ConfigChangeKind::Windows,
+        ConfigChangeKind::MaxStake,
+        ConfigChangeKind::MaxUserRoundExposure,
+        ConfigChangeKind::MaxPendingWinnings,
+        ConfigChangeKind::OracleStaleThreshold,
+        ConfigChangeKind::OracleMaxDeviationBps,
+        ConfigChangeKind::ProtocolFeeBps,
+        ConfigChangeKind::MinParticipants,
+        ConfigChangeKind::MaxPrecisionParticipants,
+        ConfigChangeKind::MintLimit,
+        ConfigChangeKind::ArchiveRetention,
+        ConfigChangeKind::CloseBufferLedgers,
+        ConfigChangeKind::OracleTimestampSkew,
+        ConfigChangeKind::PendingWinningsExpiry,
+        ConfigChangeKind::MinBet,
+        ConfigChangeKind::EpochMintBudget,
+        ConfigChangeKind::PrecisionPayoutPolicy,
+        ConfigChangeKind::DisputeLedgers,
+        ConfigChangeKind::FeeModel,
+        ConfigChangeKind::EarlyCashoutBps,
+    ];
+
+    for i in 0..kinds.len() {
+        for j in (i + 1)..kinds.len() {
+            assert_ne!(
+                discriminant(&kinds[i]),
+                discriminant(&kinds[j]),
+                "ConfigChangeKind collision between variants at index {i} and {j}"
+            );
+        }
+    }
+}

@@ -41,4 +41,24 @@ Every benchmark asserts the measured CPU instructions and memory bytes stay with
 
 ## CI artifact guidance
 
-CI should run the generation command above with `--nocapture` and upload the captured test log as a `cost-benchmarks` artifact. If the project does not publish artifacts in a given workflow, paste the emitted markdown rows into this file in the same change that modifies benchmark-sensitive code.
+The `rust-test` job in `.github/workflows/ci.yml` runs the generation command
+above with `--nocapture`, tees the output to `cost-benchmarks.log`, and
+uploads it as a `cost-benchmarks` build artifact (via `actions/upload-artifact`,
+7-day retention) — including on a failed/regressed run, so the exact numbers
+that tripped a `*_CPU_MAX`/`*_MEM_MAX` assertion are always reviewable from the
+workflow run's Artifacts section, not just the truncated job log. When you
+touch a benchmark-sensitive path, download that artifact from your PR's CI
+run and paste the relevant rows into this file's table in the same change.
+
+## Updating a cost-benchmark ceiling
+
+The `*_CPU_MAX`/`*_MEM_MAX` constants in `contracts/src/tests/cost_benchmarks.rs`
+are the enforcement mechanism — a benchmark failing them is what "flags a cost
+regression." See [`contracts/BENCHMARKS.md`](../contracts/BENCHMARKS.md) for
+the full baseline-recording and ceiling-tightening procedure (currently every
+path is gated at the full Soroban per-transaction budget; tightening these to
+real measured baselines ± tolerance is the documented next step there). Any
+PR that intentionally raises a ceiling must also update the table in this file
+and in `contracts/BENCHMARKS.md` with the new baseline and the commit/date it
+was captured on, exactly like `docs/wasm-size-budget.md`'s baseline-bump
+procedure for the separate WASM size gate.

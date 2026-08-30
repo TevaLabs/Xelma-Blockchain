@@ -9,9 +9,16 @@ CI allows up to **+10%** growth above baseline before failing.
 ### How CI checks it
 The `wasm-size-gate` job in `.github/workflows/ci.yml`:
 1. Builds `xelma_contract.wasm` in release mode
-2. Compares size against `.wasm-size-baseline` + 10%
-3. Prints a size report on every build
-4. Fails with an actionable error if the budget is exceeded
+2. Runs `scripts/check_wasm_size.sh` against that artifact, which compares
+   size against `.wasm-size-baseline` + 10%, prints a size report, and fails
+   with an actionable error if the budget is exceeded
+
+### Checking it locally
+Run `./scripts/check_wasm_size.sh` with no arguments from anywhere in the
+repo — it builds the release WASM the same way CI does and reports the same
+budget check, so you can catch a size regression before pushing. Pass an
+existing `.wasm` path as an argument to skip the build and just measure a
+WASM you already built.
 
 ### Updating the baseline
 When intentional size growth is merged (new feature, dependency bump):

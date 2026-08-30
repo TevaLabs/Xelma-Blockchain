@@ -44,9 +44,9 @@ fn test_leaderboard_ordered_by_wins() {
 
     // Query wins leaderboard with cursor = None (first page)
     let page = client.get_leaderboard_by_wins(&None, &10);
-    assert_eq!(page.items.len(), 3);
+    assert_eq!(page.0.len(), 3);
 
-    let entries = page.items;
+    let entries = page.0;
     // Expected order: Bob (5), Alice (3), Carol (2)
     assert_eq!(entries.get(0).unwrap().user, user_b);
     assert_eq!(entries.get(0).unwrap().stats.total_wins, 5);
@@ -58,7 +58,7 @@ fn test_leaderboard_ordered_by_wins() {
     assert_eq!(entries.get(2).unwrap().stats.total_wins, 2);
 
     // next_cursor should be Some (the last entry's address)
-    assert!(page.next_cursor.is_some());
+    assert!(page.1.is_some());
 }
 
 #[test]
@@ -104,9 +104,9 @@ fn test_leaderboard_ordered_by_streak() {
 
     // Query streak leaderboard with cursor = None
     let page = client.get_leaderboard_by_streak(&None, &10);
-    assert_eq!(page.items.len(), 3);
+    assert_eq!(page.0.len(), 3);
 
-    let entries = page.items;
+    let entries = page.0;
     // Expected order: Carol (4), Alice (3), Bob (2)
     assert_eq!(entries.get(0).unwrap().user, user_c);
     assert_eq!(entries.get(0).unwrap().stats.best_streak, 4);
@@ -150,27 +150,27 @@ fn test_leaderboard_cursor_pagination() {
 
     // First page: cursor = None, limit = 1 -> should return Bob (5 wins)
     let page0 = client.get_leaderboard_by_wins(&None, &1);
-    assert_eq!(page0.items.len(), 1);
-    assert_eq!(page0.items.get(0).unwrap().user, user_b);
-    assert!(page0.next_cursor.is_some());
+    assert_eq!(page0.0.len(), 1);
+    assert_eq!(page0.0.get(0).unwrap().user, user_b);
+    assert!(page0.1.is_some());
 
     // Second page: cursor from page0 -> should return Alice (3 wins)
-    let page1 = client.get_leaderboard_by_wins(&page0.next_cursor, &1);
-    assert_eq!(page1.items.len(), 1);
-    assert_eq!(page1.items.get(0).unwrap().user, user_a);
-    assert!(page1.next_cursor.is_some());
+    let page1 = client.get_leaderboard_by_wins(&page0.1, &1);
+    assert_eq!(page1.0.len(), 1);
+    assert_eq!(page1.0.get(0).unwrap().user, user_a);
+    assert!(page1.1.is_some());
 
     // Third page: cursor from page1 -> should return Carol (2 wins)
-    let page2 = client.get_leaderboard_by_wins(&page1.next_cursor, &1);
-    assert_eq!(page2.items.len(), 1);
-    assert_eq!(page2.items.get(0).unwrap().user, user_c);
+    let page2 = client.get_leaderboard_by_wins(&page1.1, &1);
+    assert_eq!(page2.0.len(), 1);
+    assert_eq!(page2.0.get(0).unwrap().user, user_c);
     // Last page: next_cursor should be None (exhausted)
-    assert!(page2.next_cursor.is_none());
+    assert!(page2.1.is_none());
 
     // Fourth page: using last cursor -> empty
-    let page3 = client.get_leaderboard_by_wins(&page2.next_cursor, &1);
-    assert_eq!(page3.items.len(), 0);
-    assert!(page3.next_cursor.is_none());
+    let page3 = client.get_leaderboard_by_wins(&page2.1, &1);
+    assert_eq!(page3.0.len(), 0);
+    assert!(page3.1.is_none());
 }
 
 #[test]
@@ -199,11 +199,11 @@ fn test_leaderboard_deterministic_tie_breaking() {
 
     // Query wins leaderboard with cursor = None
     let page = client.get_leaderboard_by_wins(&None, &10);
-    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.0.len(), 2);
 
     // Expected order: sorted by Address ascending
-    let first = page.items.get(0).unwrap().user;
-    let second = page.items.get(1).unwrap().user;
+    let first = page.0.get(0).unwrap().user;
+    let second = page.0.get(1).unwrap().user;
     assert!(first < second);
 }
 
@@ -236,7 +236,7 @@ fn test_leaderboard_limit_capped_at_max_page_size() {
     let page = client.get_leaderboard_by_wins(&None, &150);
     // With 50 participants, we should get at most 50 results, all ≤ 100.
     assert!(
-        page.items.len() <= 100,
+        page.0.len() <= 100,
         "result count should be capped at 100"
     );
 }
@@ -254,12 +254,12 @@ fn test_leaderboard_empty_when_no_users() {
 
     // No round created, no users → empty leaderboard
     let page = client.get_leaderboard_by_wins(&None, &10);
-    assert_eq!(page.items.len(), 0);
-    assert!(page.next_cursor.is_none());
+    assert_eq!(page.0.len(), 0);
+    assert!(page.1.is_none());
 
     let page2 = client.get_leaderboard_by_streak(&None, &10);
-    assert_eq!(page2.items.len(), 0);
-    assert!(page2.next_cursor.is_none());
+    assert_eq!(page2.0.len(), 0);
+    assert!(page2.1.is_none());
 }
 
 #[test]
@@ -285,6 +285,6 @@ fn test_leaderboard_zero_limit_is_empty() {
 
     // limit = 0 → empty page
     let page = client.get_leaderboard_by_wins(&None, &0);
-    assert_eq!(page.items.len(), 0);
-    assert!(page.next_cursor.is_none());
+    assert_eq!(page.0.len(), 0);
+    assert!(page.1.is_none());
 }

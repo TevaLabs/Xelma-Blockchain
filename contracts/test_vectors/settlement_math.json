@@ -1,0 +1,505 @@
+{
+  "$schema_note": "Checked-in golden vectors for contracts/src/settlement_math.rs (Issue #412). Loaded and verified by contracts/src/tests/settlement_math_vectors.rs on every `cargo test`. See contracts/test_vectors/README.md for the regeneration procedure and the meaning of each section.",
+  "updown_fee": [
+    {
+      "name": "no_fee_config",
+      "winning_pool": 300,
+      "losing_pool": 150,
+      "fee_bps": null,
+      "expected_dist_winning": 300,
+      "expected_dist_losing": 150,
+      "expected_fee": 0
+    },
+    {
+      "name": "one_percent_fee",
+      "winning_pool": 300,
+      "losing_pool": 150,
+      "fee_bps": 100,
+      "expected_dist_winning": 300,
+      "expected_dist_losing": 146,
+      "expected_fee": 4
+    },
+    {
+      "name": "thin_losing_pool_spillover",
+      "winning_pool": 1000,
+      "losing_pool": 10,
+      "fee_bps": 500,
+      "expected_dist_winning": 960,
+      "expected_dist_losing": 0,
+      "expected_fee": 50
+    },
+    {
+      "name": "zero_bps_is_noop",
+      "winning_pool": 300,
+      "losing_pool": 150,
+      "fee_bps": 0,
+      "expected_dist_winning": 300,
+      "expected_dist_losing": 150,
+      "expected_fee": 0
+    }
+  ],
+  "precision_fee": [
+    {
+      "name": "no_fee_config",
+      "total_pot": 500,
+      "fee_bps": null,
+      "expected_distributable": 500,
+      "expected_fee": 0
+    },
+    {
+      "name": "two_percent_fee",
+      "total_pot": 1000,
+      "fee_bps": 200,
+      "expected_distributable": 980,
+      "expected_fee": 20
+    },
+    {
+      "name": "zero_pot",
+      "total_pot": 0,
+      "fee_bps": 100,
+      "expected_distributable": 0,
+      "expected_fee": 0
+    },
+    {
+      "name": "negative_pot_is_noop",
+      "total_pot": -10,
+      "fee_bps": 100,
+      "expected_distributable": -10,
+      "expected_fee": 0
+    }
+  ],
+  "updown_payouts": [
+    {
+      "name": "price_up_two_winners_no_fee",
+      "start_price": 10000000,
+      "final_price": 15000000,
+      "pool_up": 300,
+      "pool_down": 150,
+      "fee_bps": null,
+      "positions": [
+        {
+          "amount": 100,
+          "side_up": true
+        },
+        {
+          "amount": 200,
+          "side_up": true
+        },
+        {
+          "amount": 150,
+          "side_up": false
+        }
+      ],
+      "expected": [
+        {
+          "payout": 150,
+          "is_winner": true,
+          "is_refund": false
+        },
+        {
+          "payout": 300,
+          "is_winner": true,
+          "is_refund": false
+        },
+        {
+          "payout": 0,
+          "is_winner": false,
+          "is_refund": false
+        }
+      ]
+    },
+    {
+      "name": "price_down_single_winner_no_fee",
+      "start_price": 20000000,
+      "final_price": 10000000,
+      "pool_up": 100,
+      "pool_down": 200,
+      "fee_bps": null,
+      "positions": [
+        {
+          "amount": 200,
+          "side_up": false
+        },
+        {
+          "amount": 100,
+          "side_up": true
+        }
+      ],
+      "expected": [
+        {
+          "payout": 300,
+          "is_winner": true,
+          "is_refund": false
+        },
+        {
+          "payout": 0,
+          "is_winner": false,
+          "is_refund": false
+        }
+      ]
+    },
+    {
+      "name": "price_unchanged_refunds_all",
+      "start_price": 10000000,
+      "final_price": 10000000,
+      "pool_up": 100,
+      "pool_down": 50,
+      "fee_bps": null,
+      "positions": [
+        {
+          "amount": 100,
+          "side_up": true
+        },
+        {
+          "amount": 50,
+          "side_up": false
+        }
+      ],
+      "expected": [
+        {
+          "payout": 100,
+          "is_winner": false,
+          "is_refund": true
+        },
+        {
+          "payout": 50,
+          "is_winner": false,
+          "is_refund": true
+        }
+      ]
+    },
+    {
+      "name": "one_sided_pool_refunds_all",
+      "start_price": 10000000,
+      "final_price": 15000000,
+      "pool_up": 300,
+      "pool_down": 0,
+      "fee_bps": null,
+      "positions": [
+        {
+          "amount": 100,
+          "side_up": true
+        },
+        {
+          "amount": 200,
+          "side_up": true
+        }
+      ],
+      "expected": [
+        {
+          "payout": 100,
+          "is_winner": false,
+          "is_refund": true
+        },
+        {
+          "payout": 200,
+          "is_winner": false,
+          "is_refund": true
+        }
+      ]
+    },
+    {
+      "name": "price_up_with_one_percent_fee",
+      "start_price": 10000000,
+      "final_price": 15000000,
+      "pool_up": 300,
+      "pool_down": 150,
+      "fee_bps": 100,
+      "positions": [
+        {
+          "amount": 100,
+          "side_up": true
+        },
+        {
+          "amount": 150,
+          "side_up": false
+        }
+      ],
+      "expected": [
+        {
+          "payout": 148,
+          "is_winner": true,
+          "is_refund": false
+        },
+        {
+          "payout": 0,
+          "is_winner": false,
+          "is_refund": false
+        }
+      ]
+    }
+  ],
+  "precision_winners": [
+    {
+      "name": "single_clear_winner",
+      "final_price": 2298,
+      "entries": [
+        {
+          "predicted_price": 2297,
+          "amount": 100,
+          "revealed": true
+        },
+        {
+          "predicted_price": 2300,
+          "amount": 150,
+          "revealed": true
+        },
+        {
+          "predicted_price": 2500,
+          "amount": 50,
+          "revealed": true
+        }
+      ],
+      "expected_winner_indices": [
+        0
+      ],
+      "expected_total_pot": 300
+    },
+    {
+      "name": "two_way_tie",
+      "final_price": 2200,
+      "entries": [
+        {
+          "predicted_price": 2100,
+          "amount": 100,
+          "revealed": true
+        },
+        {
+          "predicted_price": 2300,
+          "amount": 150,
+          "revealed": true
+        }
+      ],
+      "expected_winner_indices": [
+        0,
+        1
+      ],
+      "expected_total_pot": 250
+    },
+    {
+      "name": "unrevealed_loses_to_farther_revealed",
+      "final_price": 2298,
+      "entries": [
+        {
+          "predicted_price": 2297,
+          "amount": 100,
+          "revealed": false
+        },
+        {
+          "predicted_price": 4000,
+          "amount": 100,
+          "revealed": true
+        }
+      ],
+      "expected_winner_indices": [
+        1
+      ],
+      "expected_total_pot": 200
+    },
+    {
+      "name": "all_unrevealed_no_winners",
+      "final_price": 2298,
+      "entries": [
+        {
+          "predicted_price": 0,
+          "amount": 100,
+          "revealed": false
+        },
+        {
+          "predicted_price": 0,
+          "amount": 50,
+          "revealed": false
+        }
+      ],
+      "expected_winner_indices": [],
+      "expected_total_pot": 150
+    }
+  ],
+  "split_pot_among_winners": [
+    {
+      "name": "even_division",
+      "distributable": 100,
+      "winner_count": 2,
+      "expected": [
+        50,
+        50
+      ]
+    },
+    {
+      "name": "remainder_to_first_of_three",
+      "distributable": 100,
+      "winner_count": 3,
+      "expected": [
+        34,
+        33,
+        33
+      ]
+    },
+    {
+      "name": "large_remainder_of_five",
+      "distributable": 103,
+      "winner_count": 5,
+      "expected": [
+        23,
+        20,
+        20,
+        20,
+        20
+      ]
+    },
+    {
+      "name": "single_winner",
+      "distributable": 500,
+      "winner_count": 1,
+      "expected": [
+        500
+      ]
+    },
+    {
+      "name": "zero_pot",
+      "distributable": 0,
+      "winner_count": 3,
+      "expected": []
+    }
+  ],
+  "deviation_bps": [
+    {
+      "name": "five_percent_up",
+      "price": 10500000,
+      "reference": 10000000,
+      "expected_bps": 500
+    },
+    {
+      "name": "five_percent_down",
+      "price": 9500000,
+      "reference": 10000000,
+      "expected_bps": 500
+    },
+    {
+      "name": "ten_percent_up",
+      "price": 11000000,
+      "reference": 10000000,
+      "expected_bps": 1000
+    },
+    {
+      "name": "no_change",
+      "price": 10000000,
+      "reference": 10000000,
+      "expected_bps": 0
+    }
+  ],
+  "precision_remainder_ordering": [
+    {
+      "name": "two_way_tie_indivisible_remainder_goes_to_first_winner",
+      "note": "Entries are given in canonical address-sorted order — settlement.rs sorts RoundParticipants by address (sort_addresses) before building the precision entry list, so index 0 here always corresponds to the lexicographically-lowest-address winner. This is the pure-math mirror of tests::resolution::precision::test_precision_remainder_goes_to_lexicographically_lowest_winner, which proves the same rule end-to-end through the contract with real Addresses.",
+      "final_price": 2000,
+      "entries": [
+        {
+          "predicted_price": 2000,
+          "amount": 100000001,
+          "revealed": true
+        },
+        {
+          "predicted_price": 2000,
+          "amount": 100000000,
+          "revealed": true
+        }
+      ],
+      "expected_payouts": [
+        100000001,
+        100000000
+      ]
+    },
+    {
+      "name": "three_way_tie_remainder_goes_to_first_winner",
+      "final_price": 3000,
+      "entries": [
+        {
+          "predicted_price": 3000,
+          "amount": 34,
+          "revealed": true
+        },
+        {
+          "predicted_price": 3000,
+          "amount": 33,
+          "revealed": true
+        },
+        {
+          "predicted_price": 3000,
+          "amount": 33,
+          "revealed": true
+        }
+      ],
+      "expected_payouts": [
+        34,
+        33,
+        33
+      ]
+    },
+    {
+      "name": "five_way_tie_large_remainder_goes_to_first_winner",
+      "final_price": 5000,
+      "entries": [
+        {
+          "predicted_price": 5000,
+          "amount": 21,
+          "revealed": true
+        },
+        {
+          "predicted_price": 5000,
+          "amount": 21,
+          "revealed": true
+        },
+        {
+          "predicted_price": 5000,
+          "amount": 21,
+          "revealed": true
+        },
+        {
+          "predicted_price": 5000,
+          "amount": 20,
+          "revealed": true
+        },
+        {
+          "predicted_price": 5000,
+          "amount": 20,
+          "revealed": true
+        }
+      ],
+      "expected_payouts": [
+        23,
+        20,
+        20,
+        20,
+        20
+      ]
+    },
+    {
+      "name": "unrevealed_entry_never_wins_but_its_stake_still_joins_the_payout_pool",
+      "note": "The unrevealed entry (index 1) never enters the winner set regardless of its address-sort position — but its stake still counts toward total_pot and is redistributed to the winners (forfeiture), and the remainder still lands on the first winner in canonical order (index 0), not the first entry overall.",
+      "final_price": 7000,
+      "entries": [
+        {
+          "predicted_price": 7000,
+          "amount": 50,
+          "revealed": true
+        },
+        {
+          "predicted_price": 0,
+          "amount": 999,
+          "revealed": false
+        },
+        {
+          "predicted_price": 7000,
+          "amount": 50,
+          "revealed": true
+        }
+      ],
+      "expected_payouts": [
+        550,
+        0,
+        549
+      ]
+    }
+  ]
+}

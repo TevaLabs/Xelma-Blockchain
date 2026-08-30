@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #![cfg(test)]
 
+use alloc::vec;
 use crate::settlement_math::{
     compute_precision_payouts_with_policy, find_precision_winners_with_policy,
     split_pot_stake_weighted, PrecisionEntry, PrecisionPayoutPolicy, PrecisionScoringMode,

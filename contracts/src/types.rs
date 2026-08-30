@@ -22,6 +22,17 @@ pub enum RuntimeMode {
     FullyPaused = 2,
 }
 
+/// Policy action class consumed by the central policy gate (Issue #261).
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum PolicyAction {
+    RoundMutation = 0,
+    Claim = 1,
+    AdminConfig = 2,
+    Settlement = 3,
+}
+
 /// Lifecycle phase of an active round, derived from ledger windows.
 ///
 /// Semantics (given `start_ledger`, `bet_end_ledger`, `end_ledger`):
@@ -107,30 +118,39 @@ pub enum DataKeyCore {
     /// up the next round without re-specifying `start_price` / `mode` each
     /// time. Absent means no template is configured.
     RoundTemplate,
-    /// Bounded index of user addresses sorted by lifetime total wins
-    /// descending (all-time leaderboard, independent of seasons).
-    LeaderboardWins,
-    /// Bounded index of user addresses sorted by lifetime best streak
-    /// descending (all-time leaderboard, independent of seasons).
-    LeaderboardStreak,
-    /// Monotonically increasing id of the currently-active leaderboard
-    /// season. Absent is treated as season 1.
-    SeasonId,
-    /// Bounded index of user addresses in the *active* season sorted by
-    /// season-scoped total wins descending.
-    SeasonLeaderboardWins,
-    /// Bounded index of user addresses in the *active* season sorted by
-    /// season-scoped best streak descending.
-    SeasonLeaderboardStreak,
+    /// Admin-configured multi-feed oracle quorum parameters.
     OracleQuorum,
+    /// Announced next schema version for migration preview.
     NextSchemaVersion,
     MinBet,
     EpochMintBudget,
     EarlyCashoutBps,
     FeeModel,
     DisputeLedgers,
-    Ext(DataKeyExt),
+    /// Payout policy for Precision mode rounds.
     PrecisionPayoutPolicy,
+    /// When true, only allowlisted addresses may participate (Issue #274).
+    AccessControlEnabled,
+    /// Secondary governance approver (Issue #272).
+    GovApprover,
+    /// Default governance proposal TTL in ledgers.
+    GovProposalTtlLedgers,
+    /// Monotonic counter for governance proposal ids.
+    NextGovProposalId,
+    /// Overflow bucket for leaderboard/season keys under XDR 50-case limit.
+    Ext(DataKeyExt),
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKeyExt {
+    LeaderboardWins,
+    LeaderboardStreak,
+    SeasonId,
+    SeasonUserStats(u32, Address),
+    SeasonLeaderboardWins,
+    SeasonLeaderboardStreak,
+    SeasonArchive(u32),
 }
 
 /// Parameterised and round-scoped storage keys.
@@ -175,7 +195,23 @@ pub enum DataKeyScoped {
     /// Frozen snapshot of a season's final rankings, written when the season
     /// is reset. Seasons are never deleted — this is a permanent archive.
     SeasonArchive(u32),
+    /// Per-user index of archived round IDs (Issue #281).
     UserArchivedRoundIds(Address),
+    /// Allowlist marker for participant access control (Issue #274).
+    Allowlisted(Address),
+    /// Denylist marker for participant access control (Issue #274).
+    Denylisted(Address),
+    /// Stored governance proposal record (Issue #272).
+    GovProposal(u64),
+}
+
+/// Fee incidence model (Issue #268).
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum FeeModel {
+    FeeOnPot = 0,
+    FeeOnWinnings = 1,
 }
 
 /// Identifies which critical risk setting is pending timelocked activation.
@@ -195,13 +231,13 @@ pub enum ConfigChangeKind {
     MintLimit = 9,
     ArchiveRetention = 10,
     CloseBufferLedgers = 11,
-    EpochMintBudget = 12,
-    PendingWinningsExpiry = 13,
-    DisputeLedgers = 14,
-    FeeModel = 15,
-    OracleTimestampSkew = 16,
-    MinBet = 17,
-    PrecisionPayoutPolicy = 18,
+    OracleTimestampSkew = 12,
+    EpochMintBudget = 13,
+    PendingWinningsExpiry = 14,
+    PrecisionPayoutPolicy = 15,
+    MinBet = 16,
+    DisputeLedgers = 17,
+    FeeModel = 18,
     EarlyCashoutBps = 19,
 }
 
@@ -225,9 +261,6 @@ pub enum ConfigChangePayload {
     PendingWinningsExpiry(u32),
     DisputeLedgers(u32),
     FeeModel(FeeModel),
-    OracleTimestampSkew(u64),
-    MinBet(Option<i128>),
-    PrecisionPayoutPolicy(u32),
     EarlyCashoutBps(Option<u32>),
 }
 
@@ -238,6 +271,77 @@ pub struct PendingConfigChange {
     pub payload: ConfigChangePayload,
     pub activation_ledger: u32,
     pub scheduled_at_ledger: u32,
+}
+
+/// One-sided (degenerate) market settlement policy (Issue #270 / #390).
+/// When exactly one of pool_up/pool_down is empty, refund all stakes on the
+/// populated side (default policy for one-sided UpDown pools).
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum OneSidedPolicy {
+    Refund = 0,
+    Void = 1,
+    CarryForward = 2,
+}
+
+pub type Policy = OneSidedPolicy;
+
+/// Payout policy for Precision mode (on-chain config).
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum PrecisionPayoutPolicy {
+    Equal = 0,
+    StakeWeighted = 1,
+}
+
+/// Participant access-control state (Issue #274).
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum AccessState {
+    Open = 0,
+    Allowlisted = 1,
+    Denylisted = 2,
+}
+
+/// Governance proposal lifecycle status (Issue #272).
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum GovProposalStatus {
+    Pending = 0,
+    Approved = 1,
+    Executed = 2,
+    Cancelled = 3,
+    Expired = 4,
+}
+
+/// Protected administrative action types (Issue #272).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum GovAction {
+    PauseProtocol,
+    UnpauseProtocol,
+    SetProtocolFeeBps(Option<u32>),
+    WithdrawProtocolFee(Address, i128),
+    SetTreasuryAddress(Address),
+    SetAdmin(Address),
+    SetOracle(Address),
+}
+
+/// Stored governance proposal (Issue #272).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct GovProposal {
+    pub id: u64,
+    pub proposer: Address,
+    pub approver: Option<Address>,
+    pub action: GovAction,
+    pub created_at_ledger: u32,
+    pub expires_at_ledger: u32,
+    pub status: GovProposalStatus,
 }
 
 /// Represents which side a user bet on
@@ -289,12 +393,22 @@ pub struct OraclePayload {
     /// Round identifier that should match `Round.start_ledger`
     pub round_id: u32,
     /// Per-round replay-protection nonce.
+    ///
+    /// The oracle service must generate a unique value per submission for a
+    /// given round (e.g. a monotonic counter or random 64-bit value). The
+    /// contract records each consumed nonce under
+    /// `DataKeyScoped::ConsumedOracleNonce(round_id, nonce)` and rejects any reuse,
+    /// making resolution idempotent against accidental duplicate submissions.
     pub nonce: u64,
     /// SHA-256 hash of the network passphrase this payload targets.
+    /// Validated against `env.ledger().network_id()` to prevent cross-network replay.
     pub network_id: BytesN<32>,
     /// Contract address this payload is intended for.
+    /// Validated against `env.current_contract_address()` to prevent cross-contract replay.
     pub contract_addr: Address,
     /// Optional confidence score from the price feed (0–10000 bps, where 10000 = 100%).
+    /// When `None`, the payload is treated as a legacy submission.
+    /// When strict mode is enabled, `None` is rejected.
     pub confidence: Option<u32>,
     pub attestation: Option<BytesN<64>>,
 }
@@ -311,15 +425,15 @@ pub struct OracleHeartbeatRecord {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Round {
-    pub round_id: u64,
-    pub price_start: u128,
-    pub start_ledger: u32,
-    pub bet_end_ledger: u32,
-    pub end_ledger: u32,
-    pub pool_up: i128,
-    pub pool_down: i128,
-    pub mode: RoundMode,
-    pub start_timestamp: u64,
+    pub round_id: u64,       // Unique monotonically increasing round identifier
+    pub price_start: u128,   // Starting XLM price in stroops
+    pub start_ledger: u32,   // Ledger when round was created
+    pub start_timestamp: u64,  // Ledger timestamp when round was created
+    pub bet_end_ledger: u32, // Ledger when betting closes
+    pub end_ledger: u32,     // Ledger when round ends (~5s per ledger)
+    pub pool_up: i128,       // Total vXLM bet on UP
+    pub pool_down: i128,     // Total vXLM bet on DOWN
+    pub mode: RoundMode,     // Round mode: UpDown (0) or Precision (1)
 }
 
 /// Aggregated active-round pool composition for frontend transparency.
@@ -344,6 +458,55 @@ pub struct RoundPoolStats {
     pub precision_prediction_count: u32,
     pub precision_commitment_count: u32,
     pub precision_revealed_count: u32,
+}
+
+/// One-read composite view of current market state for frontends: round
+/// phase, pool composition, ledger timing buffers, and fee configuration —
+/// replacing several separate calls that could otherwise observe
+/// inconsistent state if the ledger advances between them (Issue #280).
+///
+/// # Empty-round semantics
+///
+/// When there is no active round, `phase` and `pool_stats` are both `None`.
+/// The timing-buffer and fee fields are always populated regardless — they
+/// reflect contract-wide configuration, not round state, so they have a
+/// well-defined value whether or not a round is active.
+///
+/// # Consistency with individual getters
+///
+/// `phase` and `pool_stats` are the exact, unmodified results of
+/// `get_round_phase`/`get_round_pool_stats` (never recomputed), and the
+/// buffer/fee fields are read via the same public getters
+/// (`get_bet_window_ledgers`, `get_run_window_ledgers`,
+/// `get_close_buffer_ledgers`, `get_protocol_fee_bps`, `get_fee_model`) that
+/// callers could otherwise call individually — so a snapshot can never
+/// disagree with those getters.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MarketSnapshot {
+    /// Current round's lifecycle phase, or empty if no round is active.
+    ///
+    /// Modeled as a 0-or-1-element `Vec` rather than `Option<RoundPhase>`:
+    /// this soroban-sdk version's `#[contracttype]` derive does not generate
+    /// an XDR (`ScVal`) conversion for `Option<T>` wrapping a user-defined
+    /// type, only for `Vec<T>`.
+    pub phase: Vec<RoundPhase>,
+    /// Full pool-composition breakdown for the active round, or empty if no
+    /// round is active. See `phase` for why this is a `Vec` and not an
+    /// `Option`.
+    pub pool_stats: Vec<RoundPoolStats>,
+    /// Number of ledgers the betting window stays open after round creation.
+    pub bet_window_ledgers: u32,
+    /// Number of ledgers after round creation before the round becomes
+    /// resolvable.
+    pub run_window_ledgers: u32,
+    /// Extra ledgers appended after the betting window closes, before the
+    /// round transitions to `Running` (0 = disabled).
+    pub close_buffer_ledgers: u32,
+    /// Configured protocol fee in basis points, or `None` if fees are disabled.
+    pub protocol_fee_bps: Option<u32>,
+    /// Configured fee incidence model (`FeeOnPot` or `FeeOnWinnings`).
+    pub fee_model: FeeModel,
 }
 
 /// Terminal outcome recorded when a round leaves the active state.
@@ -520,6 +683,7 @@ pub enum RoundStatus {
     Cancelled = 5,
     /// Settlement triggered but insufficient participants; all stakes refunded.
     FallbackRefund = 6,
+    /// Dispute window void; all participants refunded their full stake.
     Voided = 7,
 }
 
@@ -534,7 +698,8 @@ pub enum UserOutcomeType {
     Win = 0,
     Loss = 1,
     Refund = 2,
-    Void = 3,
+    Cancel = 3,
+    Void = 4,
 }
 
 #[contracttype]
@@ -560,6 +725,30 @@ pub struct SimulationResult {
     pub fee_amount: i128,
     pub fee_model: u32,
     pub outcomes: Vec<UserRoundOutcome>,
+}
+
+/// Per-participant outcome stored during dispute-window settlement.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedParticipant {
+    pub user: Address,
+    pub outcome: UserOutcomeType,
+    pub payout: i128,
+}
+
+/// Settlement data stored during dispute-window resolve and consumed by
+/// `finalize_round` or `void_round`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoundSettlement {
+    pub round_id: u64,
+    pub mode: u32,
+    pub final_price: u128,
+    pub price_start: u128,
+    pub pool_up: i128,
+    pub pool_down: i128,
+    pub participants: Vec<ResolvedParticipant>,
+    pub fee_amount: i128,
 }
 
 /// Admin-configured blueprint for `create_next_from_template`.
@@ -607,101 +796,7 @@ pub struct SeasonArchive {
     pub participant_count: u32,
 }
 
-
-/// Deterministic settlement policy governing degenerate (one-sided) market rounds.
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u32)]
-pub enum OneSidedPolicy {
-    /// Full stake refund to all participants (active protocol policy).
-    Refund = 0,
-    /// Void round releasing stakes without mutating stats.
-    Void = 1,
-    /// Carry-forward pool stakes to subsequent round (extensibility placeholder).
-    CarryForward = 2,
-}
-
-pub type Policy = OneSidedPolicy;
-
-/// Fee incidence model for protocol fees (Issue #268).
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u32)]
-pub enum FeeModel {
-    FeeOnPot = 0,      // Fee charged on total pot (default)
-    FeeOnWinnings = 1, // Fee charged only on net winnings/profit
-}
-
-/// TWAP sample ring entry (Issue #266).
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct PriceSample {
-    pub price: u128,
-    pub timestamp: u64,
-}
-
-/// Storage key for TWAP samples ring (separate from DataKey to stay within variant limits, Issue #266).
-#[contracttype]
-#[derive(Clone)]
-pub enum TwapSamplesKey {
-    Samples,
-}
-
-/// Dev Reference Mode (Issue #266).
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u32)]
-pub enum DeviationReferenceMode {
-    StartPrice = 0, // Use round.price_start (default)
-    Twap = 1,       // Use trailing-sample TWAP average
-}
-
-/// Deviation guardrail config (Issue #266).
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct DeviationConfig {
-    pub reference_mode: DeviationReferenceMode,
-    pub window_samples: u32,
-}
-
-/// Storage key for deviation config (separate from DataKey to stay within variant limits, Issue #266).
-#[contracttype]
-#[derive(Clone)]
-pub enum DeviationConfigKey {
-    Config,
-}
-
-/// Oracle attestation config (Issue #263).
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct AttestationConfig {
-    pub key: Option<BytesN<32>>, // ed25519 public key; None = attestation disabled
-}
-
-/// Storage key for attestation config (separate from DataKey to stay within variant limits, Issue #263).
-#[contracttype]
-#[derive(Clone)]
-pub enum AttestationConfigKey {
-    Config,
-}
-
-/// Oracle heartbeat health gate configuration (Issue #264)
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct HbGateConfig {
-    pub strict_mode: bool,
-    pub grace_seconds: u64,
-    pub override_armed: bool,
-}
-
-/// Storage key for heartbeat gate config (separate from DataKey to stay within variant limits, Issue #264).
-#[contracttype]
-#[derive(Clone)]
-pub enum HbGateKey {
-    Config,
-}
-
-/// Multi-feed aggregation payload (Issue #262).
+/// Multi-feed oracle resolution payload.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct MultiFeedPayload {
@@ -714,7 +809,6 @@ pub struct MultiFeedPayload {
     pub timestamp: u64,
 }
 
-/// Oracle quorum threshold configuration (Issue #262).
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct OracleQuorumConfig {
@@ -724,80 +818,122 @@ pub struct OracleQuorumConfig {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PriceSample {
+    pub price: u128,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum TwapSamplesKey {
+    Samples,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum DeviationReferenceMode {
+    StartPrice = 0,
+    Twap = 1,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeviationConfig {
+    pub reference_mode: DeviationReferenceMode,
+    pub window_samples: u32,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum DeviationConfigKey {
+    Config,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttestationConfig {
+    pub key: Option<BytesN<32>>,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum AttestationConfigKey {
+    Config,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HbGateConfig {
+    pub strict_mode: bool,
+    pub override_armed: bool,
+    pub grace_seconds: u64,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum HbGateKey {
+    Config,
+}
+
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct PendingWinningsExpiryKey(pub ());
 
 pub const PENDING_WINNINGS_EXPIRY_KEY: PendingWinningsExpiryKey = PendingWinningsExpiryKey(());
 
-/// Ledger sequence when a user's pending winnings entry was last modified.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PendingWinningsUpdatedAtKey(pub Address);
 
-/// Payout calculation policy for precision mode (Issue #265).
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u32)]
-pub enum PrecisionPayoutPolicy {
-    Equal = 0,   // Split winning pool proportionally to stake
-    StakeWeighted = 1,  // Split winnings based on accuracy and stake
-}
-
-
+/// Legacy monolithic storage key — retained for a few migration/read paths.
 #[contracttype]
 #[derive(Clone)]
-pub enum DataKeyExt {
-    LeaderboardWins,
-    LeaderboardStreak,
-    SeasonId,
-    SeasonUserStats(u32, Address),
-    SeasonLeaderboardWins,
-    SeasonLeaderboardStreak,
-    SeasonArchive(u32),
-}
-
-
-/// Actions protected by dual-approval governance (Issue #272)
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum GovAction {
-    /// Emergency pause of all contract state mutations
-    PauseProtocol,
-    /// Unpause contract resuming normal operations
-    UnpauseProtocol,
-    /// Update protocol settlement fee in basis points
-    SetProtocolFeeBps(Option<u32>),
-    /// Withdraw accumulated protocol fees from treasury
-    WithdrawProtocolFee(Address, i128),
-    /// Update treasury recipient address
-    SetTreasuryAddress(Address),
-    /// Transfer contract primary admin role
-    SetAdmin(Address),
-    /// Rotate oracle provider address
-    SetOracle(Address),
-}
-
-/// Lifecycle status of a dual-approval governance proposal
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u32)]
-pub enum GovProposalStatus {
-    Pending = 0,
-    Approved = 1,
-    Executed = 2,
-    Cancelled = 3,
-    Expired = 4,
-}
-
-/// Governance proposal record requiring dual approval before execution
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct GovProposal {
-    pub id: u64,
-    pub proposer: Address,
-    pub approver: Option<Address>,
-    pub action: GovAction,
-    pub created_at_ledger: u32,
-    pub expires_at_ledger: u32,
-    pub status: GovProposalStatus,
+pub enum DataKey {
+    Balance(Address),
+    Admin,
+    Oracle,
+    SchemaVersion,
+    ActiveRound,
+    Positions,
+    UpDownPositions,
+    PrecisionPositions,
+    PendingWinnings(Address),
+    UserStats(Address),
+    Paused,
+    BetWindowLedgers,
+    RunWindowLedgers,
+    CloseBufferLedgers,
+    LastRoundId,
+    Position(u64, Address),
+    PrecisionPosition(u64, Address),
+    PrecisionCommitment(u64, Address),
+    RoundParticipants(u64),
+    MaxStake,
+    MaxUserRoundExposure,
+    MaxPendingWinnings,
+    CancelledRound(u64),
+    ConsumedOracleNonce(u64, u64),
+    MinParticipants,
+    OracleHeartbeat,
+    OracleStaleThreshold,
+    MaxPrecisionParticipants,
+    OracleMaxDeviationBps,
+    OracleDeviationOverrideArmed,
+    OracleMinConfidenceBps,
+    OracleStrictMode,
+    ArchivedRound(u64),
+    RecentArchivedRoundIds,
+    UserRoundOutcome(u64, Address),
+    MigratedToV3,
+    PendingConfigChange(ConfigChangeKind),
+    ProtocolFeeBps,
+    ProtocolFeeTreasury,
+    LedgerMintCounter(u32),
+    MintLimitConfig,
+    OracleRotationProposal,
+    ArchiveRetention,
+    RoundTemplate,
+    Ext(DataKeyExt),
 }

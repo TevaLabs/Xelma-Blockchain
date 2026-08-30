@@ -399,37 +399,18 @@ fn test_event_coverage_resolve_round() {
         topics.get(1).unwrap().try_into_val(&env),
         Ok(symbol_short!("summary"))
     );
-    let canon: (u32, u64, u32, u32, u128, u128, i128, i128, u32, i128, i128, u32, Option<u32>) =
+    let canon: (u64, u32, u32, u128, u32, i128, i128, u32, u32, u32) =
         data.try_into_val(&env).unwrap();
-    assert_eq!(canon.0, 0u32);           // version
-    assert_eq!(canon.1, 1u64);           // round_id
-    assert_eq!(canon.2, 0u32);           // status (Resolved)
-    assert_eq!(canon.3, 0u32);           // mode (UpDown)
-    assert_eq!(canon.4, 1_0000000u128);  // price_start
-    assert_eq!(canon.5, 1_2000000u128);  // price_final
-    assert_eq!(canon.6, 100_0000000i128); // pool_up
-    assert_eq!(canon.7, 0i128);          // pool_down
-    assert_eq!(canon.8, 1u32);           // participant_count
-    assert_eq!(canon.9, 100_0000000i128); // total_pot
-    assert_eq!(canon.10, 0i128);         // fee_amount
-    assert_eq!(canon.11, 12u32);         // settled_at_ledger
-    assert_eq!(canon.12, None);          // confidence
-
-    let resolved_event = events.iter().find(|e| {
-        let (_contract, topics, _data) = e;
-        topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("resolved"))
-    }).unwrap();
-    let (_contract, topics, data) = resolved_event;
-    assert_eq!(
-        topics.get(1).unwrap().try_into_val(&env),
-        Ok(symbol_short!("resolved"))
-    );
-    assert_eq!(
-        data.try_into_val(&env),
-        Ok((1u64, 1_2000000u128, 1u32, 0i128, Option::<u32>::None))
-    );
+    assert_eq!(canon.0, 1u64);
+    assert_eq!(canon.1, 0u32);
+    assert_eq!(canon.2, 0u32);
+    assert_eq!(canon.3, 1_2000000u128);
+    assert_eq!(canon.4, 1u32);
+    assert_eq!(canon.5, 100_0000000i128);
+    assert_eq!(canon.6, 0i128);
+    assert_eq!(canon.7, 12u32);
+    assert_eq!(canon.8, 0u32);
+    assert_eq!(canon.9, 0u32);
 }
 
 #[test]

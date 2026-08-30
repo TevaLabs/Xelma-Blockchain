@@ -1240,3 +1240,76 @@ fn test_precision_remainder_goes_to_lexicographically_lowest_winner() {
     assert_eq!(client.get_pending_winnings(&lowest_user), 100_0000001);
     assert_eq!(client.get_pending_winnings(&other_user), 100_0000000);
 }
+
+/// Extends `test_precision_remainder_goes_to_lexicographically_lowest_winner`
+/// to a 3-way tie (Issue #404's "tie cases with 2+ winners" acceptance
+/// criterion): the indivisible remainder must still land on the
+/// lexicographically-lowest address among the *winners*, not the first
+/// address to bet or the first address generated.
+#[test]
+fn test_precision_remainder_3way_tie_goes_to_lexicographically_lowest_winner() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+
+    let mut users: alloc::vec::Vec<Address> = alloc::vec![
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+    ];
+    users.sort();
+    let (lowest, mid, highest) = (users[0].clone(), users[1].clone(), users[2].clone());
+
+    for u in &users {
+        client.mint_initial(u);
+    }
+
+    client.create_round(&1_0000000, &Some(1)); // Precision mode
+
+    // All three predict the exact same price -> guaranteed 3-way tie.
+    // Total pot = 40 + 30 + 30 = 100_0000000; split 3 ways leaves a
+    // 1-stroop remainder (100_0000000 % 3 == 1).
+    let price = 2000u128;
+    client.place_precision_prediction(&lowest, &40_0000000, &price);
+    client.place_precision_prediction(&mid, &30_0000000, &price);
+    client.place_precision_prediction(&highest, &30_0000000, &price);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price,
+        timestamp: env.ledger().timestamp(),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    // per_winner = 100_0000000 / 3 = 33_3333333, remainder = 1.
+    // The lowest-address winner gets the remainder regardless of stake size
+    // or bet order — `lowest` staked the *most* here specifically to prove
+    // the remainder follows address order, not stake size.
+    assert_eq!(client.get_pending_winnings(&lowest), 33_3333334);
+    assert_eq!(client.get_pending_winnings(&mid), 33_3333333);
+    assert_eq!(client.get_pending_winnings(&highest), 33_3333333);
+
+    // Conservation: the whole pot is accounted for.
+    let total: i128 = client.get_pending_winnings(&lowest)
+        + client.get_pending_winnings(&mid)
+        + client.get_pending_winnings(&highest);
+    assert_eq!(total, 100_0000000);
+}

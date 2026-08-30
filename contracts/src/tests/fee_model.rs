@@ -8,7 +8,7 @@
 //! - Edge cases: one-sided pools, all-unrevealed, ties, zero-profit
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{BetSide, DataKey, FeeModel, OraclePayload, PrecisionPrediction};
+use crate::types::{BetSide, DataKeyCore, FeeModel, OraclePayload, PrecisionPrediction};
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -34,7 +34,7 @@ fn set_fee_bps_now(env: &Env, contract_id: &Address, bps: u32) {
     env.as_contract(contract_id, || {
         env.storage()
             .persistent()
-            .set(&DataKey::ProtocolFeeBps, &bps);
+            .set(&DataKeyCore::ProtocolFeeBps, &bps);
     });
 }
 
@@ -42,7 +42,7 @@ fn set_fee_model_now(env: &Env, contract_id: &Address, model: FeeModel) {
     env.as_contract(contract_id, || {
         env.storage()
             .persistent()
-            .set(&DataKey::FeeModel, &model);
+            .set(&DataKeyCore::FeeModel, &model);
     });
 }
 
@@ -63,6 +63,7 @@ fn resolve_at(
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 }
 
@@ -563,15 +564,15 @@ proptest! {
             positions.set(alice.clone(), UserPosition { amount: a_up, side: BetSide::Up });
             positions.set(bob.clone(), UserPosition { amount: b_up, side: BetSide::Up });
             positions.set(charlie.clone(), UserPosition { amount: c_down, side: BetSide::Down });
-            env.storage().persistent().set(&DataKey::UpDownPositions, &positions);
+            env.storage().persistent().set(&DataKeyCore::UpDownPositions, &positions);
 
-            let mut round: crate::types::Round = env.storage().persistent().get(&DataKey::ActiveRound).unwrap();
+            let mut round: crate::types::Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
             round.pool_up = total_up;
             round.pool_down = total_down;
-            env.storage().persistent().set(&DataKey::ActiveRound, &round);
+            env.storage().persistent().set(&DataKeyCore::ActiveRound, &round);
 
-            env.storage().persistent().set(&DataKey::ProtocolFeeBps, &fee_bps_raw);
-            env.storage().persistent().set(&DataKey::FeeModel, &FeeModel::FeeOnWinnings);
+            env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
+            env.storage().persistent().set(&DataKeyCore::FeeModel, &FeeModel::FeeOnWinnings);
         });
 
         let treasury_before = client.get_protocol_fee_treasury();
@@ -586,6 +587,7 @@ proptest! {
             network_id: env.ledger().network_id(),
             contract_addr: contract_id.clone(),
             confidence: None,
+        attestation: None,
         });
 
         let alice_pending = client.get_pending_winnings(&alice);
@@ -639,10 +641,10 @@ proptest! {
             predictions.set(alice.clone(), PrecisionPrediction { user: alice.clone(), predicted_price: price_a, amount: amount_a });
             predictions.set(bob.clone(), PrecisionPrediction { user: bob.clone(), predicted_price: price_b, amount: amount_b });
             predictions.set(charlie.clone(), PrecisionPrediction { user: charlie.clone(), predicted_price: price_c, amount: amount_c });
-            env.storage().persistent().set(&DataKey::PrecisionPositions, &predictions);
+            env.storage().persistent().set(&DataKeyCore::PrecisionPositions, &predictions);
 
-            env.storage().persistent().set(&DataKey::ProtocolFeeBps, &fee_bps_raw);
-            env.storage().persistent().set(&DataKey::FeeModel, &FeeModel::FeeOnWinnings);
+            env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
+            env.storage().persistent().set(&DataKeyCore::FeeModel, &FeeModel::FeeOnWinnings);
         });
 
         let treasury_before = client.get_protocol_fee_treasury();
@@ -657,6 +659,7 @@ proptest! {
             network_id: env.ledger().network_id(),
             contract_addr: contract_id.clone(),
             confidence: None,
+        attestation: None,
         });
 
         let alice_pending = client.get_pending_winnings(&alice);

@@ -268,11 +268,11 @@ fn test_claim_winnings_boundary_max_exact() {
     client.update_oracle_heartbeat(&0u32);
 
     env.as_contract(&contract_id, || {
-        let bal_key = DataKey::Balance(user.clone());
+        let bal_key = DataKeyScoped::Balance(user.clone());
         env.storage()
             .persistent()
             .set(&bal_key, &(i128::MAX - 100));
-        let win_key = DataKey::PendingWinnings(user.clone());
+        let win_key = DataKeyScoped::PendingWinnings(user.clone());
         env.storage().persistent().set(&win_key, &100i128);
     });
 
@@ -296,7 +296,7 @@ fn test_claim_winnings_boundary_max_minus_one() {
     client.update_oracle_heartbeat(&0u32);
 
     env.as_contract(&contract_id, || {
-        let win_key = DataKey::PendingWinnings(user.clone());
+        let win_key = DataKeyScoped::PendingWinnings(user.clone());
         env.storage()
             .persistent()
             .set(&win_key, &(i128::MAX - 1));
