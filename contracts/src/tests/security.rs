@@ -40,7 +40,8 @@ fn test_resolve_round_stale_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::StaleOracleData)));
@@ -73,7 +74,8 @@ fn test_resolve_round_invalid_round_id() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
@@ -107,7 +109,8 @@ fn test_resolve_round_valid_payload() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     client.resolve_round(&payload);
     assert_eq!(client.get_active_round(), None);
@@ -142,7 +145,8 @@ fn test_resolve_round_future_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::FutureOracleData)));
@@ -248,9 +252,10 @@ fn test_resolve_round_duplicate_nonce_rejected() {
 
     // Simulate a prior submission having consumed nonce 42 for this round.
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64),
+            &true,
+        );
     });
 
     let result = client.try_resolve_round(&OraclePayload {
@@ -955,7 +960,10 @@ fn test_heartbeat_override_emits_event() {
     });
 
     // Behavioral check: override should now be consumed (disarmed)
-    assert!(!client.get_hb_override_armed(), "override should be consumed after resolve_round");
+    assert!(
+        !client.get_hb_override_armed(),
+        "override should be consumed after resolve_round"
+    );
 }
 
 /// Grace period config is settable and queryable.
@@ -1014,7 +1022,10 @@ fn test_arm_heartbeat_override_emits_event() {
     client.arm_hb_override();
 
     // Behavioral check: override should now be armed
-    assert!(client.get_hb_override_armed(), "override should be armed after arm_hb_override");
+    assert!(
+        client.get_hb_override_armed(),
+        "override should be armed after arm_hb_override"
+    );
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
@@ -1239,9 +1250,10 @@ fn test_resolve_round_nonce_boundary_values() {
 
     // Pre-seed both boundary nonces as consumed for this round.
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64),
+            &true,
+        );
         env.storage().persistent().set(
             &DataKeyScoped::ConsumedOracleNonce(round.round_id, u64::MAX),
             &true,
@@ -1995,7 +2007,10 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
                 override_armed: false,
                 grace_seconds: 0,
             });
-        assert!(!config.override_armed, "heartbeat override must be cleared after use");
+        assert!(
+            !config.override_armed,
+            "heartbeat override must be cleared after use"
+        );
     });
 }
 
@@ -2441,7 +2456,9 @@ fn test_resolve_round_timestamp_before_round_window() {
     // Default skew 300 -> window: [100-300, 160+300] = [0, 460] (lower saturates at 0)
     // Set a short skew of 30 via instance storage to make lower bound = 100-30 = 70
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("otskew"), &30u64);
     });
     // With skew=30: window = [70, 190]
     // Payload ts=10 is before the lower bound
@@ -2485,7 +2502,9 @@ fn test_resolve_round_timestamp_boundary_lower() {
 
     // Skew=30 -> window: [70, 190]
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("otskew"), &30u64);
     });
 
     // Payload at exactly the lower bound (70) must be accepted

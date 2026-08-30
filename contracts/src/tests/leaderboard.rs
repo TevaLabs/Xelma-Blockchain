@@ -235,10 +235,7 @@ fn test_leaderboard_limit_capped_at_max_page_size() {
     // Request 150 entries — limit is capped at MAX_PAGE_SIZE (100).
     let page = client.get_leaderboard_by_wins(&None, &150);
     // With 50 participants, we should get at most 50 results, all ≤ 100.
-    assert!(
-        page.0.len() <= 100,
-        "result count should be capped at 100"
-    );
+    assert!(page.0.len() <= 100, "result count should be capped at 100");
 }
 
 #[test]

@@ -60,7 +60,7 @@ pub enum ContractError {
     OracleTimestampOutsideWindow = 66,
     /// Pending winnings entry exists but has not yet reached the configured
     /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 86,
+    PendingWinningsNotExpired = 95,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
@@ -104,27 +104,27 @@ pub enum ContractError {
     /// Oracle heartbeat failed the configured freshness or health policy.
     OracleHeartbeatUnhealthy = 85,
     /// Early cash-out feature is disabled or not configured
-    EarlyCashoutDisabled = 89,
+    EarlyCashoutDisabled = 86,
     /// User does not have an active position to cash out
-    PositionNotFound = 90,
+    PositionNotFound = 87,
     /// Early cash-out attempted outside the valid running phase
-    InvalidPhaseForCashout = 91,
+    InvalidPhaseForCashout = 88,
     /// Early cash-out is only supported for UpDown rounds
-    WrongModeForCashout = 92,
+    WrongModeForCashout = 89,
     /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
-    ClaimBatchTooLarge = 93,
+    ClaimBatchTooLarge = 90,
     /// claim_many batch contains the same address more than once (Issue #277)
-    DuplicateClaimAddress = 94,
+    DuplicateClaimAddress = 91,
     /// The dispute window for `void_round` has expired, or dispute windows
     /// are not configured (`dispute_ledgers == 0`).
-    DisputeWindowExpired = 95,
+    DisputeWindowExpired = 92,
     /// `finalize_round` was called before the dispute window elapsed.
-    ClaimLocked = 92,
+    ClaimLocked = 93,
     /// A round cannot be created because the current ledger sequence has
     /// already backed another round's `start_ledger`.
     ///
     /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
     /// sequence would make a payload signed for the earlier round valid for
     /// the later one. Retry once the ledger has advanced.
-    RoundStartLedgerReused = 93,
+    RoundStartLedgerReused = 94,
 }

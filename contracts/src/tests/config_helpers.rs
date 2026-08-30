@@ -62,11 +62,7 @@ pub fn apply_protocol_fee_bps(env: &Env, client: &VirtualTokenContractClient, bp
     activate_pending(env, client, ConfigChangeKind::ProtocolFeeBps);
 }
 
-pub fn apply_pending_winnings_expiry(
-    env: &Env,
-    client: &VirtualTokenContractClient,
-    ledgers: u32,
-) {
+pub fn apply_pending_winnings_expiry(env: &Env, client: &VirtualTokenContractClient, ledgers: u32) {
     client.schedule_pending_winnings_expiry(&ledgers);
     activate_pending(env, client, ConfigChangeKind::PendingWinningsExpiry);
 }

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
-use alloc::vec::Vec as StdVec;
 use crate::admin::{
     _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
     _require_supported_schema,
@@ -20,11 +19,12 @@ use crate::settlement_math::{
 use crate::storage::clear_round_storage;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
-    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload,
-    OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy,
-    PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode, TwapSamplesKey,
-    UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
+    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord,
+    OraclePayload, OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment,
+    PrecisionPayoutPolicy, PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode,
+    TwapSamplesKey, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
+use alloc::vec::Vec as StdVec;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
 
@@ -890,7 +890,11 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         .checked_sub(round.start_ledger)
         .ok_or(ContractError::Overflow)?;
     let round_end_estimate = round_start
-        .checked_add((round_duration_ledgers as u64).checked_mul(SECONDS_PER_LEDGER).ok_or(ContractError::Overflow)?)
+        .checked_add(
+            (round_duration_ledgers as u64)
+                .checked_mul(SECONDS_PER_LEDGER)
+                .ok_or(ContractError::Overflow)?,
+        )
         .ok_or(ContractError::Overflow)?;
 
     let lower_bound = round_start.saturating_sub(skew);
@@ -1301,7 +1305,9 @@ fn _complete_settlement(
 
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage().persistent().remove(&DataKeyCore::UpDownPositions);
+    env.storage()
+        .persistent()
+        .remove(&DataKeyCore::UpDownPositions);
 
     let mode_value: u32 = match round.mode {
         RoundMode::UpDown => 0,
@@ -1482,10 +1488,7 @@ pub fn _apply_one_sided_policy(
             } else if let Some(pos_map) = positions {
                 _record_refunds_legacy(env, round.round_id, pos_map)?;
             }
-            (
-                round.pool_up.saturating_add(round.pool_down),
-                0i128,
-            )
+            (round.pool_up.saturating_add(round.pool_down), 0i128)
         }
         OneSidedPolicy::CarryForward => {
             if !participants.is_empty() {
@@ -1493,10 +1496,7 @@ pub fn _apply_one_sided_policy(
             } else if let Some(pos_map) = positions {
                 _record_refunds_legacy(env, round.round_id, pos_map)?;
             }
-            (
-                0i128,
-                round.pool_up.saturating_add(round.pool_down),
-            )
+            (0i128, round.pool_up.saturating_add(round.pool_down))
         }
     };
 
