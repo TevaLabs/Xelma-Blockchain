@@ -56,11 +56,17 @@ fn test_archived_participation_after_resolve() {
 
     assert_eq!(alice_history.len(), 1);
     assert_eq!(alice_history.get(0).unwrap().round_id, round_id);
-    assert_eq!(alice_history.get(0).unwrap().status, RoundArchiveStatus::Resolved);
+    assert_eq!(
+        alice_history.get(0).unwrap().status,
+        RoundArchiveStatus::Resolved
+    );
 
     assert_eq!(bob_history.len(), 1);
     assert_eq!(bob_history.get(0).unwrap().round_id, round_id);
-    assert_eq!(bob_history.get(0).unwrap().status, RoundArchiveStatus::Resolved);
+    assert_eq!(
+        bob_history.get(0).unwrap().status,
+        RoundArchiveStatus::Resolved
+    );
 }
 
 #[test]
@@ -85,7 +91,10 @@ fn test_archived_participation_after_cancel() {
     let history = client.get_user_archive_history(&alice, &0, &10);
     assert_eq!(history.len(), 1);
     assert_eq!(history.get(0).unwrap().round_id, round_id);
-    assert_eq!(history.get(0).unwrap().status, RoundArchiveStatus::Cancelled);
+    assert_eq!(
+        history.get(0).unwrap().status,
+        RoundArchiveStatus::Cancelled
+    );
 }
 
 #[test]
@@ -111,7 +120,10 @@ fn test_archived_participation_after_fallback_refund() {
     let history = client.get_user_archive_history(&user, &0, &10);
     assert_eq!(history.len(), 1);
     assert_eq!(history.get(0).unwrap().round_id, round_id);
-    assert_eq!(history.get(0).unwrap().status, RoundArchiveStatus::FallbackRefund);
+    assert_eq!(
+        history.get(0).unwrap().status,
+        RoundArchiveStatus::FallbackRefund
+    );
 }
 
 // ─── User with no participation returns empty ───────────────────────────────

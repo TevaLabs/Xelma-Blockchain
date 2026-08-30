@@ -9,14 +9,14 @@ use crate::access_control;
 use crate::errors::ContractError;
 use crate::governance;
 use crate::types::{
-    ArchivedRoundSummary, AccessState, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy,
-    MarketSnapshot, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, OracleRotationProposal, PendingConfigChange,
-    PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
+    DataKeyScoped, DeviationReferenceMode, FeeModel, GovAction, GovProposal, LeaderboardEntry,
+    MarketSnapshot, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload,
+    OracleQuorumConfig, OracleRotationProposal, PendingConfigChange, PolicyAction,
+    PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
     RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
-    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
-    UserRoundOutcome, UserStats, FeeModel, GovAction, GovProposal,
+    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition, UserRoundOutcome,
+    UserStats,
 };
 
 // ─── Economic control limits ─────────────────────────────────────────────────
@@ -229,7 +229,7 @@ impl VirtualTokenContract {
 
     /// Returns the recorded TWAP price samples, most-recent last (Issue #266).
     pub fn get_twap_samples(env: Env) -> Vec<PriceSample> {
-        settlement::_load_twap_samples(&env)
+        crate::oracle_validation::_load_twap_samples(&env)
     }
 
     /// Sets (or clears) the ed25519 public key used to verify oracle
@@ -522,11 +522,7 @@ impl VirtualTokenContract {
             #[allow(deprecated)]
             env.events().publish(
                 (symbol_short!("oracle"), symbol_short!("early")),
-                (
-                    proposal.new_oracle.clone(),
-                    current_ts,
-                    earliest_accept,
-                ),
+                (proposal.new_oracle.clone(), current_ts, earliest_accept),
             );
             return Err(ContractError::RotationDelayNotElapsed);
         }
@@ -805,10 +801,7 @@ impl VirtualTokenContract {
     }
 
     /// Schedules a timelocked update to the oracle timestamp skew (admin only).
-    pub fn schedule_oracle_timestamp_skew(
-        env: Env,
-        seconds: u64,
-    ) -> Result<(), ContractError> {
+    pub fn schedule_oracle_timestamp_skew(env: Env, seconds: u64) -> Result<(), ContractError> {
         config::schedule_oracle_timestamp_skew(env, seconds)
     }
 
@@ -1068,10 +1061,7 @@ impl VirtualTokenContract {
     /// Requires `OracleQuorumConfig` to be configured by the admin before
     /// this path is available. The legacy single-oracle `resolve_round`
     /// remains available independently.
-    pub fn resolve_round_multi(
-        env: Env,
-        payload: MultiFeedPayload,
-    ) -> Result<(), ContractError> {
+    pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), ContractError> {
         settlement::resolve_round_multi(env, payload)
     }
 
@@ -1219,7 +1209,6 @@ impl VirtualTokenContract {
         limit: u32,
     ) -> Vec<(Address, UserPosition)> {
         queries::get_updown_positions_page(env, offset, limit)
-
     }
 
     /// Returns user's vXLM balance
@@ -1645,7 +1634,10 @@ impl VirtualTokenContract {
         config::_apply_config_payload(env, kind, payload)
     }
 
-    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(env: &Env, key: &T) {
+    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(
+        env: &Env,
+        key: &T,
+    ) {
         if env.storage().persistent().has(key) {
             env.storage()
                 .persistent()

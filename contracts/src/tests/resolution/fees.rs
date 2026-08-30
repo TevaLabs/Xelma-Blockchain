@@ -46,7 +46,8 @@ fn test_protocol_fee_disabled_default_is_no_behaviour_change() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(
         sum_pending_payouts(&env, &client.address, &[alice.clone(), bob.clone()]),
@@ -97,7 +98,8 @@ fn test_protocol_fee_updown_indexed_conservation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(count_protocol_fee_events(&env), 1);
     let events = collect_protocol_fee_events(&env);
@@ -193,7 +195,8 @@ fn test_protocol_fee_updown_legacy_conservation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let payouts = sum_pending_payouts(&env, &client.address, &[alice.clone(), bob.clone()]);
     assert_eq!(payouts, 142_500_0000i128);
@@ -242,7 +245,8 @@ fn test_protocol_fee_precision_indexed_conservation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let payouts = sum_pending_payouts(
         &env,
@@ -328,7 +332,8 @@ fn test_protocol_fee_precision_legacy_conservation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let payouts = sum_pending_payouts(
         &env,
@@ -382,7 +387,8 @@ fn test_protocol_fee_thin_losing_pool_updown() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let payouts = sum_pending_payouts(&env, &client.address, &[alice.clone(), bob.clone()]);
     assert_eq!(
@@ -467,7 +473,8 @@ fn test_protocol_fee_not_collected_on_refund_paths() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(
         count_protocol_fee_events(&env),
@@ -521,7 +528,8 @@ fn test_protocol_fee_not_collected_on_one_sided_pool_refund() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(
         count_protocol_fee_events(&env),
@@ -579,7 +587,8 @@ fn test_protocol_fee_withdrawal_to_recipient() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert_eq!(client.get_protocol_fee_treasury(), 15_000_0000i128);
 
     let starting_bal = client.balance(&treasury_account);

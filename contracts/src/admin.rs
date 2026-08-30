@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 use crate::common::{
     _derive_round_phase, _emit_action_rejected, _extend_persistent_ttl, _set_balance, balance,
-    payout_add, CURRENT_SCHEMA_VERSION, DEFAULT_BET_WINDOW_LEDGERS,
-    DEFAULT_ORACLE_STALE_THRESHOLD, DEFAULT_RUN_WINDOW_LEDGERS, MAX_TWAP_WINDOW_SAMPLES,
-    MIN_TWAP_WINDOW_SAMPLES, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
+    payout_add, CURRENT_SCHEMA_VERSION, DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_ORACLE_STALE_THRESHOLD,
+    DEFAULT_RUN_WINDOW_LEDGERS, MAX_TWAP_WINDOW_SAMPLES, MIN_TWAP_WINDOW_SAMPLES, TTL_BUMP_AMOUNT,
+    TTL_BUMP_THRESHOLD,
 };
 use crate::errors::ContractError;
 use crate::types::{
-    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt,
-    DeviationConfig, DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey,
-    OracleHeartbeatRecord, OracleQuorumConfig, PolicyAction, ProtocolHealthStatus, Round,
-    RuntimeMode, PENDING_WINNINGS_EXPIRY_KEY, PendingWinningsUpdatedAtKey,
+    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt, DeviationConfig,
+    DeviationReferenceMode, HbGateConfig, OracleHeartbeatRecord, OracleQuorumConfig,
+    PendingWinningsUpdatedAtKey, PolicyAction, ProtocolHealthStatus, Round, RuntimeMode,
+    PENDING_WINNINGS_EXPIRY_KEY,
 };
 use soroban_sdk::{symbol_short, Address, BytesN, Env, Symbol, Vec};
 
@@ -27,7 +27,9 @@ pub fn initialize(env: Env, admin: Address, oracle: Address) -> Result<(), Contr
     }
 
     env.storage().persistent().set(&DataKeyCore::Admin, &admin);
-    env.storage().persistent().set(&DataKeyCore::Oracle, &oracle);
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::Oracle, &oracle);
     env.storage()
         .persistent()
         .set(&DataKeyCore::Paused, &RuntimeMode::Normal);
@@ -372,31 +374,11 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
 
 /// Loads the deviation guardrail config, returning the `StartPrice` default if unset (Issue #266).
 pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
-    let key = DeviationConfigKey::Config;
-    if env.storage().persistent().has(&key) {
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_BUMP_THRESHOLD,
-            TTL_BUMP_AMOUNT,
-        );
-    }
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(DeviationConfig {
-            reference_mode: DeviationReferenceMode::StartPrice,
-            window_samples: MIN_TWAP_WINDOW_SAMPLES,
-        })
+    crate::oracle_validation::_load_deviation_config(env)
 }
 
-fn _save_deviation_config(env: &Env, config: &DeviationConfig) {
-    let key = DeviationConfigKey::Config;
-    env.storage().persistent().set(&key, config);
-    env.storage().persistent().extend_ttl(
-        &key,
-        TTL_BUMP_THRESHOLD,
-        TTL_BUMP_AMOUNT,
-    );
+pub(crate) fn _save_deviation_config(env: &Env, config: &DeviationConfig) {
+    crate::oracle_validation::_save_deviation_config(env, config)
 }
 
 /// Sets the oracle deviation reference mode and (for `Twap`) the trailing
@@ -459,18 +441,7 @@ pub fn get_deviation_window_samples(env: Env) -> u32 {
 
 /// Loads the attestation config, returning `key: None` (disabled) if unset (Issue #263).
 pub fn _load_attestation_config(env: &Env) -> AttestationConfig {
-    let key = AttestationConfigKey::Config;
-    if env.storage().persistent().has(&key) {
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_BUMP_THRESHOLD,
-            TTL_BUMP_AMOUNT,
-        );
-    }
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(AttestationConfig { key: None })
+    crate::oracle_validation::_load_attestation_config(env)
 }
 
 /// Sets (or clears) the ed25519 public key used to verify oracle attestation
@@ -492,11 +463,9 @@ pub fn set_attestation_key(env: Env, key: Option<BytesN<32>>) -> Result<(), Cont
     env.storage()
         .persistent()
         .set(&storage_key, &AttestationConfig { key: key.clone() });
-    env.storage().persistent().extend_ttl(
-        &storage_key,
-        TTL_BUMP_THRESHOLD,
-        TTL_BUMP_AMOUNT,
-    );
+    env.storage()
+        .persistent()
+        .extend_ttl(&storage_key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -661,120 +630,32 @@ pub fn get_hb_grace_seconds(env: Env) -> u64 {
 /// Consumes the heartbeat override if armed (called from settlement).
 /// Returns true if the override was consumed.
 pub fn _consume_hb_override(env: &Env) -> bool {
-    let config = _load_hb_config(env);
-    if config.override_armed {
-        let mut new_config = config.clone();
-        new_config.override_armed = false;
-        _save_hb_config(env, &new_config);
-        true
-    } else {
-        false
-    }
+    crate::oracle_validation::_consume_hb_override(env)
 }
 
 /// Loads the heartbeat gate config, returning defaults if unset.
 pub fn _load_hb_config(env: &Env) -> HbGateConfig {
-    let key = HbGateKey::Config;
-    if env.storage().persistent().has(&key) {
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_BUMP_THRESHOLD,
-            TTL_BUMP_AMOUNT,
-        );
-    }
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(HbGateConfig {
-            strict_mode: false,
-            override_armed: false,
-            grace_seconds: 0,
-        })
+    crate::oracle_validation::_load_hb_config(env)
 }
 
 /// Saves the heartbeat gate config to persistent storage.
 pub fn _save_hb_config(env: &Env, config: &HbGateConfig) {
-    let key = HbGateKey::Config;
-    env.storage().persistent().set(&key, config);
-    env.storage().persistent().extend_ttl(
-        &key,
-        TTL_BUMP_THRESHOLD,
-        TTL_BUMP_AMOUNT,
-    );
+    crate::oracle_validation::_save_hb_config(env, config)
 }
 
 /// Records an oracle heartbeat (oracle only).
 pub fn update_oracle_heartbeat(env: Env, status: u32) -> Result<(), ContractError> {
-    _require_supported_schema(&env)?;
-    if status > 2 {
-        _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
-        if let Some(oracle) = env
-            .storage()
-            .persistent()
-            .get::<_, Address>(&DataKeyCore::Oracle)
-        {
-            _emit_action_rejected(
-                &env,
-                &oracle,
-                symbol_short!("hbeat"),
-                ContractError::InvalidMode,
-            );
-        }
-        return Err(ContractError::InvalidMode);
-    }
-    _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
-    let oracle: Address = env
-        .storage()
-        .persistent()
-        .get(&DataKeyCore::Oracle)
-        .ok_or(ContractError::OracleNotSet)?;
-    oracle.require_auth();
-
-    let ts = env.ledger().timestamp();
-    let record = OracleHeartbeatRecord {
-        timestamp: ts,
-        status,
-    };
-    env.storage()
-        .persistent()
-        .set(&DataKeyCore::OracleHeartbeat, &record);
-    _extend_persistent_ttl(&env, &DataKeyCore::OracleHeartbeat);
-
-    #[allow(deprecated)]
-    env.events().publish(
-        (symbol_short!("oracle"), symbol_short!("hbeat")),
-        (ts, status),
-    );
-    Ok(())
+    crate::oracle_validation::update_oracle_heartbeat(env, status)
 }
 
 /// Returns the most recent oracle heartbeat record, if any.
 pub fn get_oracle_heartbeat(env: Env) -> Option<OracleHeartbeatRecord> {
-    let key = DataKeyCore::OracleHeartbeat;
-    _extend_persistent_ttl(&env, &key);
-    env.storage().persistent().get(&key)
+    crate::oracle_validation::get_oracle_heartbeat(env)
 }
 
 /// Returns `true` if the oracle has a non-stale heartbeat with status not offline (2).
 pub fn is_oracle_live(env: Env) -> bool {
-    let heartbeat_key = DataKeyCore::OracleHeartbeat;
-    _extend_persistent_ttl(&env, &heartbeat_key);
-    let record: OracleHeartbeatRecord = match env.storage().persistent().get(&heartbeat_key) {
-        Some(r) => r,
-        None => return false,
-    };
-    if record.status == 2 {
-        return false;
-    }
-    let threshold_key = DataKeyCore::OracleStaleThreshold;
-    _extend_persistent_ttl(&env, &threshold_key);
-    let threshold: u64 = env
-        .storage()
-        .persistent()
-        .get(&threshold_key)
-        .unwrap_or(DEFAULT_ORACLE_STALE_THRESHOLD);
-    let current_time = env.ledger().timestamp();
-    current_time <= record.timestamp.saturating_add(threshold)
+    crate::oracle_validation::is_oracle_live(env)
 }
 
 /// Schedules a timelocked stale threshold update
@@ -1157,24 +1038,7 @@ pub fn get_oracle_quorum_config(env: Env) -> Option<OracleQuorumConfig> {
 
 /// Validates the quorum config values are within allowed bounds.
 pub(crate) fn _validate_quorum_config(cfg: &OracleQuorumConfig) -> Result<(), ContractError> {
-    use crate::common::{
-        DEFAULT_ORACLE_QUORUM_MIN_OBSERVATIONS, DEFAULT_ORACLE_QUORUM_THRESHOLD,
-        MAX_ORACLE_OBSERVATIONS,
-    };
-    if cfg.min_observations < DEFAULT_ORACLE_QUORUM_MIN_OBSERVATIONS
-        || cfg.min_observations > MAX_ORACLE_OBSERVATIONS
-    {
-        return Err(ContractError::TooFewObservations);
-    }
-    if cfg.quorum_threshold < DEFAULT_ORACLE_QUORUM_THRESHOLD
-        || cfg.quorum_threshold > cfg.min_observations
-    {
-        return Err(ContractError::InsufficientOracleQuorum);
-    }
-    if cfg.outlier_threshold_bps == 0 || cfg.outlier_threshold_bps > 10_000 {
-        return Err(ContractError::WindowOutOfRange);
-    }
-    Ok(())
+    crate::oracle_validation::_validate_quorum_config(cfg)
 }
 
 pub fn _require_supported_schema(env: &Env) -> Result<u32, ContractError> {
@@ -1219,11 +1083,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
 
     // Read the expiry config. 0 or absent means expiry is disabled.
     let expiry_key = PENDING_WINNINGS_EXPIRY_KEY;
-    let expiry_ledgers: u32 = env
-        .storage()
-        .persistent()
-        .get(&expiry_key)
-        .unwrap_or(0);
+    let expiry_ledgers: u32 = env.storage().persistent().get(&expiry_key).unwrap_or(0);
     if expiry_ledgers == 0 {
         _emit_action_rejected(
             &env,
