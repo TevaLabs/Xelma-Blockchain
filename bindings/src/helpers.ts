@@ -7,6 +7,7 @@ import type { i128 } from "@stellar/stellar-sdk/contract";
 
 // Re-export BetSide from the generated client for convenience
 import type { BetSide } from "./index.js";
+import type { SeasonArchive, SeasonLeaderboardEntry } from "./index.js";
 
 // ─── Typed Exceptions ──────────────────────────────────────────
 
@@ -272,4 +273,101 @@ export async function simulateBet(
       error: wrapContractError(err),
     };
   }
+}
+
+// ─── Leaderboard Season Helpers ────────────────────────────────
+
+export type SeasonRankingMetric = "wins" | "streak";
+
+/**
+ * Fetches the top `topN` entries of `seasonId`'s leaderboard, ranked by
+ * either total wins or best streak.
+ *
+ * Transparently serves the live ranking if `seasonId` is the currently
+ * active season, or the frozen archive snapshot once it has been rotated
+ * out — callers never need to know which. Unknown/future season ids
+ * resolve to an empty array rather than throwing.
+ *
+ * @example
+ * const top10 = await getSeasonTopN(client, 3, 10, "wins")
+ */
+export async function getSeasonTopN(
+  client: Client,
+  seasonId: number,
+  topN: number,
+  metric: SeasonRankingMetric = "wins",
+  options?: MethodOptions,
+): Promise<Array<SeasonLeaderboardEntry>> {
+  const call =
+    metric === "wins"
+      ? client.get_season_leaderboard_by_wins(
+          { season_id: seasonId, offset: 0, limit: topN },
+          options,
+        )
+      : client.get_season_leaderboard_by_streak(
+          { season_id: seasonId, offset: 0, limit: topN },
+          options,
+        );
+  const { result } = await call;
+  return result;
+}
+
+/**
+ * Fetches the top `topN` entries of the *currently active* season's
+ * leaderboard without the caller needing a separate round-trip to look up
+ * the active season id first.
+ *
+ * @example
+ * const { seasonId, entries } = await getCurrentSeasonTopN(client, 10, "streak")
+ */
+export async function getCurrentSeasonTopN(
+  client: Client,
+  topN: number,
+  metric: SeasonRankingMetric = "wins",
+  options?: MethodOptions,
+): Promise<{ seasonId: number; entries: Array<SeasonLeaderboardEntry> }> {
+  const { result: seasonId } = await client.get_current_season_id(options);
+  const entries = await getSeasonTopN(client, seasonId, topN, metric, options);
+  return { seasonId, entries };
+}
+
+export interface SeasonRolloverResult {
+  endedSeasonId: number;
+  newSeasonId: number;
+}
+
+/**
+ * Rotates the active leaderboard season: freezes the ending season's
+ * rankings into a permanent archive and advances to a new, empty season.
+ * Admin-only — the signing key must be the contract admin.
+ *
+ * @example
+ * const { endedSeasonId, newSeasonId } = await rolloverSeason(client)
+ */
+export async function rolloverSeason(
+  client: Client,
+  options?: MethodOptions,
+): Promise<SeasonRolloverResult> {
+  const { result: endedSeasonId } = await client.get_current_season_id(options);
+  const tx = await client.reset_leaderboard_season(options);
+  const { result } = await tx.signAndSend();
+  return { endedSeasonId, newSeasonId: result.unwrap() };
+}
+
+/**
+ * Fetches a full demo-friendly snapshot of a past, archived season: the
+ * frozen wins/streak top-N rankings plus participant count and the ledger
+ * the season ended on. Returns `null` if the season was never archived
+ * (still active, or an id that never existed).
+ *
+ * @example
+ * const summary = await getSeasonSummary(client, 2)
+ */
+export async function getSeasonSummary(
+  client: Client,
+  seasonId: number,
+  options?: MethodOptions,
+): Promise<SeasonArchive | null> {
+  const { result } = await client.get_season_archive({ season_id: seasonId }, options);
+  return result ?? null;
 }

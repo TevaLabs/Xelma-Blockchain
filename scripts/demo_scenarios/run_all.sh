@@ -28,7 +28,7 @@ START_TS="$(date +%s)"
 
 echo "══════════════════════════════════════════════════════════════════"
 echo "  Xelma Demo Scenario Pack"
-echo "  4 scenarios: Up-Win, Down-Win, Precision-Tie, Multi-Feed-Quorum"
+echo "  5 scenarios: Up-Win, Down-Win, Precision-Tie, Multi-Feed-Quorum, Season-Rollover"
 echo "  Started: $(date -d @"$START_TS" 2>/dev/null || date -r "$START_TS")"
 echo "══════════════════════════════════════════════════════════════════"
 echo ""
@@ -123,6 +123,7 @@ run_scenario "$SCRIPT_DIR/scenario_up_win.sh"        "Up-Win"
 run_scenario "$SCRIPT_DIR/scenario_down_win.sh"      "Down-Win"
 run_scenario "$SCRIPT_DIR/scenario_precision_tie.sh" "Precision-Tie"
 run_scenario "$SCRIPT_DIR/scenario_multi_feed.sh"    "Multi-Feed-Quorum"
+run_scenario "$SCRIPT_DIR/scenario_season_rollover.sh" "Season-Rollover"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 END_TS="$(date +%s)"
