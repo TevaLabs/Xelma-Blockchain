@@ -85,6 +85,35 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      - name: Check benchmark doc placeholders
+        run: |
+          echo "=== Checking benchmark docs for stale placeholders ==="
+          fail=0
+
+          for doc in docs/PERFORMANCE.md contracts/BENCHMARKS.md; do
+            if [ ! -f "$doc" ]; then
+              echo "WARN: $doc not found, skipping"
+              continue
+            fi
+
+            hits=$(grep -nE '_regenerate_|_record_|_date/sha_' "$doc" || true)
+            if [ -n "$hits" ]; then
+              echo "FAIL: stale placeholders found in $doc:"
+              echo "$hits"
+              fail=1
+            else
+              echo "OK: $doc has no placeholder rows"
+            fi
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "Run 'cargo test --package xelma-contract cost_benchmarks -- --nocapture'"
+            echo "and copy the [cost-benchmark] output into the docs to fix."
+            exit 1
+          fi
+          echo "=== All benchmark docs are up to date ==="
+
       - name: Snapshot drift detection
         run: |
           if [ -d "contracts/test_snapshots" ] && ls contracts/test_snapshots/*.snap 1>/dev/null 2>&1; then

@@ -20,7 +20,9 @@ and a markdown table row that can be copied into this document.
 
 ## Latest local benchmark table
 
-The exact numbers depend on the Soroban SDK version and host runtime. Regenerate the table before release and replace the rows below with the `--nocapture` output.
+Measured on commit `fbc2ec4` (2026-08-30) with `cargo test --package xelma-contract cost_benchmarks -- --nocapture`.
+
+To refresh, run the command above and replace the table rows with the `[cost-benchmark]` output.
 
 | Function / path | CPU instructions | Memory bytes |
 |---|---:|---:|
