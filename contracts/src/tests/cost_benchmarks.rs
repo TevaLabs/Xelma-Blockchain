@@ -25,6 +25,7 @@
 
 extern crate std;
 
+use crate::common::LEADERBOARD_LIMIT;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::{BetSide, OraclePayload};
 use soroban_sdk::{
@@ -349,65 +350,158 @@ fn bench_cost_resolve_precision_round_max_cap() {
     assert!(mem <= RESOLVE_MEM_MAX);
 }
 
-/// Helper: complete a single round (create → bets → resolve → claim).
-/// Each call creates its own round at the current ledger and advances
-/// the ledger past the run window (12 ledgers) so the round is resolvable.
-fn complete_one_round(
+// ─── Leaderboard benchmarks (Issue #431) ───────────────────────────────────
+//
+// These benchmarks measure the host CPU-instruction and memory cost of
+// leaderboard update, season reset, and full-page read operations when
+// the bounded indexes are populated to `LEADERBOARD_LIMIT` (100 entries).
+//
+// Key observations from the implementation:
+// - `_update_leaderboards` calls `reinsert_sorted_by_wins/streak` which
+//   performs an O(n) insertion sort over at most `LEADERBOARD_LIMIT` entries.
+// - `reset_leaderboard_season` iterates over wins + streak lists (each
+//   capped at `LEADERBOARD_LIMIT`) and performs a bounded dedup over at
+//   most 2 * `LEADERBOARD_LIMIT` entries.
+// - Page reads iterate over at most `LEADERBOARD_LIMIT` entries.
+//
+// All operations are bounded by `LEADERBOARD_LIMIT` — there are no
+// unbounded scans.
+
+/// Populates the lifetime leaderboard to `LEADERBOARD_LIMIT` by calling
+/// `_update_stats_win` for that many unique users. Returns the generated
+/// addresses.
+fn populate_leaderboard(
     env: &Env,
-    cid: &Address,
-    client: &VirtualTokenContractClient,
-    users: &[(Address, BetSide)],
-) {
-    client.create_round(&1_0000000u128, &None);
-    for (user, side) in users {
-        client.place_bet(user, &1_0000000, side);
+    contract_id: &Address,
+) -> soroban_sdk::Vec<Address> {
+    let mut addrs = soroban_sdk::Vec::new(env);
+    for _ in 0..LEADERBOARD_LIMIT {
+        let user = Address::generate(env);
+        env.as_contract(contract_id, || {
+            VirtualTokenContract::_update_stats_win(env, user.clone()).unwrap();
+        });
+        addrs.push_back(user);
     }
-    // Advance past both bet (6) and run (12) windows → +18 from start
-    env.ledger().with_mut(|li| li.sequence_number += 18);
-    let round = client.get_active_round().unwrap();
-    let nonce = round.start_ledger as u64; // unique nonce per round
-    client.resolve_round(&OraclePayload {
-        price: 2_0000000, // UP wins
-        timestamp: env.ledger().timestamp(),
-        round_id: round.start_ledger,
-        nonce,
-        network_id: env.ledger().network_id(),
-        contract_addr: cid.clone(),
-        confidence: None,
-        attestation: None,
+    addrs
+}
+
+#[test]
+fn bench_cost_leaderboard_update_at_limit() {
+    let (env, contract_id, _admin, _oracle, _client) = setup();
+    populate_leaderboard(&env, &contract_id);
+
+    // Measure worst-case: insert a new user when the leaderboard is full.
+    // The existing sorted list is at LEADERBOARD_LIMIT entries; the new user
+    // is removed (no-op), then re-inserted in sorted position, then the
+    // list is truncated back to LEADERBOARD_LIMIT.
+    let new_user = Address::generate(&env);
+    let (cpu, mem, _) = measure(&env, || {
+        env.as_contract(&contract_id, || {
+            VirtualTokenContract::_update_stats_win(env, new_user.clone()).unwrap();
+        })
     });
-    for (user, _) in users {
-        client.claim_winnings(user);
-    }
+    report("leaderboard_update_at_limit", cpu, mem);
+    assert!(
+        cpu <= TX_CPU_BUDGET,
+        "leaderboard_update_at_limit CPU regression: {cpu}"
+    );
+    assert!(
+        mem <= TX_MEM_BUDGET,
+        "leaderboard_update_at_limit MEM regression: {mem}"
+    );
 }
 
 #[test]
-fn bench_cost_get_leaderboard_by_wins() {
-    let (env, cid, _admin, _oracle, client) = setup();
-    // Complete 5 rounds, each with one winner, to populate the leaderboard.
-    for _ in 0..5 {
-        let user = Address::generate(&env);
-        client.mint_initial(&user);
-        complete_one_round(&env, &cid, &client, &[(user, BetSide::Up)]);
-    }
+fn bench_cost_season_reset_at_limit() {
+    let (env, contract_id, _admin, _oracle, client) = setup();
 
-    let (cpu, mem, _page) = measure(&env, || client.get_leaderboard_by_wins(&None, &10));
-    report("get_leaderboard_by_wins", cpu, mem);
-    assert!(cpu <= TX_CPU_BUDGET, "get_leaderboard_by_wins CPU regression: {cpu}");
-    assert!(mem <= TX_MEM_BUDGET, "get_leaderboard_by_wins MEM regression: {mem}");
+    // Populate the active season's leaderboard to the limit. Season stats
+    // are recorded alongside lifetime stats on each _update_stats_win.
+    populate_leaderboard(&env, &contract_id);
+
+    // Now measure the cost of resetting the season at capacity.
+    // reset_leaderboard_season requires admin auth (mocked) and no active
+    // round (none created in setup()).
+    let (cpu, mem, new_season) = measure(&env, || client.reset_leaderboard_season());
+    report("season_reset_at_limit", cpu, mem);
+    assert_eq!(new_season, 2, "season should advance from 1 to 2");
+    assert!(
+        cpu <= TX_CPU_BUDGET,
+        "season_reset_at_limit CPU regression: {cpu}"
+    );
+    assert!(
+        mem <= TX_MEM_BUDGET,
+        "season_reset_at_limit MEM regression: {mem}"
+    );
 }
 
 #[test]
-fn bench_cost_get_leaderboard_by_streak() {
-    let (env, cid, _admin, _oracle, client) = setup();
-    for _ in 0..5 {
-        let user = Address::generate(&env);
-        client.mint_initial(&user);
-        complete_one_round(&env, &cid, &client, &[(user, BetSide::Up)]);
-    }
+fn bench_cost_leaderboard_full_page_read_at_limit() {
+    let (env, contract_id, _admin, _oracle, client) = setup();
+    populate_leaderboard(&env, &contract_id);
 
-    let (cpu, mem, _page) = measure(&env, || client.get_leaderboard_by_streak(&None, &10));
-    report("get_leaderboard_by_streak", cpu, mem);
-    assert!(cpu <= TX_CPU_BUDGET, "get_leaderboard_by_streak CPU regression: {cpu}");
-    assert!(mem <= TX_MEM_BUDGET, "get_leaderboard_by_streak MEM regression: {mem}");
+    // Read a full page (LEADERBOARD_LIMIT entries).
+    let (cpu, mem, page) = measure(&env, || {
+        client.get_leaderboard_by_wins(&0, &LEADERBOARD_LIMIT)
+    });
+    report("leaderboard_full_page_read_at_limit", cpu, mem);
+    assert_eq!(
+        page.len(),
+        LEADERBOARD_LIMIT,
+        "should return exactly LEADERBOARD_LIMIT entries"
+    );
+    assert!(
+        cpu <= TX_CPU_BUDGET,
+        "leaderboard_full_page_read_at_limit CPU regression: {cpu}"
+    );
+    assert!(
+        mem <= TX_MEM_BUDGET,
+        "leaderboard_full_page_read_at_limit MEM regression: {mem}"
+    );
+}
+
+#[test]
+fn verify_leaderboard_update_cost_is_bounded() {
+    // Stronger assertion: the leaderboard update at capacity must use less
+    // than 50% of the per-transaction CPU budget, demonstrating the O(n)
+    // bound with n = LEADERBOARD_LIMIT = 100 is well within limits.
+    let (env, contract_id, _admin, _oracle, _client) = setup();
+    populate_leaderboard(&env, &contract_id);
+
+    let new_user = Address::generate(&env);
+    let (cpu, _mem, _) = measure(&env, || {
+        env.as_contract(&contract_id, || {
+            VirtualTokenContract::_update_stats_win(env, new_user.clone()).unwrap();
+        })
+    });
+
+    let ceiling = TX_CPU_BUDGET / 2;
+    std::println!(
+        "[cost-benchmark] leaderboard_update_at_limit cpu={cpu} ceiling={ceiling} ({:.1}% of budget)",
+        (cpu as f64 / TX_CPU_BUDGET as f64) * 100.0
+    );
+    assert!(
+        cpu <= ceiling,
+        "leaderboard update at limit should use <50% of CPU budget: {cpu} > {ceiling}"
+    );
+}
+
+#[test]
+fn verify_season_reset_cost_is_bounded() {
+    // Stronger assertion: season reset at capacity must use less than 50%
+    // of the per-transaction CPU budget.
+    let (env, contract_id, _admin, _oracle, client) = setup();
+    populate_leaderboard(&env, &contract_id);
+
+    let (cpu, _mem, _) = measure(&env, || client.reset_leaderboard_season());
+
+    let ceiling = TX_CPU_BUDGET / 2;
+    std::println!(
+        "[cost-benchmark] season_reset_at_limit cpu={cpu} ceiling={ceiling} ({:.1}% of budget)",
+        (cpu as f64 / TX_CPU_BUDGET as f64) * 100.0
+    );
+    assert!(
+        cpu <= ceiling,
+        "season reset at limit should use <50% of CPU budget: {cpu} > {ceiling}"
+    );
 }

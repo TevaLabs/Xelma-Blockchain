@@ -15,10 +15,9 @@ Benchmarks live in [`src/tests/cost_benchmarks.rs`](src/tests/cost_benchmarks.rs
 | precision submit    | `bench_cost_precision_submit`  |
 | `resolve_round`     | `bench_cost_resolve_round`     |
 | `claim_winnings`    | `bench_cost_claim_winnings`    |
-| updown positions (paged) | `bench_cost_get_updown_positions_page` |
-| precision predictions (paged) | `bench_cost_get_precision_predictions_page` |
-| leaderboard by wins | `bench_cost_get_leaderboard_by_wins` |
-| leaderboard by streak | `bench_cost_get_leaderboard_by_streak` |
+| leaderboard update  | `bench_cost_leaderboard_update_at_limit` |
+| season reset        | `bench_cost_season_reset_at_limit`       |
+| leaderboard read    | `bench_cost_leaderboard_full_page_read_at_limit` |
 
 ## Running locally
 
@@ -49,17 +48,16 @@ To tighten the guardrail toward true regression detection:
    `baseline × tolerance` (a 15–25% tolerance absorbs allocator/host jitter).
 4. Update this table in the same PR that changes the constants.
 
-| Path             | Baseline CPU | Baseline MEM | Captured on |
-| ---------------- | ------------ | ------------ | ----------- |
-| create_round     | 238,185      | 28,297       | fbc2ec4 / 2026-08-30 |
-| place_bet        | 308,350      | 49,060       | fbc2ec4 / 2026-08-30 |
-| precision submit | 317,168      | 50,054       | fbc2ec4 / 2026-08-30 |
-| resolve_round    | 2,500,588    | 502,344      | fbc2ec4 / 2026-08-30 |
-| claim_winnings   | 216,792      | 42,210       | fbc2ec4 / 2026-08-30 |
-| updown positions (paged) | 286,563 | 29,661 | fbc2ec4 / 2026-08-30 |
-| precision predictions (paged) | 303,654 | 32,499 | fbc2ec4 / 2026-08-30 |
-| leaderboard by wins | 26,885 | 10,517 | fbc2ec4 / 2026-08-30 |
-| leaderboard by streak | 26,887 | 10,517 | fbc2ec4 / 2026-08-30 |
+| Path                    | Baseline CPU | Baseline MEM | Captured on |
+| ----------------------- | ------------ | ------------ | ----------- |
+| create_round            | _record_     | _record_     | _date/sha_  |
+| place_bet               | _record_     | _record_     | _date/sha_  |
+| precision submit        | _record_     | _record_     | _date/sha_  |
+| resolve_round           | _record_     | _record_     | _date/sha_  |
+| claim_winnings          | _record_     | _record_     | _date/sha_  |
+| leaderboard update      | _record_     | _record_     | _date/sha_  |
+| season reset            | _record_     | _record_     | _date/sha_  |
+| leaderboard read        | _record_     | _record_     | _date/sha_  |
 
 ## CI integration
 

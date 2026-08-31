@@ -208,6 +208,14 @@ pub enum DataKeyScoped {
     Denylisted(Address),
     /// Stored governance proposal record (Issue #272).
     GovProposal(u64),
+    /// Records which round claimed a given ledger sequence as its
+    /// `start_ledger`: start_ledger -> round_id.
+    ///
+    /// Oracle payloads bind to `Round.start_ledger` (see `OraclePayload.round_id`),
+    /// which is not unique on its own: a round can be cancelled and replaced
+    /// within a single ledger. This marker lets settlement reject a payload whose
+    /// `start_ledger` resolves to a different round than the active one.
+    RoundStartLedger(u32),
 }
 
 /// Fee incidence model (Issue #268).
@@ -398,7 +406,19 @@ pub struct PrecisionCommitment {
 pub struct OraclePayload {
     pub price: u128,
     pub timestamp: u64,
-    /// Round identifier that should match `Round.start_ledger`
+    /// Binds this payload to exactly one round.
+    ///
+    /// Must equal the active round's **`Round.start_ledger`** — the ledger
+    /// sequence at which the round was created — NOT the monotonic
+    /// `Round.round_id`. The two identifiers are used in different places:
+    /// `start_ledger` binds the payload (and is covered by the attestation
+    /// signature), while `Round.round_id` namespaces consumed nonces under
+    /// `DataKeyScoped::ConsumedOracleNonce`.
+    ///
+    /// `create_round` guarantees a ledger sequence backs at most one round
+    /// (`DataKeyScoped::RoundStartLedger` / `RoundStartLedgerReused`), so this
+    /// value identifies a single round unambiguously. See `PROTOCOL_SPEC.md`
+    /// invariant I10.
     pub round_id: u32,
     /// Per-round replay-protection nonce.
     ///
