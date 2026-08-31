@@ -128,5 +128,7 @@ pub enum ContractError {
     /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
     /// sequence would make a payload signed for the earlier round valid for
     /// the later one. Retry once the ledger has advanced.
-    RoundStartLedgerReused = 94,
+    RoundStartLedgerReused = 93,
+    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
+    PageSizeExceeded = 94,
 }

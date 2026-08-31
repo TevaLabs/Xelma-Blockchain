@@ -15,8 +15,17 @@ Xelma-Blockchain/
 │   ├── src/
 │   │   ├── lib.rs                 # Crate root — module declarations & public exports
 │   │   ├── contract.rs            # Core contract implementation
+│   │   ├── common.rs              # Shared utilities, constants & helper functions
 │   │   ├── errors.rs              # 50 contract error variants
 │   │   ├── types.rs               # DataKey, Round, OraclePayload, etc.
+
+---
+
+### `contracts/src/common.rs`
+
+**Purpose:** Single source of truth for contract constants (economic control limits, window bounds, oracle thresholds, protocol fee caps) and shared math/helper functions.
+
+**Key exports:** `MIN_CAP_VALUE`, `MAX_MIN_PARTICIPANTS`, `DEFAULT_MAX_PRECISION_PARTICIPANTS`, `MAX_PAGE_SIZE`, `DEFAULT_ORACLE_STALE_THRESHOLD`, `MAX_PROTOCOL_FEE_BPS`, `BPS_DENOMINATOR`, `CURRENT_SCHEMA_VERSION`, `_accumulate_pending`, `sort_addresses`.
 │   │   └── tests/
 │   │       ├── mod.rs             # Test module declarations
 │   │       ├── betting.rs         # Up/Down betting flow
@@ -723,6 +732,19 @@ increasing difficulty:
 
 ---
 
+## Known Technical Debt & Rebuild Starters
+
+The following curated issues highlight key architectural refinement tasks and good-first-issue starter entrypoints:
+
+| Issue | Title / Focus Area | Domain | Description |
+|---|---|---|---|
+| [#411](https://github.com/TevaLabs/Xelma-Blockchain/issues/411) | Expand lifecycle fuzz beyond UpDown happy path | `contracts/src/tests/fuzz_lifecycle.rs` | Property fuzzing for Precision prediction, commit-reveal, cash-out, and access-control denials. |
+| [#434](https://github.com/TevaLabs/Xelma-Blockchain/issues/434) | Refresh SECURITY_REVIEW.md metrics and open findings | `SECURITY_REVIEW.md` | Update LOC, module counts, test counts, and severity tables for security audits. |
+| [#435](https://github.com/TevaLabs/Xelma-Blockchain/issues/435) | Contributor map modular layout & debt starters | `docs/CONTRIBUTOR_MAP.md` | Maintain modular domain mapping and explicit known debt pointers for new contributors. |
+| [#439](https://github.com/TevaLabs/Xelma-Blockchain/issues/439) | Split contract.rs facade from duplicated constants | `contracts/src/contract.rs`, `contracts/src/common.rs` | Single-source all protocol limits and windows constants into `common.rs`. |
+
+---
+
 ## Cross-References
 
 | For this... | See... |
@@ -740,4 +762,4 @@ increasing difficulty:
 
 ---
 
-*Last updated: 2026-07-25 — schema v2*
+*Last updated: 2026-08-31 — schema v3*
