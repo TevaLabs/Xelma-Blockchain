@@ -60,7 +60,7 @@ pub enum ContractError {
     OracleTimestampOutsideWindow = 66,
     /// Pending winnings entry exists but has not yet reached the configured
     /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 61,
+    PendingWinningsNotExpired = 86,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
@@ -89,31 +89,38 @@ pub enum ContractError {
     PendingWinningsNotFound = 77,
     /// Pending winnings expiry is not configured (value is 0).
     ExpiryNotConfigured = 78,
+    /// Participant is blocked by the active allowlist or denylist policy.
+    AccessDenied = 79,
+    /// Governance proposal does not exist.
+    ProposalNotFound = 80,
+    /// Governance proposal is past its execution deadline.
+    ProposalExpired = 81,
+    /// Governance proposal cannot transition from its current state.
+    GovInvalidState = 82,
+    /// Caller is not authorized by the configured governance policy.
+    GovUnauthorized = 83,
+    /// Requested action is not valid in the round's current lifecycle phase.
+    IllegalPhaseTransition = 84,
+    /// Oracle heartbeat failed the configured freshness or health policy.
+    OracleHeartbeatUnhealthy = 85,
     /// Early cash-out feature is disabled or not configured
-    EarlyCashoutDisabled = 79,
+    EarlyCashoutDisabled = 94,
     /// User does not have an active position to cash out
-    PositionNotFound = 80,
+    PositionNotFound = 95,
     /// Early cash-out attempted outside the valid running phase
-    InvalidPhaseForCashout = 81,
+    InvalidPhaseForCashout = 96,
     /// Early cash-out is only supported for UpDown rounds
-    WrongModeForCashout = 82,
-    /// Oracle heartbeat is unhealthy and blocks settlement (Issue #264).
-    /// Returned by the always-on heartbeat gate (`_enforce_heartbeat_health`)
-    /// regardless of strict-mode setting — covers no heartbeat, offline status,
-    /// and stale-beyond-grace conditions.
-    OracleHeartbeatUnhealthy = 83,
-    /// Access denied — caller does not have the required role.
-    AccessDenied = 84,
-    /// Governance action is unauthorized — caller is not a governance authority.
-    GovUnauthorized = 85,
-    /// Proposal not found.
-    ProposalNotFound = 86,
-    /// Proposal has expired.
-    ProposalExpired = 87,
-    /// Governance action is in an invalid state for the requested operation.
-    GovInvalidState = 88,
-    /// Dispute window has expired.
-    DisputeWindowExpired = 89,
-    /// Claim is locked.
-    ClaimLocked = 90,
+    WrongModeForCashout = 97,
+    /// The dispute window for `void_round` has expired, or dispute windows
+    /// are not configured (`dispute_ledgers == 0`).
+    DisputeWindowExpired = 91,
+    /// `finalize_round` was called before the dispute window elapsed.
+    ClaimLocked = 92,
+    /// A round cannot be created because the current ledger sequence has
+    /// already backed another round's `start_ledger`.
+    ///
+    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
+    /// sequence would make a payload signed for the earlier round valid for
+    /// the later one. Retry once the ledger has advanced.
+    RoundStartLedgerReused = 93,
 }

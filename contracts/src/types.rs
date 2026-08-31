@@ -208,6 +208,14 @@ pub enum DataKeyScoped {
     Denylisted(Address),
     /// Stored governance proposal record (Issue #272).
     GovProposal(u64),
+    /// Records which round claimed a given ledger sequence as its
+    /// `start_ledger`: start_ledger -> round_id.
+    ///
+    /// Oracle payloads bind to `Round.start_ledger` (see `OraclePayload.round_id`),
+    /// which is not unique on its own: a round can be cancelled and replaced
+    /// within a single ledger. This marker lets settlement reject a payload whose
+    /// `start_ledger` resolves to a different round than the active one.
+    RoundStartLedger(u32),
 }
 
 /// Fee incidence model (Issue #268).
@@ -398,7 +406,19 @@ pub struct PrecisionCommitment {
 pub struct OraclePayload {
     pub price: u128,
     pub timestamp: u64,
-    /// Round identifier that should match `Round.start_ledger`
+    /// Binds this payload to exactly one round.
+    ///
+    /// Must equal the active round's **`Round.start_ledger`** — the ledger
+    /// sequence at which the round was created — NOT the monotonic
+    /// `Round.round_id`. The two identifiers are used in different places:
+    /// `start_ledger` binds the payload (and is covered by the attestation
+    /// signature), while `Round.round_id` namespaces consumed nonces under
+    /// `DataKeyScoped::ConsumedOracleNonce`.
+    ///
+    /// `create_round` guarantees a ledger sequence backs at most one round
+    /// (`DataKeyScoped::RoundStartLedger` / `RoundStartLedgerReused`), so this
+    /// value identifies a single round unambiguously. See `PROTOCOL_SPEC.md`
+    /// invariant I10.
     pub round_id: u32,
     /// Per-round replay-protection nonce.
     ///
@@ -466,6 +486,55 @@ pub struct RoundPoolStats {
     pub precision_prediction_count: u32,
     pub precision_commitment_count: u32,
     pub precision_revealed_count: u32,
+}
+
+/// One-read composite view of current market state for frontends: round
+/// phase, pool composition, ledger timing buffers, and fee configuration —
+/// replacing several separate calls that could otherwise observe
+/// inconsistent state if the ledger advances between them (Issue #280).
+///
+/// # Empty-round semantics
+///
+/// When there is no active round, `phase` and `pool_stats` are both `None`.
+/// The timing-buffer and fee fields are always populated regardless — they
+/// reflect contract-wide configuration, not round state, so they have a
+/// well-defined value whether or not a round is active.
+///
+/// # Consistency with individual getters
+///
+/// `phase` and `pool_stats` are the exact, unmodified results of
+/// `get_round_phase`/`get_round_pool_stats` (never recomputed), and the
+/// buffer/fee fields are read via the same public getters
+/// (`get_bet_window_ledgers`, `get_run_window_ledgers`,
+/// `get_close_buffer_ledgers`, `get_protocol_fee_bps`, `get_fee_model`) that
+/// callers could otherwise call individually — so a snapshot can never
+/// disagree with those getters.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MarketSnapshot {
+    /// Current round's lifecycle phase, or empty if no round is active.
+    ///
+    /// Modeled as a 0-or-1-element `Vec` rather than `Option<RoundPhase>`:
+    /// this soroban-sdk version's `#[contracttype]` derive does not generate
+    /// an XDR (`ScVal`) conversion for `Option<T>` wrapping a user-defined
+    /// type, only for `Vec<T>`.
+    pub phase: Vec<RoundPhase>,
+    /// Full pool-composition breakdown for the active round, or empty if no
+    /// round is active. See `phase` for why this is a `Vec` and not an
+    /// `Option`.
+    pub pool_stats: Vec<RoundPoolStats>,
+    /// Number of ledgers the betting window stays open after round creation.
+    pub bet_window_ledgers: u32,
+    /// Number of ledgers after round creation before the round becomes
+    /// resolvable.
+    pub run_window_ledgers: u32,
+    /// Extra ledgers appended after the betting window closes, before the
+    /// round transitions to `Running` (0 = disabled).
+    pub close_buffer_ledgers: u32,
+    /// Configured protocol fee in basis points, or `None` if fees are disabled.
+    pub protocol_fee_bps: Option<u32>,
+    /// Configured fee incidence model (`FeeOnPot` or `FeeOnWinnings`).
+    pub fee_model: FeeModel,
 }
 
 /// Terminal outcome recorded when a round leaves the active state.
