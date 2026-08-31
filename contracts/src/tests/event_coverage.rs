@@ -756,6 +756,46 @@ fn test_action_rejected_set_mint_limit_when_paused() {
 }
 
 #[test]
+fn test_action_rejected_mint_initial_limit_exceeded() {
+    let (env, _, _, _, client) = setup();
+    client.set_mint_limit(&1);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    client.mint_initial(&user1);
+
+    let result = client.try_mint_initial(&user2);
+    assert_eq!(result, Err(Ok(ContractError::MintLimitExceeded)));
+
+    assert_last_action_rejected(
+        &env,
+        user2,
+        symbol_short!("mint"),
+        ContractError::MintLimitExceeded,
+    );
+}
+
+#[test]
+fn test_action_rejected_mint_initial_epoch_budget_exceeded() {
+    let (env, _, _, _, client) = setup();
+    client.set_epoch_mint_budget(&1000_0000000);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    client.mint_initial(&user1);
+
+    let result = client.try_mint_initial(&user2);
+    assert_eq!(result, Err(Ok(ContractError::EpochBudgetExceeded)));
+
+    assert_last_action_rejected(
+        &env,
+        user2,
+        symbol_short!("mint"),
+        ContractError::EpochBudgetExceeded,
+    );
+}
+
+#[test]
 fn test_action_rejected_resolve_round_future_timestamp() {
     let (env, contract_id, _, _, client) = setup();
     let user = Address::generate(&env);

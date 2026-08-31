@@ -4,7 +4,8 @@ use crate::admin::{_ensure_normal_mode, _ensure_not_paused, _require_supported_s
 use crate::common::{
     _accumulate_pending, _current_epoch_id, _emit_action_rejected, _enforce_min_bet,
     _extend_persistent_ttl, _set_balance, assert_no_active_round, balance, BPS_DENOMINATOR,
-    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_RUN_WINDOW_LEDGERS, MAX_START_PRICE, MIN_START_PRICE,
+    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_RUN_WINDOW_LEDGERS, EPOCH_LEDGERS, MAX_START_PRICE,
+    MIN_START_PRICE,
 };
 use crate::config::{
     _collect_protocol_fee, _read_fee_model, get_early_cashout_bps, get_max_precision_participants,
@@ -869,6 +870,12 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// TTL bump for a `LedgerMintCounter` entry: it only needs to outlive the
+/// rest of the ledger it was created in (every ledger gets its own counter
+/// key), so a small fixed margin is enough — no need for the ~30-day
+/// persistent bump used elsewhere.
+const LEDGER_MINT_COUNTER_TTL: u32 = 16;
+
 /// Mints 1000 vXLM for new users (one-time only)
 pub fn mint_initial(env: Env, user: Address) -> i128 {
     user.require_auth();
@@ -892,7 +899,7 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
     let sequence = env.ledger().sequence();
     if let Some(limit) = env
         .storage()
-        .instance()
+        .persistent()
         .get::<_, u32>(&DataKeyCore::MintLimitConfig)
     {
         if limit > 0 {
@@ -903,22 +910,32 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
                 .get::<_, u32>(&counter_key)
                 .unwrap_or(0);
             if current_count >= limit {
+                _emit_action_rejected(
+                    &env,
+                    &user,
+                    symbol_short!("mint"),
+                    ContractError::MintLimitExceeded,
+                );
                 soroban_sdk::panic_with_error!(&env, ContractError::MintLimitExceeded);
             }
             env.storage()
                 .temporary()
                 .set(&counter_key, &(current_count + 1));
+            // Only needs to outlive the rest of *this* ledger — subsequent
+            // ledgers get a fresh counter key, so a small bump is enough.
+            env.storage()
+                .temporary()
+                .extend_ttl(&counter_key, 1, LEDGER_MINT_COUNTER_TTL);
         }
     }
 
     let initial_amount: i128 = 1000_0000000;
 
     // ─── Epoch budget check ──────────────────────────────────────────────
-    const EP_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
     let epoch_budget: i128 = env
         .storage()
-        .instance()
-        .get(&EP_BUDGET_KEY)
+        .persistent()
+        .get(&DataKeyCore::EpochMintBudget)
         .unwrap_or(0);
     if epoch_budget > 0 {
         let current_epoch = _current_epoch_id(&env);
@@ -940,16 +957,25 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
         let new_consumed = consumed.checked_add(initial_amount);
         match new_consumed {
             Some(val) if val <= epoch_budget => {
+                env.storage().temporary().set(&EP_CONSUMED_KEY, &val);
+                env.storage().temporary().set(&EP_EPOCH_KEY, &current_epoch);
+                // Must reliably outlive the rest of the current epoch, or the
+                // budget cap silently resets mid-epoch once these expire —
+                // extend on every write rather than only at epoch start.
                 env.storage()
                     .temporary()
-                    .set(&EP_CONSUMED_KEY, &val);
-                if stored_epoch != current_epoch {
-                    env.storage()
-                        .temporary()
-                        .set(&EP_EPOCH_KEY, &current_epoch);
-                }
+                    .extend_ttl(&EP_CONSUMED_KEY, EPOCH_LEDGERS, EPOCH_LEDGERS);
+                env.storage()
+                    .temporary()
+                    .extend_ttl(&EP_EPOCH_KEY, EPOCH_LEDGERS, EPOCH_LEDGERS);
             }
             _ => {
+                _emit_action_rejected(
+                    &env,
+                    &user,
+                    symbol_short!("mint"),
+                    ContractError::EpochBudgetExceeded,
+                );
                 soroban_sdk::panic_with_error!(&env, ContractError::EpochBudgetExceeded);
             }
         }

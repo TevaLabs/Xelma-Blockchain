@@ -31,6 +31,7 @@ mod lifecycle;
 mod market_snapshot;
 mod migration_versioning;
 mod min_bet;
+mod mint_faucet_hardening;
 mod mode_tests;
 mod one_sided_settlement;
 mod overflow_tests;

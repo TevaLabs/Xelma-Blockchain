@@ -31,6 +31,13 @@ Keys created dynamically for a single round's duration:
 > [!NOTE]
 > All short-lived position and commitment keys are explicitly deleted during `resolve_round` or `cancel_round` to reclaim storage rent and keep the ledger clean.
 
+### Temporary Storage (Faucet Rate-Limiting)
+
+`mint_initial`'s per-ledger and per-epoch rate limiters use Soroban **temporary** storage rather than persistent — this data is disposable by design (it exists only to bound faucet abuse within a bounded time window) and should not be paid for as permanent state:
+
+- **`LedgerMintCounter(round_id: u32)`:** Number of `mint_initial` calls in one ledger, checked against `MintLimitConfig`. Keyed by the exact ledger sequence, so it never needs to outlive that one ledger; TTL is bumped by a small fixed margin (`LEDGER_MINT_COUNTER_TTL = 16` ledgers) on every write purely as defensive slack.
+- **`EpMintCsm` / `EpMintEpc`** (fixed symbol keys): Total vXLM minted in the current epoch and which epoch that total belongs to, checked against `EpochMintBudget`. Because these must survive the *entire* epoch (`EPOCH_LEDGERS = 1,440` ledgers, ~2 hours) to enforce the cap correctly, both are explicitly re-extended to a full epoch's worth of TTL on every mint — letting either expire early would silently reset the budget mid-epoch and defeat the cap.
+
 ---
 
 ## 2. TTL Extension Policy
@@ -128,7 +135,7 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
 |                     | `SeasonLeaderboardWins`, `SeasonLeaderboardStreak`                   |
 | Round counter       | `LastRoundId`                                                         |
 | Rotation            | `OracleRotationProposal`                                             |
-| Mint                | `MintLimitConfig`                                                    |
+| Mint                | `MintLimitConfig`, `EpochMintBudget`                                 |
 
 Per-user keys (`Balance`, `PendingWinnings`, `UserStats`) and round-scoped
 keys (`ActiveRound`, `Position`, `PrecisionPosition`, `RoundParticipants`,

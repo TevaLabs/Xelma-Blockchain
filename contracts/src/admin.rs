@@ -1036,6 +1036,7 @@ pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
             | DataKeyCore::LastRoundId
             | DataKeyCore::OracleRotationProposal
             | DataKeyCore::MintLimitConfig
+            | DataKeyCore::EpochMintBudget
     )
 }
 
