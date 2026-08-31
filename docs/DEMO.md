@@ -1,6 +1,6 @@
 # Demo Scenario Pack — Xelma Protocol
 
-A scripted, reproducible demo of the three core prediction-market outcomes,
+A scripted, reproducible demo of the core prediction-market outcomes,
 designed for judges, reviewers, and operators who need fast proof of
 correctness.
 
@@ -11,17 +11,21 @@ correctness.
 | 1 | **Up-Win** | Up/Down (mode 0) | Rises (1.5 → 1.65) | UP bettors split the DOWN pool |
 | 2 | **Down-Win** | Up/Down (mode 0) | Falls (1.5 → 1.35) | DOWN bettors split the UP pool |
 | 3 | **Precision-Tie** | Precision (mode 1) | Hits predicted price (1.55) | Both predict the same winning price → tie-split with remainder to first |
+| 4 | **Multi-Feed-Quorum** | Up/Down (mode 0) | Rises (1.5 → 1.65), 3-feed median | UP bettors split the DOWN pool, settled via oracle quorum |
+| 5 | **Season-Rollover** | Up/Down (mode 0), 2 rounds | Round 1 rises, round 2 falls | Leaderboard season is archived and advances between rounds |
 
 ## Quick Start
 
 ```bash
-# One command — builds WASM, starts local network, runs all 3 scenarios
+# One command — builds WASM, starts local network, runs all 5 scenarios
 ./scripts/demo_scenarios/run_all.sh
 
 # Run a single scenario
 ./scripts/demo_scenarios/scenario_up_win.sh
 ./scripts/demo_scenarios/scenario_down_win.sh
 ./scripts/demo_scenarios/scenario_precision_tie.sh
+./scripts/demo_scenarios/scenario_multi_feed.sh
+./scripts/demo_scenarios/scenario_season_rollover.sh
 ```
 
 ## Prerequisites
@@ -85,6 +89,38 @@ even split). First winner (by address sort order) gets dust if any.
 - Both users have `pending_winnings > 0`
 - Combined payout == total pot (800 vXLM) — fee disabled by default
 - Pool stats report `precision_participant_count >= 2`
+
+### Multi-Feed-Quorum (`scenario_multi_feed.sh`)
+
+**Setup**: Oracle quorum configured for 3 feeds. Alice bets 500 vXLM **UP**,
+Bob bets 300 vXLM **DOWN**. Oracle resolves with a 3-observation payload
+(median price, outlier check) instead of a single price.
+
+**Assertions**:
+- `multisum` event emitted with survivor count ≥ the configured quorum threshold
+- Alice's `pending_winnings` > 500 (UP won)
+- Bob's `pending_winnings` == 0 (lost)
+- Alice successfully claims her winnings
+
+### Season-Rollover (`scenario_season_rollover.sh`)
+
+**Setup**: Round 1 (season 1) resolves UP — Alice wins, Bob loses. Admin
+calls `reset_leaderboard_season`. Round 2 (season 2) resolves DOWN — Bob
+wins, Alice loses.
+
+**Assertions**:
+- `get_current_season_id` advances `1 → 2` on reset, and the reset emits
+  `(season, reset)`
+- Season 1's frozen archive (`get_season_archive`) matches what was live
+  just before the reset: 2 participants, Alice ranked first
+- `get_season_leaderboard_by_wins(season_id=1, ...)` keeps serving those 2
+  frozen entries after the reset — the same query path transparently
+  switches from live index to archive
+- Season 2 starts empty, then reflects only Bob's win from round 2 —
+  Bob's season-1 stats stay at 0 wins throughout (seasons never leak into
+  each other)
+- The lifetime leaderboard (`get_user_stats`) reflects both rounds combined:
+  Alice and Bob each show exactly 1 win overall
 
 ## Troubleshooting
 

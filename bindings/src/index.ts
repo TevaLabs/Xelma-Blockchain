@@ -562,7 +562,6 @@ export const ContractError = {
   /**
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
-  61: {message:"PendingWinningsNotExpired"},
   63: {message:"InvalidCommitment"},
   64: {message:"InvalidSalt"},
   /**
@@ -618,7 +617,27 @@ export const ContractError = {
   /** Oracle heartbeat failed the configured health policy. */
   85: {message:"OracleHeartbeatUnhealthy"},
   /** Pending winnings have not reached their expiry threshold. */
-  86: {message:"PendingWinningsNotExpired"}
+  86: {message:"PendingWinningsNotExpired"},
+  /** claim_many batch size exceeds the configured maximum. */
+  87: {message:"ClaimBatchTooLarge"},
+  /** claim_many batch contains the same address more than once. */
+  88: {message:"DuplicateClaimAddress"},
+  /** Early cash-out feature is disabled or not configured. */
+  89: {message:"EarlyCashoutDisabled"},
+  /** User does not have an active position to cash out. */
+  90: {message:"PositionNotFound"},
+  /** Early cash-out attempted outside the valid running phase. */
+  91: {message:"InvalidPhaseForCashout"},
+  /** Early cash-out is only supported for UpDown rounds. */
+  92: {message:"WrongModeForCashout"},
+  /** A round cannot be created because the ledger sequence would reuse another round's start_ledger. */
+  93: {message:"RoundStartLedgerReused"},
+  /**
+   * Rejected because the round is inside its anti-sniping close buffer —
+   * distinct from RoundEnded (the bet window has actually elapsed). The
+   * round is still open; treat this as transient, not terminal.
+   */
+  94: {message:"CloseBufferActive"}
 }
 
 /**

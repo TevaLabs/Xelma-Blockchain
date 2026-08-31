@@ -103,33 +103,18 @@ pub enum ContractError {
     IllegalPhaseTransition = 84,
     /// Oracle heartbeat failed the configured freshness or health policy.
     OracleHeartbeatUnhealthy = 85,
-    /// Early cash-out feature is disabled or not configured
-    EarlyCashoutDisabled = 79,
-    /// User does not have an active position to cash out
-    PositionNotFound = 80,
-    /// Early cash-out attempted outside the valid running phase
-    InvalidPhaseForCashout = 81,
-    /// Early cash-out is only supported for UpDown rounds
-    WrongModeForCashout = 82,
-    ProposalNotFound = 83,
-    ProposalExpired = 84,
-    GovInvalidState = 85,
-    GovUnauthorized = 86,
     /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
     ClaimBatchTooLarge = 87,
     /// claim_many batch contains the same address more than once (Issue #277)
     DuplicateClaimAddress = 88,
-    /// Caller is denylisted, or allowlist mode is enabled and caller is not
-    /// allowlisted (Issue #274 access-control gate).
-    AccessDenied = 89,
-    /// Oracle heartbeat is not live and strict mode blocks single-feed
-    /// settlement (Issue #264 sibling check for `resolve_round`).
-    OracleHeartbeatUnhealthy = 90,
-    /// The dispute window for `void_round` has expired, or dispute windows
-    /// are not configured (`dispute_ledgers == 0`).
-    DisputeWindowExpired = 91,
-    /// `finalize_round` was called before the dispute window elapsed.
-    ClaimLocked = 92,
+    /// Early cash-out feature is disabled or not configured
+    EarlyCashoutDisabled = 89,
+    /// User does not have an active position to cash out
+    PositionNotFound = 90,
+    /// Early cash-out attempted outside the valid running phase
+    InvalidPhaseForCashout = 91,
+    /// Early cash-out is only supported for UpDown rounds
+    WrongModeForCashout = 92,
     /// A round cannot be created because the current ledger sequence has
     /// already backed another round's `start_ledger`.
     ///
@@ -137,4 +122,10 @@ pub enum ContractError {
     /// sequence would make a payload signed for the earlier round valid for
     /// the later one. Retry once the ledger has advanced.
     RoundStartLedgerReused = 93,
+    /// A bet/prediction/commitment was rejected because the round is inside
+    /// its anti-sniping close buffer — distinct from `RoundEnded`, which
+    /// means the round's bet window has actually elapsed. The round is
+    /// still open; wallets should treat this as transient ("try again once
+    /// the round resolves or the next round opens"), not terminal.
+    CloseBufferActive = 94,
 }

@@ -12,7 +12,7 @@ This guide maps each smart‑contract error defined in `contracts/src/errors.rs`
 | `0x05` | 5 | UnauthorizedOracle | Only oracle can perform this action | "Oracle only action."
 | `0x06` | 6 | InvalidBetAmount | Bet amount must be greater than zero | "Bet amount must be > 0."
 | `0x07` | 7 | NoActiveRound | No active round exists | "No active round."
-| `0x08` | 8 | RoundEnded | Round has already ended | "Round already ended."
+| `0x08` | 8 | RoundEnded | Round's bet window has actually elapsed — terminal for this round | "Round already ended."
 | `0x09` | 9 | InsufficientBalance | User has insufficient balance | "Insufficient balance."
 | `0x0a` | 10 | AlreadyBet | User has already placed a bet in this round | "Bet already placed this round."
 | `0x0b` | 11 | Overflow | Arithmetic overflow occurred | "Arithmetic overflow."

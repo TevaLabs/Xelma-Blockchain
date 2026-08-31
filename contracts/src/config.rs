@@ -550,6 +550,23 @@ pub fn _read_precision_payout_policy(env: &Env) -> PrecisionPayoutPolicy {
     }
 }
 
+/// Sets the maximum number of `mint_initial` calls allowed per ledger
+/// (0 = unlimited). Admin only.
+///
+/// This is the faucet's per-ledger rate limit: it bounds how many *distinct
+/// new users* can claim their one-time 1000 vXLM mint within a single
+/// ~5-second ledger, independent of the [`set_epoch_mint_budget`] cap on
+/// total vXLM minted over a longer window. The two combine to bound both
+/// burst rate and sustained volume.
+///
+/// ## Recommended defaults
+/// - **Demo / hackathon judging**: `0` (unlimited) — judges and reviewers
+///   should never hit a rate limit mid-demo. Combine with a modest
+///   [`set_epoch_mint_budget`] instead if abuse resistance is still wanted.
+/// - **Open testnet (public faucet)**: a small positive value (e.g. `5`–`20`)
+///   to blunt a single actor spamming `mint_initial` from many addresses
+///   within one ledger, while still leaving normal onboarding traffic
+///   unaffected.
 pub fn set_mint_limit(env: Env, limit: u32) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env
@@ -562,14 +579,10 @@ pub fn set_mint_limit(env: Env, limit: u32) -> Result<(), ContractError> {
         _emit_action_rejected(&env, &admin, symbol_short!("mint_lim"), e);
     })?;
 
-    let old_limit: u32 = env
-        .storage()
-        .instance()
-        .get(&DataKeyCore::MintLimitConfig)
-        .unwrap_or(0);
-    env.storage()
-        .instance()
-        .set(&DataKeyCore::MintLimitConfig, &limit);
+    let key = DataKeyCore::MintLimitConfig;
+    let old_limit: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &limit);
+    _extend_persistent_ttl(&env, &key);
     _emit_config_updated(
         &env,
         ConfigChangeKind::MintLimit,
@@ -580,14 +593,28 @@ pub fn set_mint_limit(env: Env, limit: u32) -> Result<(), ContractError> {
 }
 
 pub fn get_mint_limit(env: Env) -> u32 {
-    env.storage()
-        .instance()
-        .get(&DataKeyCore::MintLimitConfig)
-        .unwrap_or(0)
+    let key = DataKeyCore::MintLimitConfig;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key).unwrap_or(0)
 }
 
-const EPOCH_MINT_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
-
+/// Sets the maximum total vXLM (in stroops) mintable via `mint_initial`
+/// across all users within one epoch (0 = unlimited). Admin only.
+/// Epochs are fixed 1440-ledger windows (~2 hours) — see
+/// [`crate::common::EPOCH_LEDGERS`].
+///
+/// This bounds sustained faucet drain regardless of how many distinct
+/// addresses participate, complementing [`set_mint_limit`]'s per-ledger
+/// burst cap.
+///
+/// ## Recommended defaults
+/// - **Demo / hackathon judging**: `0` (unlimited), or generously sized
+///   (e.g. `50_000` vXLM) if a soft ceiling is wanted purely as a safety
+///   net — a demo audience is small and known, so exhaustion risk is low.
+/// - **Open testnet (public faucet)**: a bounded budget sized to expected
+///   legitimate daily onboarding (e.g. `10_000`–`100_000` vXLM per
+///   2-hour epoch), so a scripted drain attempt hits `EpochBudgetExceeded`
+///   well before the faucet's practical funding is threatened.
 pub fn set_epoch_mint_budget(env: Env, budget: i128) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env
@@ -610,14 +637,10 @@ pub fn set_epoch_mint_budget(env: Env, budget: i128) -> Result<(), ContractError
         return Err(ContractError::InvalidBetAmount);
     }
 
-    let old_budget: i128 = env
-        .storage()
-        .instance()
-        .get(&EPOCH_MINT_BUDGET_KEY)
-        .unwrap_or(0);
-    env.storage()
-        .instance()
-        .set(&EPOCH_MINT_BUDGET_KEY, &budget);
+    let key = DataKeyCore::EpochMintBudget;
+    let old_budget: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &budget);
+    _extend_persistent_ttl(&env, &key);
     _emit_config_updated(
         &env,
         ConfigChangeKind::EpochMintBudget,
@@ -628,10 +651,9 @@ pub fn set_epoch_mint_budget(env: Env, budget: i128) -> Result<(), ContractError
 }
 
 pub fn get_epoch_mint_budget(env: Env) -> i128 {
-    env.storage()
-        .instance()
-        .get(&EPOCH_MINT_BUDGET_KEY)
-        .unwrap_or(0)
+    let key = DataKeyCore::EpochMintBudget;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key).unwrap_or(0)
 }
 
 pub fn set_archive_retention(env: Env, limit: u32) -> Result<(), ContractError> {
@@ -1235,7 +1257,7 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
         }
         ConfigChangeKind::MintLimit => ConfigChangePayload::MintLimit(
             env.storage()
-                .instance()
+                .persistent()
                 .get(&DataKeyCore::MintLimitConfig)
                 .unwrap_or(0),
         ),
@@ -1268,8 +1290,8 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
         }
         ConfigChangeKind::EpochMintBudget => ConfigChangePayload::EpochMintBudget(
             env.storage()
-                .instance()
-                .get(&EPOCH_MINT_BUDGET_KEY)
+                .persistent()
+                .get(&DataKeyCore::EpochMintBudget)
                 .unwrap_or(0),
         ),
         ConfigChangeKind::PrecisionPayoutPolicy => ConfigChangePayload::PrecisionPayoutPolicy(
@@ -1496,14 +1518,14 @@ pub fn _apply_config_payload(
             if *budget < 0 {
                 return Err(ContractError::InvalidBetAmount);
             }
-            env.storage()
-                .instance()
-                .set(&EPOCH_MINT_BUDGET_KEY, budget);
+            let key = DataKeyCore::EpochMintBudget;
+            env.storage().persistent().set(&key, budget);
+            _extend_persistent_ttl(env, &key);
         }
         (ConfigChangeKind::MintLimit, ConfigChangePayload::MintLimit(limit)) => {
-            env.storage()
-                .instance()
-                .set(&DataKeyCore::MintLimitConfig, limit);
+            let key = DataKeyCore::MintLimitConfig;
+            env.storage().persistent().set(&key, limit);
+            _extend_persistent_ttl(env, &key);
         }
         (ConfigChangeKind::ArchiveRetention, ConfigChangePayload::ArchiveRetention(limit)) => {
             if !(MIN_ARCHIVE_RETENTION..=MAX_ARCHIVE_RETENTION).contains(limit) {

@@ -161,12 +161,54 @@ if (simulated) {
 }
 ```
 
+## `getSeasonTopN` / `getCurrentSeasonTopN`
+
+Fetches the top-N entries of a leaderboard season, ranked by wins or best
+streak. Works transparently for the active season or a past, archived one.
+
+```ts
+import { getSeasonTopN, getCurrentSeasonTopN } from "@xelma/bindings/helpers"
+
+const top10 = await getSeasonTopN(client, 3, 10, "wins")
+
+const { seasonId, entries } = await getCurrentSeasonTopN(client, 10, "streak")
+console.log(`Season ${seasonId} top streaks:`, entries)
+```
+
+## `rolloverSeason`
+
+Freezes the active season's rankings into a permanent archive and advances
+to a new, empty season. Admin-only.
+
+```ts
+import { rolloverSeason } from "@xelma/bindings/helpers"
+
+const { endedSeasonId, newSeasonId } = await rolloverSeason(client)
+console.log(`Season ${endedSeasonId} archived, season ${newSeasonId} is now active`)
+```
+
+## `getSeasonSummary`
+
+Fetches a demo-friendly snapshot of a past season's frozen rankings —
+`null` if the season is still active or never existed.
+
+```ts
+import { getSeasonSummary } from "@xelma/bindings/helpers"
+
+const summary = await getSeasonSummary(client, 2)
+if (summary) {
+  console.log(`Season 2 had ${summary.participant_count} participants`)
+}
+```
+
 ## Error reference
 
 | Exception                  | Contract code | Meaning                          |
 |----------------------------|---------------|----------------------------------|
 | `InsufficientBalanceError` | 9             | Not enough vXLM to place bet     |
 | `NoActiveRoundError`       | 7             | No round is currently active     |
+| `RoundEndedError`          | 8             | The round's bet window has ended — terminal, wait for the next round |
+| `CloseBufferActiveError`   | 94            | Round is still open but inside its anti-sniping close buffer — transient, retry shortly |
 | `ContractPausedError`      | 22            | Contract paused for maintenance  |
 | `AlreadyBetError`          | 10            | User already bet in this round   |
 | `StakeExceedsMaxError`     | 28            | Bet exceeds the max stake cap    |

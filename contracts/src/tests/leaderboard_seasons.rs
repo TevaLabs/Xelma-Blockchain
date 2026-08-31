@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! Tests for seasonal leaderboards: season-scoped stats independent of the
-//! lifetime leaderboard, archive-on-reset, scoped queries, and boundaries.
+//! lifetime leaderboard, archive-on-reset, scoped queries, boundaries, and
+//! TTL rent-safety for every season-scoped storage key.
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use crate::types::{DataKeyCore, DataKeyExt, DataKeyScoped};
+use soroban_sdk::testutils::storage::Persistent as _;
+use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
 fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address, Address) {
     let contract_id = env.register(VirtualTokenContract, ());
@@ -267,4 +270,111 @@ fn test_season_boundary_consecutive_resets_keep_independent_archives() {
 
     // Season 3 (active) is empty.
     assert_eq!(client.get_season_leaderboard_by_wins(&3, &0, &10).len(), 0);
+}
+
+// ─── TTL rent-safety ────────────────────────────────────────────────────────
+//
+// A season is meant to be a durable demo/history surface — an archived
+// season's rankings must not silently expire from persistent storage.
+// Every season-scoped key extends its TTL to `TTL_BUMP_AMOUNT`
+// (~30 days) on both write and read, and the admin `batch_touch_ttl`
+// allowlist additionally covers the account-level (non-per-user) season
+// keys for proactive rent renewal ahead of long idle periods.
+
+const TTL_BUMP_AMOUNT: u32 = 518_400;
+
+#[test]
+fn test_season_keys_ttl_extended_on_write() {
+    let env = Env::default();
+    let (_client, contract_id, _admin, _oracle) = setup_contract(&env);
+    let alice = Address::generate(&env);
+
+    win(&env, &contract_id, &alice);
+
+    // Bounded-index keys and the season-id key are extended on every write.
+    env.as_contract(&contract_id, || {
+        let season_id_ttl = env
+            .storage()
+            .persistent()
+            .get_ttl(&DataKeyCore::Ext(DataKeyExt::SeasonId));
+        assert!(season_id_ttl >= TTL_BUMP_AMOUNT);
+
+        let wins_ttl = env
+            .storage()
+            .persistent()
+            .get_ttl(&DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins));
+        assert!(wins_ttl >= TTL_BUMP_AMOUNT);
+
+        let streak_ttl = env
+            .storage()
+            .persistent()
+            .get_ttl(&DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak));
+        assert!(streak_ttl >= TTL_BUMP_AMOUNT);
+
+        let user_stats_ttl = env
+            .storage()
+            .persistent()
+            .get_ttl(&DataKeyScoped::SeasonUserStats(1, alice.clone()));
+        assert!(user_stats_ttl >= TTL_BUMP_AMOUNT);
+    });
+}
+
+/// The frozen `SeasonArchive` written by a reset is the permanent historical
+/// record for a past season — it must get the same TTL bump as any live key
+/// at write time, not just when someone happens to query it later.
+#[test]
+fn test_season_archive_ttl_extended_on_write_and_read() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+    let alice = Address::generate(&env);
+    win(&env, &contract_id, &alice);
+
+    client.reset_leaderboard_season();
+
+    env.as_contract(&contract_id, || {
+        let ttl = env
+            .storage()
+            .persistent()
+            .get_ttl(&DataKeyScoped::SeasonArchive(1));
+        assert!(ttl >= TTL_BUMP_AMOUNT, "archive TTL bumped at write time");
+    });
+
+    // A later read (e.g. a demo dashboard polling old seasons) must refresh
+    // the TTL again rather than relying solely on the write-time bump.
+    client.get_season_archive(&1);
+    env.as_contract(&contract_id, || {
+        let ttl = env
+            .storage()
+            .persistent()
+            .get_ttl(&DataKeyScoped::SeasonArchive(1));
+        assert!(ttl >= TTL_BUMP_AMOUNT, "archive TTL refreshed on read");
+    });
+}
+
+/// The operator-facing `batch_touch_ttl` allowlist must cover the
+/// account-level season keys so an operator can proactively renew them
+/// ahead of a long idle period without needing a live write/read to do it.
+#[test]
+fn test_batch_touch_ttl_covers_season_keys() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+    let alice = Address::generate(&env);
+    win(&env, &contract_id, &alice);
+
+    let keys: Vec<DataKeyCore> = Vec::from_array(
+        &env,
+        [
+            DataKeyCore::Ext(DataKeyExt::SeasonId),
+            DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins),
+            DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak),
+        ],
+    );
+
+    let touched = client.batch_touch_ttl(&keys);
+    assert_eq!(touched, 3, "all three season keys exist and are allowlisted");
+
+    for key in keys.iter() {
+        let ttl = env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+        assert!(ttl >= TTL_BUMP_AMOUNT);
+    }
 }
