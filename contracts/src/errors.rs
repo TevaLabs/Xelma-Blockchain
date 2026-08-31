@@ -60,7 +60,7 @@ pub enum ContractError {
     OracleTimestampOutsideWindow = 66,
     /// Pending winnings entry exists but has not yet reached the configured
     /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 95,
+    PendingWinningsNotExpired = 86,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
@@ -104,27 +104,39 @@ pub enum ContractError {
     /// Oracle heartbeat failed the configured freshness or health policy.
     OracleHeartbeatUnhealthy = 85,
     /// Early cash-out feature is disabled or not configured
-    EarlyCashoutDisabled = 86,
+    EarlyCashoutDisabled = 79,
     /// User does not have an active position to cash out
-    PositionNotFound = 87,
+    PositionNotFound = 80,
     /// Early cash-out attempted outside the valid running phase
-    InvalidPhaseForCashout = 88,
+    InvalidPhaseForCashout = 81,
     /// Early cash-out is only supported for UpDown rounds
-    WrongModeForCashout = 89,
+    WrongModeForCashout = 82,
+    ProposalNotFound = 83,
+    ProposalExpired = 84,
+    GovInvalidState = 85,
+    GovUnauthorized = 86,
     /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
-    ClaimBatchTooLarge = 90,
+    ClaimBatchTooLarge = 87,
     /// claim_many batch contains the same address more than once (Issue #277)
-    DuplicateClaimAddress = 91,
+    DuplicateClaimAddress = 88,
+    /// Caller is denylisted, or allowlist mode is enabled and caller is not
+    /// allowlisted (Issue #274 access-control gate).
+    AccessDenied = 89,
+    /// Oracle heartbeat is not live and strict mode blocks single-feed
+    /// settlement (Issue #264 sibling check for `resolve_round`).
+    OracleHeartbeatUnhealthy = 90,
     /// The dispute window for `void_round` has expired, or dispute windows
     /// are not configured (`dispute_ledgers == 0`).
-    DisputeWindowExpired = 92,
+    DisputeWindowExpired = 91,
     /// `finalize_round` was called before the dispute window elapsed.
-    ClaimLocked = 93,
+    ClaimLocked = 92,
     /// A round cannot be created because the current ledger sequence has
     /// already backed another round's `start_ledger`.
     ///
     /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
     /// sequence would make a payload signed for the earlier round valid for
     /// the later one. Retry once the ledger has advanced.
-    RoundStartLedgerReused = 94,
+    RoundStartLedgerReused = 93,
+    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
+    PageSizeExceeded = 94,
 }

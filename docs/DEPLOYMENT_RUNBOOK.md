@@ -87,7 +87,42 @@ The output artifact is located at: `target/wasm32v1-none/release/xelma_contract.
 - If only a specific role or oracle flow breaks: disable the affected workflow, communicate the issue, and patch before reopening the system.
 - If the issue is limited to a non-critical UI or indexer problem: keep the contract paused or isolated until downstream systems are updated.
 
-## 6. Post-deployment
+## 7. Operator Playbook: Archive Retention & Expired Pending Winnings Reclaim
+
+### 7.1 FIFO Archive Prune
+
+Operators manage the on-chain archive depth using the `archive_retention` threshold and the `prune_archived_rounds` entrypoint in [contracts/src/admin.rs](file:///C:/Users/SOSA/Downloads/od/Xelma-Blockchain/contracts/src/admin.rs).
+
+* **Authorization**: Admin-only (`admin.require_auth()`).
+* **CLI Command**:
+  ```bash
+  soroban contract invoke --id <CONTRACT_ID> --source-account <ADMIN_KEY> --network <NETWORK> -- prune_archived_rounds --max_prune_count 50
+  ```
+* **Threshold Configuration**:
+  ```bash
+  soroban contract invoke --id <CONTRACT_ID> --source-account <ADMIN_KEY> --network <NETWORK> -- set_archive_retention --retention_count 100
+  ```
+* **Monitoring & Failure Modes**:
+  - Monitor `("admin", "archive_pruned")` contract events for pruned counts.
+  - If `prune_archived_rounds` fails with `NotInitialized` or authorization error, verify admin signature.
+  - Excessive archival depth without pruning increases persistent storage footprint.
+
+### 7.2 Reclaiming Expired Pending Winnings
+
+Unclaimed user winnings past the global expiration threshold can be reclaimed into the protocol fee treasury.
+
+* **Authorization**: Admin-only (`admin.require_auth()`).
+* **CLI Command**:
+  ```bash
+  soroban contract invoke --id <CONTRACT_ID> --source-account <ADMIN_KEY> --network <NETWORK> -- reclaim_expired_pending_winnings --max_users 50
+  ```
+* **Failure Modes & Safety**:
+  - Unclaimed amounts that have not reached the expiration threshold remain untouched.
+  - Emits `("admin", "pending_reclaimed")` with `(user, amount, reclaimed_to_treasury)`.
+
+---
+
+## 8. Post-deployment
 
 - [ ] Confirm the admin and oracle addresses match the intended identities.
 - [ ] Verify the deployed artifact hash and network ID.

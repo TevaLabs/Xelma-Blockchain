@@ -1486,7 +1486,10 @@ pub fn _apply_one_sided_policy(
             if !participants.is_empty() {
                 _record_refunds_indexed(env, round.round_id, 0, participants)?;
             } else if let Some(pos_map) = positions {
-                _record_refunds_legacy(env, round.round_id, pos_map)?;
+                #[cfg(feature = "legacy-map-settlement")]
+                {
+                    _record_refunds_legacy(env, round.round_id, pos_map)?;
+                }
             }
             (round.pool_up.saturating_add(round.pool_down), 0i128)
         }
@@ -1494,7 +1497,10 @@ pub fn _apply_one_sided_policy(
             if !participants.is_empty() {
                 _record_refunds_indexed(env, round.round_id, 0, participants)?;
             } else if let Some(pos_map) = positions {
-                _record_refunds_legacy(env, round.round_id, pos_map)?;
+                #[cfg(feature = "legacy-map-settlement")]
+                {
+                    _record_refunds_legacy(env, round.round_id, pos_map)?;
+                }
             }
             (0i128, round.pool_up.saturating_add(round.pool_down))
         }
@@ -1590,32 +1596,35 @@ pub fn _resolve_updown_mode(
             )?;
         }
     } else {
-        let positions: Map<Address, UserPosition> = env
-            .storage()
-            .persistent()
-            .get(&DataKeyCore::UpDownPositions)
-            .unwrap_or(Map::new(env));
-        if !positions.is_empty() {
-            if price_unchanged {
-                _record_refunds_legacy(env, round.round_id, &positions)?;
-            } else if price_went_up {
-                fee_amount = _record_winnings_legacy(
-                    env,
-                    round.round_id,
-                    &positions,
-                    BetSide::Up,
-                    round.pool_up,
-                    round.pool_down,
-                )?;
-            } else if price_went_down {
-                fee_amount = _record_winnings_legacy(
-                    env,
-                    round.round_id,
-                    &positions,
-                    BetSide::Down,
-                    round.pool_down,
-                    round.pool_up,
-                )?;
+        #[cfg(feature = "legacy-map-settlement")]
+        {
+            let positions: Map<Address, UserPosition> = env
+                .storage()
+                .persistent()
+                .get(&DataKeyCore::UpDownPositions)
+                .unwrap_or(Map::new(env));
+            if !positions.is_empty() {
+                if price_unchanged {
+                    _record_refunds_legacy(env, round.round_id, &positions)?;
+                } else if price_went_up {
+                    fee_amount = _record_winnings_legacy(
+                        env,
+                        round.round_id,
+                        &positions,
+                        BetSide::Up,
+                        round.pool_up,
+                        round.pool_down,
+                    )?;
+                } else if price_went_down {
+                    fee_amount = _record_winnings_legacy(
+                        env,
+                        round.round_id,
+                        &positions,
+                        BetSide::Down,
+                        round.pool_down,
+                        round.pool_up,
+                    )?;
+                }
             }
         }
     }
@@ -1623,6 +1632,10 @@ pub fn _resolve_updown_mode(
     Ok((is_one_sided, fee_amount))
 }
 
+#[cfg(feature = "legacy-map-settlement")]
+#[deprecated(
+    note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
+)]
 pub fn _record_refunds_legacy(
     env: &Env,
     round_id: u64,
@@ -1654,6 +1667,10 @@ pub fn _record_refunds_legacy(
     Ok(())
 }
 
+#[cfg(feature = "legacy-map-settlement")]
+#[deprecated(
+    note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
+)]
 pub fn _record_winnings_legacy(
     env: &Env,
     round_id: u64,
@@ -1810,6 +1827,7 @@ pub fn _resolve_precision_mode(
         .unwrap_or(Vec::new(env));
     participants = sort_addresses(participants);
 
+    #[cfg(feature = "legacy-map-settlement")]
     if participants.is_empty() {
         let legacy: Map<Address, PrecisionPrediction> = env
             .storage()
@@ -1820,6 +1838,11 @@ pub fn _resolve_precision_mode(
             return Ok((0, 0));
         }
         return _resolve_precision_legacy(env, round_id, &legacy, final_price);
+    }
+
+    #[cfg(not(feature = "legacy-map-settlement"))]
+    if participants.is_empty() {
+        return Ok((0, 0));
     }
 
     let mut min_diff: Option<u128> = None;
@@ -2012,6 +2035,10 @@ pub fn _resolve_precision_mode(
     Ok((fee_amount, total_pot))
 }
 
+#[cfg(feature = "legacy-map-settlement")]
+#[deprecated(
+    note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
+)]
 pub fn _resolve_precision_legacy(
     env: &Env,
     round_id: u64,
@@ -2307,6 +2334,7 @@ pub fn _archive_round(
                 .persistent()
                 .get(&DataKeyScoped::RoundParticipants(round.round_id))
                 .unwrap_or(Vec::new(env));
+            #[cfg(feature = "legacy-map-settlement")]
             if participants.is_empty() {
                 let legacy: Map<Address, PrecisionPrediction> = env
                     .storage()
@@ -2317,6 +2345,36 @@ pub fn _archive_round(
                     total_pot = total_pot.checked_add(entry.1.amount).unwrap_or(total_pot);
                 }
             } else {
+                for i in 0..participants.len() {
+                    if let Some(user) = participants.get(i) {
+                        let pred_key =
+                            DataKeyScoped::PrecisionPosition(round.round_id, user.clone());
+                        let commit_key =
+                            DataKeyScoped::PrecisionCommitment(round.round_id, user.clone());
+
+                        let pred_opt = env
+                            .storage()
+                            .persistent()
+                            .get::<_, PrecisionPrediction>(&pred_key);
+
+                        let commitment_opt = env
+                            .storage()
+                            .persistent()
+                            .get::<_, PrecisionCommitment>(&commit_key);
+
+                        let amount = if let Some(ref pred) = pred_opt {
+                            pred.amount
+                        } else if let Some(ref commit) = commitment_opt {
+                            commit.amount
+                        } else {
+                            0
+                        };
+                        total_pot = total_pot.checked_add(amount).unwrap_or(total_pot);
+                    }
+                }
+            }
+            #[cfg(not(feature = "legacy-map-settlement"))]
+            {
                 for i in 0..participants.len() {
                     if let Some(user) = participants.get(i) {
                         let pred_key =

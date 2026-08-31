@@ -43,7 +43,7 @@ fn test_leaderboard_ordered_by_wins() {
     client.create_round(&1_0000000u128, &None);
 
     // Query wins leaderboard with cursor = None (first page)
-    let page = client.get_leaderboard_by_wins(&None, &10);
+    let page = client.get_leaderboard_by_wins(&None, &10).unwrap();
     assert_eq!(page.0.len(), 3);
 
     let entries = page.0;
@@ -103,7 +103,7 @@ fn test_leaderboard_ordered_by_streak() {
     client.create_round(&1_0000000u128, &None);
 
     // Query streak leaderboard with cursor = None
-    let page = client.get_leaderboard_by_streak(&None, &10);
+    let page = client.get_leaderboard_by_streak(&None, &10).unwrap();
     assert_eq!(page.0.len(), 3);
 
     let entries = page.0;
@@ -149,26 +149,26 @@ fn test_leaderboard_cursor_pagination() {
     client.create_round(&1_0000000u128, &None);
 
     // First page: cursor = None, limit = 1 -> should return Bob (5 wins)
-    let page0 = client.get_leaderboard_by_wins(&None, &1);
+    let page0 = client.get_leaderboard_by_wins(&None, &1).unwrap();
     assert_eq!(page0.0.len(), 1);
     assert_eq!(page0.0.get(0).unwrap().user, user_b);
     assert!(page0.1.is_some());
 
     // Second page: cursor from page0 -> should return Alice (3 wins)
-    let page1 = client.get_leaderboard_by_wins(&page0.1, &1);
+    let page1 = client.get_leaderboard_by_wins(&page0.1, &1).unwrap();
     assert_eq!(page1.0.len(), 1);
     assert_eq!(page1.0.get(0).unwrap().user, user_a);
     assert!(page1.1.is_some());
 
     // Third page: cursor from page1 -> should return Carol (2 wins)
-    let page2 = client.get_leaderboard_by_wins(&page1.1, &1);
+    let page2 = client.get_leaderboard_by_wins(&page1.1, &1).unwrap();
     assert_eq!(page2.0.len(), 1);
     assert_eq!(page2.0.get(0).unwrap().user, user_c);
     // Last page: next_cursor should be None (exhausted)
     assert!(page2.1.is_none());
 
     // Fourth page: using last cursor -> empty
-    let page3 = client.get_leaderboard_by_wins(&page2.1, &1);
+    let page3 = client.get_leaderboard_by_wins(&page2.1, &1).unwrap();
     assert_eq!(page3.0.len(), 0);
     assert!(page3.1.is_none());
 }
@@ -198,7 +198,7 @@ fn test_leaderboard_deterministic_tie_breaking() {
     client.create_round(&1_0000000u128, &None);
 
     // Query wins leaderboard with cursor = None
-    let page = client.get_leaderboard_by_wins(&None, &10);
+    let page = client.get_leaderboard_by_wins(&None, &10).unwrap();
     assert_eq!(page.0.len(), 2);
 
     // Expected order: sorted by Address ascending
@@ -232,10 +232,14 @@ fn test_leaderboard_limit_capped_at_max_page_size() {
         }
     });
 
-    // Request 150 entries — limit is capped at MAX_PAGE_SIZE (100).
-    let page = client.get_leaderboard_by_wins(&None, &150);
-    // With 50 participants, we should get at most 50 results, all ≤ 100.
-    assert!(page.0.len() <= 100, "result count should be capped at 100");
+    // Request with valid limit = 100 (MAX_PAGE_SIZE) should succeed.
+    let page = client.get_leaderboard_by_wins(&None, &100).unwrap();
+    // With 50 participants, we should get 50 results.
+    assert_eq!(page.0.len(), 50);
+
+    // Request 150 entries (exceeds MAX_PAGE_SIZE) — should be rejected with PageSizeExceeded error.
+    let result = client.get_leaderboard_by_wins(&None, &150);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -250,11 +254,11 @@ fn test_leaderboard_empty_when_no_users() {
     client.initialize(&admin, &oracle);
 
     // No round created, no users → empty leaderboard
-    let page = client.get_leaderboard_by_wins(&None, &10);
+    let page = client.get_leaderboard_by_wins(&None, &10).unwrap();
     assert_eq!(page.0.len(), 0);
     assert!(page.1.is_none());
 
-    let page2 = client.get_leaderboard_by_streak(&None, &10);
+    let page2 = client.get_leaderboard_by_streak(&None, &10).unwrap();
     assert_eq!(page2.0.len(), 0);
     assert!(page2.1.is_none());
 }
@@ -280,8 +284,40 @@ fn test_leaderboard_zero_limit_is_empty() {
         VirtualTokenContract::_update_stats_win(&env, user.clone()).unwrap();
     });
 
-    // limit = 0 → empty page
-    let page = client.get_leaderboard_by_wins(&None, &0);
-    assert_eq!(page.0.len(), 0);
-    assert!(page.1.is_none());
+    // limit = 0 → should be rejected with PageSizeExceeded error
+    let result = client.get_leaderboard_by_wins(&None, &0);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_leaderboard_rejects_over_limit_adversarial() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    client.create_round(&1_0000000u128, &None);
+
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+    client.place_bet(&user, &10_0000000i128, &crate::types::BetSide::Up);
+
+    env.as_contract(&contract_id, || {
+        VirtualTokenContract::_update_stats_win(&env, user.clone()).unwrap();
+    });
+
+    // Adversarial: request with limit = MAX_PAGE_SIZE + 1 should be rejected
+    let result_wins = client.get_leaderboard_by_wins(&None, &101);
+    assert!(result_wins.is_err(), "Should reject limit > MAX_PAGE_SIZE (100)");
+
+    let result_streak = client.get_leaderboard_by_streak(&None, &1000);
+    assert!(result_streak.is_err(), "Should reject limit > MAX_PAGE_SIZE (100)");
+
+    // Valid request with exactly MAX_PAGE_SIZE should succeed
+    let valid_result = client.get_leaderboard_by_wins(&None, &100);
+    assert!(valid_result.is_ok(), "Should accept limit == MAX_PAGE_SIZE (100)");
 }

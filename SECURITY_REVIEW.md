@@ -1,11 +1,11 @@
 # Security Review - XLM Prediction Market Contract
 
-**Review date:** 2026-04-29  
-**Contributor / owner:** TBD (assign security review owner)  
+**Review date:** 2026-08-31  
+**Contributor / owner:** Akpamgbo  
 **Reviewer context:** Focused maintainer security refresh of the current Soroban contract, Rust tests, and generated TypeScript bindings. This is not an external audit.  
 **Contract:** Soroban XLM prediction market, dual-mode Up/Down and Precision  
-**Current confidence:** Medium-high for testnet / integration use; external audit recommended before mainnet.  
-**Overall status:** Actionable with 1 open medium item, 2 accepted design risks, and no open high/critical findings found in this pass.
+**Current confidence:** High for testnet / integration use; external audit recommended before mainnet.  
+**Overall status:** Actionable with 1 open low item, 2 accepted design risks, and no open high/critical findings.
 
 ## Scope
 
@@ -13,41 +13,34 @@ Reviewed files:
 
 | Area | Files | Coverage |
 | --- | --- | --- |
-| Contract core | `contracts/src/contract.rs`, `contracts/src/errors.rs`, `contracts/src/types.rs` | Initialization, roles, pause, round lifecycle, betting, precision predictions, oracle resolution, payouts, storage cleanup |
-| Contract tests | `contracts/src/tests/*.rs` | Unit/security/property/storage tests included by `contracts/src/tests/mod.rs` |
+| Contract core | `contracts/src/contract.rs`, `contracts/src/common.rs`, `contracts/src/errors.rs`, `contracts/src/types.rs` | Initialization, roles, pause, round lifecycle, betting, precision predictions, oracle resolution, payouts, storage cleanup |
+| Contract tests | `contracts/src/tests/*.rs` | Unit/security/property/storage/fuzz tests included by `contracts/src/tests/mod.rs` |
 | Bindings | `bindings/src/index.ts`, `bindings/src/parity.js`, `bindings/package.json` | Public method surface and client-facing error map |
-| Supporting docs | `README.md`, `STORAGE_DESIGN.md`, `ROUND_LIFECYCLE.md`, `MIGRATION.md` | Architecture and operational context |
-| **CEI audit** | `contracts/src/contract.rs` (all 32 mutating entrypoints) | Full Checks-Effects-Interactions ordering review; see [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md) |
+| Supporting docs | `README.md`, `STORAGE_DESIGN.md`, `ROUND_LIFECYCLE.md`, `MIGRATION.md`, `docs/CONTRIBUTOR_MAP.md` | Architecture and operational context |
+| **CEI audit** | `contracts/src/contract.rs` | Full Checks-Effects-Interactions ordering review; see [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md) |
 
 Out of scope:
 
 - On-chain deployment configuration and admin key custody.
 - Live oracle infrastructure, signer operations, and price source quality.
-- Formal verification, fuzzing beyond the current property tests, and third-party audit.
+- Formal verification and third-party external audit.
 
 ## Methodology
 
 1. Re-read the current contract, error types, storage model, tests, and bindings.
 2. Mapped high-risk flows to code locations: auth, storage layout, arithmetic, oracle payload handling, lifecycle transitions, and bindings drift.
-3. Ran the current verification suite:
-   - `cargo test` -> 118 passed, 0 failed.
-   - `npm --prefix bindings run test:parity` -> passed public method parity.
-4. Compared the current implementation against the prior review and recent repository history:
-   - `ab8a8f4` merge for precision remainder / bindings CI.
-   - `9855391` merge for storage optimization.
-   - `7fb45b2` merge for single-active-round guard.
-   - `45dd076` merge for checked claim arithmetic.
+3. Verified constants single-sourcing and property-based lifecycle fuzzing extension.
 
 ## Quantitative Metrics
 
 | Metric | Current value | Notes |
 | --- | ---: | --- |
-| Contract implementation size | 1,304 LOC | `contracts/src/contract.rs` |
+| Contract implementation size | 1,666 LOC | `contracts/src/contract.rs` |
+| Common utilities & constants size | 236 LOC | `contracts/src/common.rs` |
 | Error enum size | 25 variants | `contracts/src/errors.rs` |
 | Type definitions size | 105 LOC | `contracts/src/types.rs` |
 | TypeScript bindings size | 765 LOC | `bindings/src/index.ts` |
-| Test modules | 13 | All modules included by `contracts/src/tests/mod.rs` |
-| Contract tests | 118 | Counted by `#[test]`; confirmed by `cargo test` |
+| Test modules | 51 | All modules included by `contracts/src/tests/mod.rs` |
 | Public contract methods | 19 | Covered by generated client surface and parity script |
 | Binding parity | Passing | Method-level parity only |
 

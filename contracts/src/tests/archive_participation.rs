@@ -52,8 +52,8 @@ fn test_archived_participation_after_resolve() {
 
     let round_id = resolve_active_round(&client, &env, 2_0000000, 1);
 
-    let alice_history = client.get_user_archive_history(&alice, &0, &10);
-    let bob_history = client.get_user_archive_history(&bob, &0, &10);
+    let alice_history = client.get_user_archive_history(&alice, &0, &10).unwrap();
+    let bob_history = client.get_user_archive_history(&bob, &0, &10).unwrap();
 
     assert_eq!(alice_history.len(), 1);
     assert_eq!(alice_history.get(0).unwrap().round_id, round_id);
@@ -89,7 +89,7 @@ fn test_archived_participation_after_cancel() {
 
     client.cancel_round(&1u32);
 
-    let history = client.get_user_archive_history(&alice, &0, &10);
+    let history = client.get_user_archive_history(&alice, &0, &10).unwrap();
     assert_eq!(history.len(), 1);
     assert_eq!(history.get(0).unwrap().round_id, round_id);
     assert_eq!(
@@ -118,7 +118,7 @@ fn test_archived_participation_after_fallback_refund() {
 
     resolve_active_round(&client, &env, 1_2000000, 1);
 
-    let history = client.get_user_archive_history(&user, &0, &10);
+    let history = client.get_user_archive_history(&user, &0, &10).unwrap();
     assert_eq!(history.len(), 1);
     assert_eq!(history.get(0).unwrap().round_id, round_id);
     assert_eq!(
@@ -141,7 +141,7 @@ fn test_archived_participation_no_history() {
 
     let stranger = Address::generate(&env);
 
-    let history = client.get_user_archive_history(&stranger, &0, &10);
+    let history = client.get_user_archive_history(&stranger, &0, &10).unwrap();
     assert_eq!(history.len(), 0);
 }
 
@@ -163,7 +163,7 @@ fn test_archived_participation_non_participant_after_round() {
     client.place_bet(&alice, &50_0000000, &BetSide::Up);
     resolve_active_round(&client, &env, 2_0000000, 1);
 
-    let bob_history = client.get_user_archive_history(&bob, &0, &10);
+    let bob_history = client.get_user_archive_history(&bob, &0, &10).unwrap();
     assert_eq!(bob_history.len(), 0);
 }
 
@@ -188,7 +188,7 @@ fn test_archived_participation_newest_first() {
         resolve_active_round(&client, &env, 2_0000000 + i as u128, i as u64 + 1);
     }
 
-    let all = client.get_user_archive_history(&user, &0, &10);
+    let all = client.get_user_archive_history(&user, &0, &10).unwrap();
     assert_eq!(all.len(), 5);
 
     for i in 1..all.len() {
@@ -230,9 +230,9 @@ fn test_archived_participation_page_respects_offset_and_limit() {
         ));
     }
 
-    let page0 = client.get_user_archive_history(&user, &0, &1);
-    let page1 = client.get_user_archive_history(&user, &1, &1);
-    let page2 = client.get_user_archive_history(&user, &2, &1);
+    let page0 = client.get_user_archive_history(&user, &0, &1).unwrap();
+    let page1 = client.get_user_archive_history(&user, &1, &1).unwrap();
+    let page2 = client.get_user_archive_history(&user, &2, &1).unwrap();
 
     assert_eq!(page0.len(), 1);
     assert_eq!(page1.len(), 1);
@@ -262,7 +262,7 @@ fn test_archived_participation_full_page_matches_all() {
         resolve_active_round(&client, &env, 2_0000000 + i as u128, i as u64 + 1);
     }
 
-    let page = client.get_user_archive_history(&user, &0, &10);
+    let page = client.get_user_archive_history(&user, &0, &10).unwrap();
     assert_eq!(page.len(), 3);
 }
 
@@ -285,15 +285,15 @@ fn test_archived_participation_offset_past_end_is_empty() {
     client.place_bet(&user, &10_0000000, &BetSide::Up);
     resolve_active_round(&client, &env, 2_0000000, 1);
 
-    let page_at_end = client.get_user_archive_history(&user, &1, &10);
+    let page_at_end = client.get_user_archive_history(&user, &1, &10).unwrap();
     assert_eq!(page_at_end.len(), 0);
 
-    let page_far = client.get_user_archive_history(&user, &999, &10);
+    let page_far = client.get_user_archive_history(&user, &999, &10).unwrap();
     assert_eq!(page_far.len(), 0);
 }
 
 #[test]
-fn test_archived_participation_zero_limit_is_empty() {
+fn test_archived_participation_zero_limit_is_rejected() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
@@ -309,12 +309,13 @@ fn test_archived_participation_zero_limit_is_empty() {
     client.place_bet(&user, &10_0000000, &BetSide::Up);
     resolve_active_round(&client, &env, 2_0000000, 1);
 
-    let page = client.get_user_archive_history(&user, &0, &0);
-    assert_eq!(page.len(), 0);
+    // Zero limit should be rejected with PageSizeExceeded error
+    let result = client.get_user_archive_history(&user, &0, &0);
+    assert!(result.is_err());
 }
 
 #[test]
-fn test_archived_participation_limit_is_capped() {
+fn test_archived_participation_over_limit_rejected() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
@@ -332,7 +333,12 @@ fn test_archived_participation_limit_is_capped() {
         resolve_active_round(&client, &env, 2_0000000 + i as u128, i as u64 + 1);
     }
 
-    let page = client.get_user_archive_history(&user, &0, &1_000_000);
+    // Over-limit request (1_000_000 > MAX_PAGE_SIZE=100) should be rejected
+    let result = client.get_user_archive_history(&user, &0, &1_000_000);
+    assert!(result.is_err(), "Should reject limit > MAX_PAGE_SIZE (100)");
+
+    // Valid request with MAX_PAGE_SIZE should succeed
+    let page = client.get_user_archive_history(&user, &0, &100).unwrap();
     assert_eq!(page.len(), 3);
 }
 
@@ -361,11 +367,11 @@ fn test_archived_participation_multi_user_isolation() {
     client.place_bet(&bob, &30_0000000, &BetSide::Down);
     let round2_id = resolve_active_round(&client, &env, 1_5000000, 2);
 
-    let alice_hist = client.get_user_archive_history(&alice, &0, &10);
+    let alice_hist = client.get_user_archive_history(&alice, &0, &10).unwrap();
     assert_eq!(alice_hist.len(), 1);
     assert_eq!(alice_hist.get(0).unwrap().round_id, round1_id);
 
-    let bob_hist = client.get_user_archive_history(&bob, &0, &10);
+    let bob_hist = client.get_user_archive_history(&bob, &0, &10).unwrap();
     assert_eq!(bob_hist.len(), 1);
     assert_eq!(bob_hist.get(0).unwrap().round_id, round2_id);
 }
@@ -393,8 +399,8 @@ fn test_archived_participation_precision_mode() {
 
     let round_id = resolve_active_round(&client, &env, 2298, 1);
 
-    let alice_hist = client.get_user_archive_history(&alice, &0, &10);
-    let bob_hist = client.get_user_archive_history(&bob, &0, &10);
+    let alice_hist = client.get_user_archive_history(&alice, &0, &10).unwrap();
+    let bob_hist = client.get_user_archive_history(&bob, &0, &10).unwrap();
 
     assert_eq!(alice_hist.len(), 1);
     assert_eq!(alice_hist.get(0).unwrap().round_id, round_id);
