@@ -122,4 +122,10 @@ pub enum ContractError {
     /// sequence would make a payload signed for the earlier round valid for
     /// the later one. Retry once the ledger has advanced.
     RoundStartLedgerReused = 93,
+    /// A bet/prediction/commitment was rejected because the round is inside
+    /// its anti-sniping close buffer — distinct from `RoundEnded`, which
+    /// means the round's bet window has actually elapsed. The round is
+    /// still open; wallets should treat this as transient ("try again once
+    /// the round resolves or the next round opens"), not terminal.
+    CloseBufferActive = 94,
 }

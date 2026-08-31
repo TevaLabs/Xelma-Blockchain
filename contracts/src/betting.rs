@@ -302,8 +302,12 @@ pub fn place_bet(
     if current_ledger >= round.bet_end_ledger {
         return Err(ContractError::RoundEnded);
     }
+    // Distinct from a natural bet-end rejection: the round is still open,
+    // but within the anti-sniping close buffer near its end. Callers (and
+    // wallets) should treat this as "try again shortly" rather than "this
+    // round is over" — see docs/WALLET_ERROR_GUIDE.md.
     if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::CloseBufferActive);
     }
 
     let user_balance = balance(env.clone(), user.clone());
@@ -438,8 +442,12 @@ pub fn place_precision_prediction(
     if current_ledger >= round.bet_end_ledger {
         return Err(ContractError::RoundEnded);
     }
+    // Distinct from a natural bet-end rejection: the round is still open,
+    // but within the anti-sniping close buffer near its end. Callers (and
+    // wallets) should treat this as "try again shortly" rather than "this
+    // round is over" — see docs/WALLET_ERROR_GUIDE.md.
     if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::CloseBufferActive);
     }
 
     let pred_key = DataKeyScoped::PrecisionPosition(round.round_id, user.clone());
@@ -567,8 +575,12 @@ pub fn commit_prediction(
     if current_ledger >= round.bet_end_ledger {
         return Err(ContractError::RoundEnded);
     }
+    // Distinct from a natural bet-end rejection: the round is still open,
+    // but within the anti-sniping close buffer near its end. Callers (and
+    // wallets) should treat this as "try again shortly" rather than "this
+    // round is over" — see docs/WALLET_ERROR_GUIDE.md.
     if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::CloseBufferActive);
     }
 
     let user_balance = balance(env.clone(), user.clone());

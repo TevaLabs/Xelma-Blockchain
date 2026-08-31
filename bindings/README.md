@@ -207,6 +207,8 @@ if (summary) {
 |----------------------------|---------------|----------------------------------|
 | `InsufficientBalanceError` | 9             | Not enough vXLM to place bet     |
 | `NoActiveRoundError`       | 7             | No round is currently active     |
+| `RoundEndedError`          | 8             | The round's bet window has ended — terminal, wait for the next round |
+| `CloseBufferActiveError`   | 94            | Round is still open but inside its anti-sniping close buffer — transient, retry shortly |
 | `ContractPausedError`      | 22            | Contract paused for maintenance  |
 | `AlreadyBetError`          | 10            | User already bet in this round   |
 | `StakeExceedsMaxError`     | 28            | Bet exceeds the max stake cap    |

@@ -36,6 +36,35 @@ export class NoActiveRoundError extends XelmaError {
   }
 }
 
+export class RoundEndedError extends XelmaError {
+  constructor() {
+    super(
+      "The round's bet window has ended — this round can no longer be bet on",
+      8,
+      "RoundEnded",
+    );
+    this.name = "RoundEndedError";
+  }
+}
+
+/**
+ * Distinct from {@link RoundEndedError}: the round is still open, but has
+ * entered its anti-sniping close buffer near the bet-end ledger. Unlike
+ * `RoundEnded`, this is transient — the same action will keep failing only
+ * until the round resolves or the next round opens, not because the round
+ * itself has ended.
+ */
+export class CloseBufferActiveError extends XelmaError {
+  constructor() {
+    super(
+      "Betting is temporarily closed — this round is inside its anti-sniping close buffer",
+      94,
+      "CloseBufferActive",
+    );
+    this.name = "CloseBufferActiveError";
+  }
+}
+
 export class ContractPausedError extends XelmaError {
   constructor() {
     super("Contract is currently paused — no betting allowed", 22, "ContractPaused");
@@ -86,6 +115,7 @@ export class AccessDeniedError extends XelmaError {
 
 const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
   7: NoActiveRoundError,
+  8: RoundEndedError,
   9: InsufficientBalanceError,
   10: AlreadyBetError,
   22: ContractPausedError,
@@ -93,6 +123,7 @@ const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
   29: ExposureCapExceededError,
   65: NoRoundTemplateError,
   79: AccessDeniedError,
+  94: CloseBufferActiveError,
 };
 
 /**
