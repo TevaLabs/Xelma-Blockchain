@@ -759,30 +759,6 @@ pub struct SimulationResult {
     pub outcomes: Vec<UserRoundOutcome>,
 }
 
-/// Per-participant outcome stored during dispute-window settlement.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct ResolvedParticipant {
-    pub user: Address,
-    pub outcome: UserOutcomeType,
-    pub payout: i128,
-}
-
-/// Settlement data stored during dispute-window resolve and consumed by
-/// `finalize_round` or `void_round`.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct RoundSettlement {
-    pub round_id: u64,
-    pub mode: u32,
-    pub final_price: u128,
-    pub price_start: u128,
-    pub pool_up: i128,
-    pub pool_down: i128,
-    pub participants: Vec<ResolvedParticipant>,
-    pub fee_amount: i128,
-}
-
 /// Admin-configured blueprint for `create_next_from_template`.
 ///
 /// Mirrors the arguments accepted by `create_round` (`start_price`, `mode`)
