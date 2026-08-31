@@ -669,3 +669,328 @@ proptest! {
             sum_refunds, total_pot);
     }
 }
+
+// ─── Cross-product: FeeModel × One-Sided × Precision-Tie ─────────────────
+//
+// These property suites exercise every combination in the matrix:
+//   FeeModel{FeeOnPot, FeeOnWinnings} × OneSided{Up, Down} × PrecisionTie{none, 2-way, 3-way}
+//
+// Deterministic seeds: proptest prints the minimal-failing seed on any
+// failure, so every regression is instantly reproducible.
+//
+// Readable diagnostics: every prop_assert! includes a human-readable
+// message tagging the failed combination's parameters.
+
+use crate::types::FeeModel;
+
+fn set_fee_model_now(env: &Env, contract_id: &Address, model: FeeModel) {
+    env.as_contract(contract_id, || {
+        env.storage().persistent().set(&DataKeyCore::FeeModel, &model);
+    });
+}
+
+fn set_fee_bps_now(env: &Env, contract_id: &Address, bps: u32) {
+    env.as_contract(contract_id, || {
+        env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &bps);
+    });
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    /// Cross-product: FeeModel × one-sided UpDown pool × fee bps.
+    ///
+    /// Vary FeeModel (FeeOnPot / FeeOnWinnings), fee bps (disabled / enabled),
+    /// one-sided direction (Up-only / Down-only), and stake amounts.
+    ///
+    /// Invariant: one-sided pools always refund; fee must never apply and
+    /// total accounted value must equal the pot exactly.
+    #[test]
+    fn cross_product_fee_model_one_sided(
+        a_stake in 1i128..200_000_000i128,
+        b_stake in 1i128..200_000_000i128,
+        fee_bps_raw in 0u32..=1_000u32,
+        side in 0u8..=1u8, // 0 = Up-only, 1 = Down-only
+        model in prop_oneof![Just(FeeModel::FeeOnPot), Just(FeeModel::FeeOnWinnings)],
+    ) {
+        let total_pot = a_stake.saturating_add(b_stake);
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+        client.create_round(&1_0000000u128, &None);
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        let bet_side = if side == 0 { BetSide::Up } else { BetSide::Down };
+
+        env.as_contract(&contract_id, || {
+            let mut positions = Map::<Address, UserPosition>::new(&env);
+            positions.set(alice.clone(), UserPosition { amount: a_stake, side: bet_side.clone() });
+            positions.set(bob.clone(), UserPosition { amount: b_stake, side: bet_side.clone() });
+            env.storage().persistent().set(&DataKeyCore::UpDownPositions, &positions);
+
+            let mut round: Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
+            if side == 0 {
+                round.pool_up = total_pot;
+                round.pool_down = 0;
+            } else {
+                round.pool_up = 0;
+                round.pool_down = total_pot;
+            }
+            env.storage().persistent().set(&DataKeyCore::ActiveRound, &round);
+
+            if fee_bps_raw > 0 {
+                env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
+            }
+            env.storage().persistent().set(&DataKeyCore::FeeModel, &model);
+        });
+
+        let treasury_before = client.get_protocol_fee_treasury();
+
+        // Resolve in the opposite direction to trigger refund path
+        let final_price = if side == 0 { 900u128 } else { 1_100u128 };
+        env.ledger().with_mut(|li| { li.sequence_number = 12; });
+
+        client.resolve_round(&OraclePayload {
+            price: final_price,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+        });
+
+        let alice_pay = client.get_pending_winnings(&alice);
+        let bob_pay = client.get_pending_winnings(&bob);
+        let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+        let accounted = alice_pay + bob_pay + treasury_delta;
+
+        prop_assert!(alice_pay >= 0,
+            "FAIL [one-sided] negative payout: alice_pay={} side={} fee_bps={} fee_model={:?}",
+            alice_pay, side, fee_bps_raw, model);
+        prop_assert!(bob_pay >= 0,
+            "FAIL [one-sided] negative payout: bob_pay={} side={} fee_bps={} fee_model={:?}",
+            bob_pay, side, fee_bps_raw, model);
+        prop_assert_eq!(treasury_delta, 0,
+            "FAIL [one-sided] fee charged on refund: treasury_delta={} side={} fee_bps={} fee_model={:?}",
+            treasury_delta, side, fee_bps_raw, model);
+        prop_assert_eq!(accounted, total_pot,
+            "FAIL [one-sided] conservation violated: accounted={} pot={} side={} fee_bps={} fee_model={:?}",
+            accounted, total_pot, side, fee_bps_raw, model);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    /// Cross-product: FeeModel × precision tie (2-way) × fee bps.
+    ///
+    /// Two users predict at equal distance from the final price (tie),
+    /// the third loses. Vary FeeModel, fee bps, and stake amounts.
+    ///
+    /// Invariant: precision conservation is exact (payouts + treasury == pot)
+    /// regardless of which fee model is active.
+    #[test]
+    fn cross_product_fee_model_precision_tie(
+        stake_a in 1i128..200_000_000i128,
+        stake_b in 1i128..200_000_000i128,
+        stake_c in 1i128..200_000_000i128,
+        tie_distance in 1u128..100_000u128,
+        fee_bps_raw in 0u32..=1_000u32,
+        model in prop_oneof![Just(FeeModel::FeeOnPot), Just(FeeModel::FeeOnWinnings)],
+    ) {
+        let total_pot = stake_a.saturating_add(stake_b).saturating_add(stake_c);
+        let final_price = 1_000_000u128;
+
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+        client.create_round(&1_0000000u128, &Some(1));
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let charlie = Address::generate(&env);
+
+        // Alice and Bob tied at `tie_distance` from final_price; charlie loses
+        let price_a = final_price.saturating_add(tie_distance);
+        let price_b = final_price.saturating_sub(tie_distance);
+        let price_c = final_price.saturating_add(tie_distance.saturating_mul(10));
+
+        prop_assume!(price_b > 0 && price_c > 0);
+
+        env.as_contract(&contract_id, || {
+            let mut predictions = Map::<Address, PrecisionPrediction>::new(&env);
+            predictions.set(alice.clone(), PrecisionPrediction {
+                user: alice.clone(), predicted_price: price_a, amount: stake_a });
+            predictions.set(bob.clone(), PrecisionPrediction {
+                user: bob.clone(), predicted_price: price_b, amount: stake_b });
+            predictions.set(charlie.clone(), PrecisionPrediction {
+                user: charlie.clone(), predicted_price: price_c, amount: stake_c });
+            env.storage().persistent().set(&DataKeyCore::PrecisionPositions, &predictions);
+
+            if fee_bps_raw > 0 {
+                env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
+            }
+            env.storage().persistent().set(&DataKeyCore::FeeModel, &model);
+        });
+
+        let treasury_before = client.get_protocol_fee_treasury();
+
+        env.ledger().with_mut(|li| { li.sequence_number = 12; });
+
+        client.resolve_round(&OraclePayload {
+            price: final_price,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+        });
+
+        let alice_pending = client.get_pending_winnings(&alice);
+        let bob_pending = client.get_pending_winnings(&bob);
+        let charlie_pending = client.get_pending_winnings(&charlie);
+        let treasury_after = client.get_protocol_fee_treasury();
+        let treasury_delta = treasury_after - treasury_before;
+        let sum_payouts = alice_pending + bob_pending + charlie_pending;
+        let accounted = sum_payouts + treasury_delta;
+
+        prop_assert!(alice_pending >= 0,
+            "FAIL [precision-tie] negative payout: alice={} fee_bps={} fee_model={:?} tie_dist={}",
+            alice_pending, fee_bps_raw, model, tie_distance);
+        prop_assert!(bob_pending >= 0,
+            "FAIL [precision-tie] negative payout: bob={} fee_bps={} fee_model={:?} tie_dist={}",
+            bob_pending, fee_bps_raw, model, tie_distance);
+        prop_assert!(charlie_pending >= 0,
+            "FAIL [precision-tie] negative payout: charlie={} fee_bps={} fee_model={:?} tie_dist={}",
+            charlie_pending, fee_bps_raw, model, tie_distance);
+        prop_assert!(treasury_delta >= 0,
+            "FAIL [precision-tie] negative treasury: delta={} fee_bps={} fee_model={:?}",
+            treasury_delta, fee_bps_raw, model);
+
+        // Precision mode conserves exactly: no truncation slack.
+        prop_assert_eq!(accounted, total_pot,
+            "FAIL [precision-tie] conservation violated: accounted={} pot={} fee_bps={} fee_model={:?} tie_dist={} stakes=({},{},{})",
+            accounted, total_pot, fee_bps_raw, model, tie_distance,
+            stake_a, stake_b, stake_c);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    /// Cross-product: FeeModel × precision three-way tie × fee bps.
+    ///
+    /// All three users predicted at equal distance from the final price.
+    /// Vary FeeModel, fee bps, and stake amounts.
+    ///
+    /// Invariant: precision conservation is exact.
+    #[test]
+    fn cross_product_fee_model_precision_three_way_tie(
+        stake_a in 1i128..200_000_000i128,
+        stake_b in 1i128..200_000_000i128,
+        stake_c in 1i128..200_000_000i128,
+        tie_distance in 1u128..100_000u128,
+        fee_bps_raw in 0u32..=1_000u32,
+        model in prop_oneof![Just(FeeModel::FeeOnPot), Just(FeeModel::FeeOnWinnings)],
+    ) {
+        let total_pot = stake_a.saturating_add(stake_b).saturating_add(stake_c);
+        let final_price = 1_000_000u128;
+
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+        client.create_round(&1_0000000u128, &Some(1));
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let charlie = Address::generate(&env);
+
+        // All three tied at tie_distance from final_price
+        let price_a = final_price.saturating_add(tie_distance);
+        let price_b = final_price.saturating_sub(tie_distance);
+        // Third price must also be at the same distance; choose an alternative
+        // path that equals the same distance but from a different direction:
+        // price_c = final_price + tie_distance would duplicate price_a,
+        // so instead we verify the tie_distance constraint is satisfied.
+        prop_assume!(price_b > 0);
+
+        env.as_contract(&contract_id, || {
+            let mut predictions = Map::<Address, PrecisionPrediction>::new(&env);
+            // Alice and Bob tied at tie_distance; charlie is third-way tie
+            // (exact same distance from final_price on the same side as Alice)
+            // but different price to avoid duplicate address
+            predictions.set(alice.clone(), PrecisionPrediction {
+                user: alice.clone(), predicted_price: price_a, amount: stake_a });
+            predictions.set(bob.clone(), PrecisionPrediction {
+                user: bob.clone(), predicted_price: price_b, amount: stake_b });
+            predictions.set(charlie.clone(), PrecisionPrediction {
+                user: charlie.clone(), predicted_price: price_a, amount: stake_c });
+            env.storage().persistent().set(&DataKeyCore::PrecisionPositions, &predictions);
+
+            if fee_bps_raw > 0 {
+                env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
+            }
+            env.storage().persistent().set(&DataKeyCore::FeeModel, &model);
+        });
+
+        let treasury_before = client.get_protocol_fee_treasury();
+
+        env.ledger().with_mut(|li| { li.sequence_number = 12; });
+
+        client.resolve_round(&OraclePayload {
+            price: final_price,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+        });
+
+        let alice_pending = client.get_pending_winnings(&alice);
+        let bob_pending = client.get_pending_winnings(&bob);
+        let charlie_pending = client.get_pending_winnings(&charlie);
+        let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+        let accounted = alice_pending + bob_pending + charlie_pending + treasury_delta;
+
+        prop_assert!(alice_pending >= 0,
+            "FAIL [3-way-tie] negative payout: alice={} fee_bps={} fee_model={:?}",
+            alice_pending, fee_bps_raw, model);
+        prop_assert!(bob_pending >= 0,
+            "FAIL [3-way-tie] negative payout: bob={} fee_bps={} fee_model={:?}",
+            bob_pending, fee_bps_raw, model);
+        prop_assert!(charlie_pending >= 0,
+            "FAIL [3-way-tie] negative payout: charlie={} fee_bps={} fee_model={:?}",
+            charlie_pending, fee_bps_raw, model);
+        prop_assert!(treasury_delta >= 0,
+            "FAIL [3-way-tie] negative treasury: delta={} fee_bps={} fee_model={:?}",
+            treasury_delta, fee_bps_raw, model);
+
+        prop_assert_eq!(accounted, total_pot,
+            "FAIL [3-way-tie] conservation violated: accounted={} pot={} fee_bps={} fee_model={:?} tie_dist={} stakes=({},{},{})",
+            accounted, total_pot, fee_bps_raw, model, tie_distance,
+            stake_a, stake_b, stake_c);
+    }
+}
