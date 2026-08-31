@@ -102,4 +102,18 @@ pub enum ContractError {
     /// regardless of strict-mode setting — covers no heartbeat, offline status,
     /// and stale-beyond-grace conditions.
     OracleHeartbeatUnhealthy = 83,
+    /// Access denied — caller does not have the required role.
+    AccessDenied = 84,
+    /// Governance action is unauthorized — caller is not a governance authority.
+    GovUnauthorized = 85,
+    /// Proposal not found.
+    ProposalNotFound = 86,
+    /// Proposal has expired.
+    ProposalExpired = 87,
+    /// Governance action is in an invalid state for the requested operation.
+    GovInvalidState = 88,
+    /// Dispute window has expired.
+    DisputeWindowExpired = 89,
+    /// Claim is locked.
+    ClaimLocked = 90,
 }

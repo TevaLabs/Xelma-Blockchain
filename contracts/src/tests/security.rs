@@ -42,7 +42,8 @@ fn test_resolve_round_stale_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::StaleOracleData)));
@@ -75,7 +76,8 @@ fn test_resolve_round_invalid_round_id() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
@@ -109,7 +111,8 @@ fn test_resolve_round_valid_payload() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     client.resolve_round(&payload);
     assert_eq!(client.get_active_round(), None);
@@ -144,7 +147,8 @@ fn test_resolve_round_future_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::FutureOracleData)));
@@ -250,9 +254,10 @@ fn test_resolve_round_duplicate_nonce_rejected() {
 
     // Simulate a prior submission having consumed nonce 42 for this round.
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64),
+            &true,
+        );
     });
 
     let result = client.try_resolve_round(&OraclePayload {
@@ -903,7 +908,7 @@ fn test_heartbeat_override_cleared_after_use() {
     });
 
     // Verify override is consumed (one-shot)
-    let armed = client.is_oracle_heartbeat_override_armed();
+    let armed = client.is_hb_override_armed();
     assert!(!armed, "override must be cleared after first use");
 
     // Create a new round WITHOUT re-arming and WITHOUT a heartbeat — should fail
@@ -927,7 +932,7 @@ fn test_heartbeat_override_cleared_after_use() {
     assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
-/// Override emits the `hb_override` event when consumed.
+/// Override emits the `hb_ovr` event when consumed.
 #[test]
 fn test_heartbeat_override_emits_event() {
     let env = Env::default();
@@ -961,11 +966,11 @@ fn test_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_override"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_ovr"))
     });
     assert!(
         hb_override_event.is_some(),
-        "hb_override event must be emitted when override is consumed"
+        "hb_ovr event must be emitted when override is consumed"
     );
 }
 
@@ -1011,7 +1016,7 @@ fn test_heartbeat_strict_mode_config() {
     assert!(!client.get_oracle_heartbeat_strict_mode());
 }
 
-/// Arming override emits hb_arm_ovr event.
+/// Arming override emits hb_arm event.
 #[test]
 fn test_arm_heartbeat_override_emits_event() {
     let env = Env::default();
@@ -1029,9 +1034,9 @@ fn test_arm_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_arm_ovr"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_arm"))
     });
-    assert!(arm_event.is_some(), "hb_arm_ovr event must be emitted on arm");
+    assert!(arm_event.is_some(), "hb_arm event must be emitted on arm");
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
@@ -1256,9 +1261,10 @@ fn test_resolve_round_nonce_boundary_values() {
 
     // Pre-seed both boundary nonces as consumed for this round.
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64),
+            &true,
+        );
         env.storage().persistent().set(
             &DataKeyScoped::ConsumedOracleNonce(round.round_id, u64::MAX),
             &true,
@@ -1997,9 +2003,9 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hoverride"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_ovr"))
     });
-    assert!(override_event.is_some(), "hoverride event must be emitted");
+    assert!(override_event.is_some(), "hb_ovr event must be emitted");
 
     // Override is one-shot — must be consumed
     env.as_contract(&contract_id, || {
@@ -2012,7 +2018,10 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
                 override_armed: false,
                 grace_seconds: 0,
             });
-        assert!(!config.override_armed, "heartbeat override must be cleared after use");
+        assert!(
+            !config.override_armed,
+            "heartbeat override must be cleared after use"
+        );
     });
 }
 
@@ -2470,11 +2479,11 @@ fn test_resolve_round_multi_duplicate_nonce_rejected() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&OracleQuorumConfig {
+    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
         min_observations: 3,
         quorum_threshold: 3,
         outlier_threshold_bps: 500,
-    });
+    }));
 
     client.create_round(&1_0000000, &None);
     let round = client.get_active_round().unwrap();
@@ -2486,9 +2495,10 @@ fn test_resolve_round_multi_duplicate_nonce_rejected() {
 
     // Pre-consume nonce 42 for this round
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64),
+            &true,
+        );
     });
 
     let result = client.try_resolve_round_multi(&MultiFeedPayload {
@@ -2514,11 +2524,11 @@ fn test_resolve_round_multi_unique_nonce_resolves() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&OracleQuorumConfig {
+    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
         min_observations: 3,
         quorum_threshold: 3,
         outlier_threshold_bps: 500,
-    });
+    }));
 
     client.create_round(&1_0000000, &None);
     let round = client.get_active_round().unwrap();
@@ -2552,11 +2562,11 @@ fn test_resolve_round_multi_wrong_network_id_rejected() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&OracleQuorumConfig {
+    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
         min_observations: 3,
         quorum_threshold: 3,
         outlier_threshold_bps: 500,
-    });
+    }));
 
     client.create_round(&1_0000000, &None);
     let round = client.get_active_round().unwrap();
@@ -2590,11 +2600,11 @@ fn test_resolve_round_multi_wrong_contract_addr_rejected() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&OracleQuorumConfig {
+    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
         min_observations: 3,
         quorum_threshold: 3,
         outlier_threshold_bps: 500,
-    });
+    }));
 
     client.create_round(&1_0000000, &None);
     let round = client.get_active_round().unwrap();
@@ -2628,11 +2638,11 @@ fn test_resolve_round_multi_cross_round_replay_rejected() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&OracleQuorumConfig {
+    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
         min_observations: 3,
         quorum_threshold: 3,
         outlier_threshold_bps: 500,
-    });
+    }));
 
     client.create_round(&1_0000000, &None);
     let round0 = client.get_active_round().unwrap();
@@ -2690,11 +2700,11 @@ fn test_resolve_round_multi_insufficient_quorum_rejected() {
 
     client.initialize(&admin, &oracle);
     // Quorum threshold 3, outlier threshold 100 bps (1%)
-    client.set_oracle_quorum_config(&OracleQuorumConfig {
+    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
         min_observations: 3,
         quorum_threshold: 3,
         outlier_threshold_bps: 100,
-    });
+    }));
 
     client.create_round(&1_0000000, &None);
     let round = client.get_active_round().unwrap();
@@ -2728,11 +2738,11 @@ fn test_resolve_round_multi_duplicate_sources_rejected() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&OracleQuorumConfig {
+    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
         min_observations: 3,
         quorum_threshold: 3,
         outlier_threshold_bps: 500,
-    });
+    }));
 
     client.create_round(&1_0000000, &None);
     let round = client.get_active_round().unwrap();
@@ -2766,11 +2776,11 @@ fn test_resolve_round_multi_too_few_observations_rejected() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
-    client.set_oracle_quorum_config(&OracleQuorumConfig {
+    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
         min_observations: 3,
         quorum_threshold: 3,
         outlier_threshold_bps: 500,
-    });
+    }));
 
     client.create_round(&1_0000000, &None);
     let round = client.get_active_round().unwrap();
@@ -2792,7 +2802,6 @@ fn test_resolve_round_multi_too_few_observations_rejected() {
     });
     assert_eq!(result, Err(Ok(ContractError::TooFewObservations)));
 }
-
 
 // ─── Economic Window Timestamp Tests ─────────────────────────────────────────
 
@@ -2852,7 +2861,9 @@ fn test_resolve_round_timestamp_before_round_window() {
     });
 
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("otskew"), &30u64);
     });
 
     let payload = OraclePayload {
@@ -2893,7 +2904,9 @@ fn test_resolve_round_timestamp_boundary_lower() {
     });
 
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("otskew"), &30u64);
     });
 
     client.resolve_round(&OraclePayload {

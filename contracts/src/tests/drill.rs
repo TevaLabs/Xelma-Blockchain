@@ -51,6 +51,7 @@ fn test_claims_only_matrix_verification() {
         nonce: 100,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -128,6 +129,7 @@ fn test_claims_only_matrix_verification() {
         nonce: 101,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -185,6 +187,7 @@ fn test_fully_paused_matrix_verification() {
         nonce: 102,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -251,6 +254,7 @@ fn test_emergency_incident_simulation_lifecycle() {
         nonce: 200,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });

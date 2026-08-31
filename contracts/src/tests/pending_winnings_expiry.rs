@@ -204,6 +204,7 @@ fn test_claim_winnings_clears_tracking_key() {
         nonce: 1,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });

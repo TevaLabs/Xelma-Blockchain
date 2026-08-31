@@ -277,6 +277,7 @@ fn bench_cost_resolve_round_medium_set() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     };
@@ -311,6 +312,7 @@ fn bench_cost_resolve_round_max_cap() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     };
@@ -340,6 +342,7 @@ fn bench_cost_resolve_precision_round_max_cap() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     };

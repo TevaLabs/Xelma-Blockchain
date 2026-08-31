@@ -53,6 +53,7 @@ fn test_one_sided_up_market() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -105,6 +106,7 @@ fn test_one_sided_down_market() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -142,6 +144,7 @@ fn test_empty_market() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -183,6 +186,7 @@ fn test_emitted_events_and_metadata() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -229,6 +233,7 @@ fn test_refund_behavior_value_preservation() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -288,6 +293,7 @@ fn test_repeated_settlement_attempts() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     };
@@ -330,6 +336,7 @@ fn test_rounding_and_value_conservation() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
