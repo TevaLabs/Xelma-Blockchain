@@ -1,35 +1,26 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
-use alloc::vec::Vec as StdVec;
-use crate::admin::{
-    _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
-    _require_supported_schema,
-};
+use crate::admin::{_ensure_not_paused, _require_supported_schema};
 use crate::common::{
     _accumulate_pending, _emit_action_rejected, _extend_persistent_ttl, _extend_ttl_symbol,
     _set_balance, balance, payout_add, payout_mul, sort_addresses, DEFAULT_ARCHIVE_RETENTION,
-    DEFAULT_ORACLE_TIMESTAMP_SKEW, MAX_CLAIM_BATCH_SIZE, MAX_ORACLE_OBSERVATIONS,
-    SECONDS_PER_LEDGER, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
-};
-use crate::config::{
-    _apply_protocol_fee_precision, _apply_protocol_fee_updown, _read_fee_model,
+    MAX_CLAIM_BATCH_SIZE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
 use crate::config::{_apply_protocol_fee_precision, _apply_protocol_fee_updown, _read_fee_model};
 use crate::errors::ContractError;
 use crate::settlement_math::{
-    classify_price_direction, compute_deviation_bps, compute_updown_winner_payout,
-    is_one_sided_pool, total_pot_updown, PriceDirection,
+    classify_price_direction, compute_updown_winner_payout, is_one_sided_pool, total_pot_updown,
+    PriceDirection,
 };
 use crate::storage::clear_round_storage;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
-    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord, OraclePayload,
-    OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy,
-    PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode, TwapSamplesKey,
-    UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
+    ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, MultiFeedPayload, OneSidedPolicy,
+    OraclePayload, OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment,
+    PrecisionPayoutPolicy, PrecisionPrediction, Round, RoundArchiveStatus, RoundMode,
+    RoundSettlement, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
-use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
+use alloc::vec::Vec as StdVec;
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Map, Symbol, Vec};
 
 #[contracttype]
 #[derive(Clone)]
@@ -468,19 +459,7 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         _emit_action_rejected(&env, &oracle, symbol_short!("resolve"), e);
     })?;
 
-    // Heartbeat health enforcement (Issue #264) — must come before any
-    // state mutation (nonce consumption) so a stale oracle cannot race
-    // the admin override.
-    let hb_config = _load_hb_config(&env);
-    if _check_heartbeat_health_blocked(&env, &hb_config) {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleHeartbeatUnhealthy,
-        );
-        return Err(ContractError::OracleHeartbeatUnhealthy);
-    }
+    crate::oracle_validation::validate_heartbeat_pre_flight(&env, &oracle)?;
 
     let round: Round = env
         .storage()
@@ -488,276 +467,30 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    // Verify round ID matches to prevent cross-round replays
-    if payload.round_id != round.start_ledger {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::InvalidOracleRound,
-        );
-        return Err(ContractError::InvalidOracleRound);
-    }
-
-    // Reject payloads targeting a different network or contract deployment.
-    if payload.network_id != env.ledger().network_id() {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleNetworkMismatch,
-        );
-        return Err(ContractError::OracleNetworkMismatch);
-    }
-    if payload.contract_addr != env.current_contract_address() {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleNetworkMismatch,
-        );
-        return Err(ContractError::OracleNetworkMismatch);
-    }
-
-    // Verify timestamp is inside the round-relative economic window.
-    // This replaces the old absolute-freshness (300 s) check which could
-    // accept wrong-phase prices from outside the round's active period.
-    // ─── Oracle attestation (Issue #263) ────────────────────────────────────
-    //
-    // When an attestation key is configured, every payload must carry a
-    // detached ed25519 signature over a domain-separated message binding
-    // network/contract/round/price/time/nonce — stronger than
-    // `oracle.require_auth()` alone across environments where the oracle's
-    // Soroban account key and its off-chain signing key may differ (e.g. an
-    // HSM-backed signer publishing through a relayer account). When no key
-    // is configured, this block is a no-op and behaviour is identical to
-    // pre-#263 (account auth only).
-    let attestation_config = _load_attestation_config(&env);
-    if let Some(pubkey) = attestation_config.key {
-        let signature = payload.attestation.clone().ok_or_else(|| {
-            _emit_action_rejected(
-                &env,
-                &oracle,
-                symbol_short!("resolve"),
-                ContractError::WindowOutOfRange,
-            );
-            ContractError::WindowOutOfRange
-        })?;
-
-        let message = _build_attestation_message(&env, &payload);
-        // `ed25519_verify` panics on a bad signature rather than returning a
-        // Result, so validity is checked host-side first via a try/catch-free
-        // approach: Soroban's crypto host function traps the transaction on
-        // failure, which is the correct "fail closed" behaviour for a
-        // security check — an invalid signature must never let execution
-        // continue past this point.
-        env.crypto().ed25519_verify(&pubkey, &message, &signature);
-    }
-
-    // Verify data freshness (max 300 seconds / 5 minutes old)
-    let current_time = env.ledger().timestamp();
-
-    // Reject future timestamps to prevent time-skew manipulation
-    if payload.timestamp > current_time {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::FutureOracleData,
-        );
-        return Err(ContractError::FutureOracleData);
-    }
-
-    let skew: u64 = env
-        .storage()
-        .instance()
-        .get(&symbol_short!("otskew"))
-        .unwrap_or(DEFAULT_ORACLE_TIMESTAMP_SKEW);
-
-    let round_start = round.start_timestamp;
-    let round_duration_ledgers = (round.end_ledger)
-        .checked_sub(round.start_ledger)
-        .ok_or(ContractError::Overflow)?;
-    let round_end_estimate = round_start
-        .checked_add(
-            (round_duration_ledgers as u64)
-                .checked_mul(SECONDS_PER_LEDGER)
-                .ok_or(ContractError::Overflow)?,
-        )
-        .ok_or(ContractError::Overflow)?;
-
-    let lower_bound = round_start.saturating_sub(skew);
-    let upper_bound = round_end_estimate.saturating_add(skew);
-
-    if payload.timestamp < lower_bound || payload.timestamp > upper_bound {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleTimestampOutsideWindow,
-        );
-        return Err(ContractError::OracleTimestampOutsideWindow);
-    }
-
-    // Oracle deviation guardrails (Issue #266: reference price is either the
-    // round's fixed start price, or a trailing-sample TWAP average, per the
-    // configured `DeviationReferenceMode`; default is `StartPrice`, matching
-    // pre-#266 behaviour exactly when no config has ever been set).
-    _extend_persistent_ttl(&env, &DataKeyCore::OracleMaxDeviationBps);
-    if let Some(max_bps) = env
-        .storage()
-        .persistent()
-        .get::<_, u32>(&DataKeyCore::OracleMaxDeviationBps)
-    {
-        let deviation_config = _load_deviation_config(&env);
-        let reference_price = match deviation_config.reference_mode {
-            DeviationReferenceMode::StartPrice => round.price_start,
-            DeviationReferenceMode::Twap => {
-                _twap_reference_price(&env, deviation_config.window_samples)?
-            }
-        };
-        if reference_price == 0 {
-            return Err(ContractError::InvalidPrice);
-        }
-
-        let diff = if payload.price >= reference_price {
-            payload
-                .price
-                .checked_sub(reference_price)
-                .ok_or(ContractError::Overflow)?
-        } else {
-            reference_price
-                .checked_sub(payload.price)
-                .ok_or(ContractError::Overflow)?
-        };
-
-        let diff_bps_u128 = diff
-            .checked_mul(10_000u128)
-            .ok_or(ContractError::Overflow)?
-            / reference_price;
-        let diff_bps: u32 = diff_bps_u128
-            .try_into()
-            .map_err(|_| ContractError::Overflow)?;
-
-        let override_armed: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKeyCore::OracleDeviationOverrideArmed)
-            .unwrap_or(false);
-
-        if diff_bps > max_bps && !override_armed {
-            #[allow(deprecated)]
-            env.events().publish(
-                (symbol_short!("oracle"), symbol_short!("rejected")),
-                (
-                    round.round_id,
-                    reference_price,
-                    payload.price,
-                    diff_bps,
-                    max_bps,
-                ),
-            );
-            return Err(ContractError::OracleDeviationExceeded);
-        }
-
-        if diff_bps > max_bps && override_armed {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyCore::OracleDeviationOverrideArmed);
-
-            #[allow(deprecated)]
-            env.events().publish(
-                (symbol_short!("oracle"), symbol_short!("override")),
-                (
-                    round.round_id,
-                    reference_price,
-                    payload.price,
-                    diff_bps,
-                    max_bps,
-                ),
-            );
-        }
-    }
-
-    // Oracle confidence guardrails
-    _extend_persistent_ttl(&env, &DataKeyCore::OracleMinConfidenceBps);
-    _extend_persistent_ttl(&env, &DataKeyCore::OracleStrictMode);
-    if let Some(min_confidence_bps) = env
-        .storage()
-        .persistent()
-        .get::<_, u32>(&DataKeyCore::OracleMinConfidenceBps)
-    {
-        match payload.confidence {
-            None => {
-                let strict_mode: bool = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKeyCore::OracleStrictMode)
-                    .unwrap_or(false);
-                if strict_mode {
-                    return Err(ContractError::InvalidPrice);
-                }
-            }
-            Some(confidence_bps) => {
-                if confidence_bps > 10_000 || confidence_bps < min_confidence_bps {
-                    #[allow(deprecated)]
-                    env.events().publish(
-                        (symbol_short!("oracle"), symbol_short!("lowconf")),
-                        (round.round_id, confidence_bps, min_confidence_bps),
-                    );
-                    return Err(ContractError::InvalidPrice);
-                }
-            }
-        }
-    }
-
-    let nonce_key = DataKeyScoped::ConsumedOracleNonce(round.round_id, payload.nonce);
-    if env.storage().persistent().has(&nonce_key) {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleNonceReused,
-        );
-        return Err(ContractError::OracleNonceReused);
-    }
-    env.storage().persistent().set(&nonce_key, &true);
-
-    // ─── Oracle heartbeat health gate (Issue #264) ──────────────────────────
-    //
-    // When `HbGateConfig.strict_mode` is enabled, `resolve_round` verifies
-    // that the oracle heartbeat is live before allowing settlement.
-    let hb_config = crate::admin::_load_hb_config(&env);
-
-    if hb_config.strict_mode {
-        let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
-
-        if hb_blocked {
-            if hb_config.override_armed {
-                // Consume the one-shot override
-                crate::admin::_consume_hb_override(&env);
-
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hoverride")),
-                    (round.round_id,),
-                );
-            } else {
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hblocked")),
-                    (round.round_id,),
-                );
-                _emit_action_rejected(
-                    &env,
-                    &oracle,
-                    symbol_short!("resolve"),
-                    ContractError::OracleNotLive,
-                );
-                return Err(ContractError::OracleNotLive);
-            }
-        }
-    }
+    crate::oracle_validation::validate_domain_binding(
+        &env,
+        &oracle,
+        payload.round_id,
+        round.start_ledger,
+        &payload.network_id,
+        &payload.contract_addr,
+    )?;
+    crate::oracle_validation::validate_attestation(&env, &oracle, &payload)?;
+    crate::oracle_validation::validate_timestamp_freshness(
+        &env,
+        &oracle,
+        &round,
+        payload.timestamp,
+    )?;
+    crate::oracle_validation::validate_deviation(&env, &round, payload.price)?;
+    crate::oracle_validation::validate_confidence(&env, round.round_id, payload.confidence)?;
+    crate::oracle_validation::validate_and_consume_nonce(
+        &env,
+        &oracle,
+        round.round_id,
+        payload.nonce,
+    )?;
+    crate::oracle_validation::validate_heartbeat_strict_gate(&env, &oracle, round.round_id)?;
 
     let current_ledger = env.ledger().sequence();
     if current_ledger < round.end_ledger {
@@ -770,14 +503,7 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         return Err(ContractError::RoundNotEnded);
     }
 
-    // Record this validated price into the TWAP sample ring (Issue #266).
-    // Runs once the payload has cleared every validity gate above (deviation,
-    // confidence, nonce, freshness, heartbeat) regardless of which
-    // reference mode is active, so a later switch to `Twap` mode has
-    // historical samples to draw from instead of starting empty.
-    _record_twap_sample(&env, payload.price, payload.timestamp);
-
-    // Delegate to the shared settlement helper (passes confidence from legacy payload).
+    crate::oracle_validation::_record_twap_sample(&env, payload.price, payload.timestamp);
     _settle_round_with_price(&env, &round, payload.price, payload.confidence)
 }
 
@@ -793,7 +519,6 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
 pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
 
-    // ── Basic payload validation ──────────────────────────────────────────
     if payload.prices.is_empty() || payload.sources.is_empty() {
         return Err(ContractError::TooFewObservations);
     }
@@ -801,7 +526,6 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         return Err(ContractError::TooFewObservations);
     }
 
-    // All prices must be non-zero
     let n = payload.prices.len() as u32;
     for i in 0..n {
         if let Some(price) = payload.prices.get(i) {
@@ -811,7 +535,6 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         }
     }
 
-    // ── Auth and pause check ──────────────────────────────────────────────
     _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
     let oracle: Address = env
         .storage()
@@ -824,7 +547,6 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         _emit_action_rejected(&env, &oracle, symbol_short!("resolve"), e);
     })?;
 
-    // ── Load quorum config ────────────────────────────────────────────────
     _extend_persistent_ttl(&env, &DataKeyCore::OracleQuorum);
     let quorum_cfg: OracleQuorumConfig = env
         .storage()
@@ -832,126 +554,35 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         .get(&DataKeyCore::OracleQuorum)
         .ok_or(ContractError::OracleNotSet)?;
 
-    // ── Load active round ─────────────────────────────────────────────────
     let round: Round = env
         .storage()
         .persistent()
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    // ── Verify round ID ───────────────────────────────────────────────────
-    if payload.round_id != round.start_ledger {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::InvalidOracleRound,
-        );
-        return Err(ContractError::InvalidOracleRound);
-    }
+    crate::oracle_validation::validate_domain_binding(
+        &env,
+        &oracle,
+        payload.round_id,
+        round.start_ledger,
+        &payload.network_id,
+        &payload.contract_addr,
+    )?;
+    crate::oracle_validation::validate_timestamp_freshness(
+        &env,
+        &oracle,
+        &round,
+        payload.timestamp,
+    )?;
+    crate::oracle_validation::validate_heartbeat_pre_flight(&env, &oracle)?;
+    crate::oracle_validation::validate_and_consume_nonce(
+        &env,
+        &oracle,
+        round.round_id,
+        payload.nonce,
+    )?;
+    crate::oracle_validation::validate_heartbeat_strict_gate(&env, &oracle, round.round_id)?;
 
-    // ── Cross-network / cross-contract replay protection ──────────────────
-    if payload.network_id != env.ledger().network_id() {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleNetworkMismatch,
-        );
-        return Err(ContractError::OracleNetworkMismatch);
-    }
-    if payload.contract_addr != env.current_contract_address() {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleNetworkMismatch,
-        );
-        return Err(ContractError::OracleNetworkMismatch);
-    }
-
-    // ── Timestamp window check (round-relative economic window) ───────────
-    let current_time = env.ledger().timestamp();
-    if payload.timestamp > current_time {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::FutureOracleData,
-        );
-        return Err(ContractError::FutureOracleData);
-    }
-
-    let skew: u64 = env
-        .storage()
-        .instance()
-        .get(&symbol_short!("otskew"))
-        .unwrap_or(DEFAULT_ORACLE_TIMESTAMP_SKEW);
-
-    let round_start = round.start_timestamp;
-    let round_duration_ledgers = (round.end_ledger)
-        .checked_sub(round.start_ledger)
-        .ok_or(ContractError::Overflow)?;
-    let round_end_estimate = round_start
-        .checked_add((round_duration_ledgers as u64).checked_mul(SECONDS_PER_LEDGER).ok_or(ContractError::Overflow)?)
-        .ok_or(ContractError::Overflow)?;
-
-    let lower_bound = round_start.saturating_sub(skew);
-    let upper_bound = round_end_estimate.saturating_add(skew);
-
-    if payload.timestamp < lower_bound || payload.timestamp > upper_bound {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleTimestampOutsideWindow,
-        );
-        return Err(ContractError::OracleTimestampOutsideWindow);
-    }
-
-    // ── Oracle heartbeat health gate (parity with single-oracle) ─────────
-    let hb_config = crate::admin::_load_hb_config(&env);
-    if hb_config.strict_mode {
-        let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
-        if hb_blocked {
-            if hb_config.override_armed {
-                crate::admin::_consume_hb_override(&env);
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hoverride")),
-                    (round.round_id,),
-                );
-            } else {
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hblocked")),
-                    (round.round_id,),
-                );
-                _emit_action_rejected(
-                    &env,
-                    &oracle,
-                    symbol_short!("resolve"),
-                    ContractError::OracleNotLive,
-                );
-                return Err(ContractError::OracleNotLive);
-            }
-        }
-    }
-
-    // ── Nonce replay protection ───────────────────────────────────────────
-    let nonce_key = DataKeyScoped::ConsumedOracleNonce(round.round_id, payload.nonce);
-    if env.storage().persistent().has(&nonce_key) {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleNonceReused,
-        );
-        return Err(ContractError::OracleNonceReused);
-    }
-    env.storage().persistent().set(&nonce_key, &true);
-
-    // ── Verify round end ledger ───────────────────────────────────────────
     let current_ledger = env.ledger().sequence();
     if current_ledger < round.end_ledger {
         _emit_action_rejected(
@@ -963,198 +594,15 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         return Err(ContractError::RoundNotEnded);
     }
 
-    // ── Check min_observations and max cap ────────────────────────────────
-    if n < quorum_cfg.min_observations {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::TooFewObservations,
-        );
-        return Err(ContractError::TooFewObservations);
-    }
-    // Reject excessive observations to prevent gas abuse from O(N²) sort
-    if n > MAX_ORACLE_OBSERVATIONS {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::TooFewObservations,
-        );
-        return Err(ContractError::TooFewObservations);
-    }
+    let median_price = crate::oracle_validation::process_multi_feed_consensus(
+        &env,
+        &oracle,
+        &round,
+        &payload,
+        &quorum_cfg,
+    )?;
 
-    // ── Check for duplicate source identifiers ────────────────────────────
-    for i in 0..n {
-        if let Some(src_i) = payload.sources.get(i) {
-            for j in (i + 1)..n {
-                if let Some(src_j) = payload.sources.get(j) {
-                    if src_i == src_j {
-                        _emit_action_rejected(
-                            &env,
-                            &oracle,
-                            symbol_short!("resolve"),
-                            ContractError::DuplicateOracleSource,
-                        );
-                        return Err(ContractError::DuplicateOracleSource);
-                    }
-                }
-            }
-        }
-    }
-
-    // ── Sort prices (insertion sort) and compute median ───────────────────
-    let mut sorted_prices: Vec<u128> = Vec::new(&env);
-    for i in 0..n {
-        if let Some(price) = payload.prices.get(i) {
-            let mut inserted = false;
-            for j in 0..sorted_prices.len() {
-                if price < sorted_prices.get(j).ok_or(ContractError::Overflow)? {
-                    sorted_prices.insert(j, price);
-                    inserted = true;
-                    break;
-                }
-            }
-            if !inserted {
-                sorted_prices.push_back(price);
-            }
-        }
-    }
-
-    // Compute median
-    let median_price: u128 = if n % 2 == 1 {
-        sorted_prices.get(n / 2).ok_or(ContractError::Overflow)?
-    } else {
-        let mid1 = sorted_prices
-            .get(n / 2 - 1)
-            .ok_or(ContractError::Overflow)?;
-        let mid2 = sorted_prices.get(n / 2).ok_or(ContractError::Overflow)?;
-        mid1.checked_add(mid2).ok_or(ContractError::Overflow)? / 2
-    };
-
-    if median_price == 0 {
-        return Err(ContractError::InvalidPrice);
-    }
-
-    // ── Deviation guardrail check against round start price ───────────────
-    // The multi-feed path still respects the configured max deviation from
-    // the round's start price. This prevents the oracle from using multi-feed
-    // to bypass the single-feed deviation guardrail.
-    _extend_persistent_ttl(&env, &DataKeyCore::OracleMaxDeviationBps);
-    if let Some(max_bps) = env
-        .storage()
-        .persistent()
-        .get::<_, u32>(&DataKeyCore::OracleMaxDeviationBps)
-    {
-        let start_price = round.price_start;
-        if start_price == 0 {
-            return Err(ContractError::InvalidPrice);
-        }
-        let diff = if median_price >= start_price {
-            median_price
-                .checked_sub(start_price)
-                .ok_or(ContractError::Overflow)?
-        } else {
-            start_price
-                .checked_sub(median_price)
-                .ok_or(ContractError::Overflow)?
-        };
-        let diff_bps_u128 = diff
-            .checked_mul(10_000u128)
-            .ok_or(ContractError::Overflow)?
-            / start_price;
-        let diff_bps: u32 = diff_bps_u128
-            .try_into()
-            .map_err(|_| ContractError::Overflow)?;
-
-        let override_armed: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKeyCore::OracleDeviationOverrideArmed)
-            .unwrap_or(false);
-
-        if diff_bps > max_bps && !override_armed {
-            #[allow(deprecated)]
-            env.events().publish(
-                (symbol_short!("oracle"), symbol_short!("rejected")),
-                (round.round_id, start_price, median_price, diff_bps, max_bps),
-            );
-            return Err(ContractError::OracleDeviationExceeded);
-        }
-
-        if diff_bps > max_bps && override_armed {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyCore::OracleDeviationOverrideArmed);
-
-            #[allow(deprecated)]
-            env.events().publish(
-                (symbol_short!("oracle"), symbol_short!("override")),
-                (round.round_id, start_price, median_price, diff_bps, max_bps),
-            );
-        }
-    }
-
-    // ── Outlier rejection & quorum check ──────────────────────────────────
-    let mut survivors: u32 = 0;
-    for i in 0..n {
-        if let Some(price) = payload.prices.get(i) {
-            let diff = if price >= median_price {
-                price
-                    .checked_sub(median_price)
-                    .ok_or(ContractError::Overflow)?
-            } else {
-                median_price
-                    .checked_sub(price)
-                    .ok_or(ContractError::Overflow)?
-            };
-
-            // diff_bps = diff * 10000 / median_price
-            let diff_bps_u128 = diff
-                .checked_mul(10_000u128)
-                .ok_or(ContractError::Overflow)?
-                / median_price;
-            let diff_bps: u32 = diff_bps_u128
-                .try_into()
-                .map_err(|_| ContractError::Overflow)?;
-
-            if diff_bps <= quorum_cfg.outlier_threshold_bps {
-                survivors = survivors.checked_add(1).ok_or(ContractError::Overflow)?;
-            }
-        }
-    }
-
-    if survivors < quorum_cfg.quorum_threshold {
-        #[allow(deprecated)]
-        env.events().publish(
-            (symbol_short!("oracle"), symbol_short!("nofed")),
-            (
-                round.round_id,
-                median_price,
-                survivors,
-                quorum_cfg.quorum_threshold,
-            ),
-        );
-        return Err(ContractError::InsufficientOracleQuorum);
-    }
-
-    // ── Emit multi-feed summary event ─────────────────────────────────────
-    #[allow(deprecated)]
-    env.events().publish(
-        (symbol_short!("oracle"), symbol_short!("multisum")),
-        (
-            round.round_id,
-            n,
-            survivors,
-            median_price,
-            quorum_cfg.quorum_threshold,
-        ),
-    );
-
-    // Record this validated price into the TWAP sample ring (Issue #266).
-    _record_twap_sample(&env, median_price, payload.timestamp);
-
-    // ── Settle the round using the computed median price ──────────────────
+    crate::oracle_validation::_record_twap_sample(&env, median_price, payload.timestamp);
     _settle_round_with_price(&env, &round, median_price, None)
 }
 
@@ -1273,47 +721,11 @@ fn _complete_settlement(
     );
 
     _clear_dispute_round_storage(env, round_id, &participants);
-    if env
-        .storage()
-    // Mode-scoped position cleanup (eliminates redundant storage delete lookups)
-    match round.mode {
-        RoundMode::UpDown => {
-            for i in 0..participants.len() {
-                if let Some(user) = participants.get(i) {
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::Position(round_id, user));
-                }
-            }
-        }
-        RoundMode::Precision => {
-            for i in 0..participants.len() {
-                if let Some(user) = participants.get(i) {
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
-                }
-            }
-        }
-    }
-    env.storage()
-        .persistent()
-        .remove(&DataKeyScoped::RoundParticipants(round_id));
-
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage().persistent().remove(&DataKeyCore::UpDownPositions);
     env.storage()
         .persistent()
-        .get::<_, Round>(&DataKeyCore::ActiveRound)
-        .map(|active| active.round_id == round_id)
-        .unwrap_or(false)
-    {
-        env.storage().persistent().remove(&DataKeyCore::ActiveRound);
-    }
+        .remove(&DataKeyCore::UpDownPositions);
 
     let mode_value: u32 = match round.mode {
         RoundMode::UpDown => 0,
@@ -1497,10 +909,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                round.pool_up.saturating_add(round.pool_down),
-                0i128,
-            )
+            (round.pool_up.saturating_add(round.pool_down), 0i128)
         }
         OneSidedPolicy::CarryForward => {
             if !participants.is_empty() {
@@ -1511,10 +920,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                0i128,
-                round.pool_up.saturating_add(round.pool_down),
-            )
+            (0i128, round.pool_up.saturating_add(round.pool_down))
         }
     };
 
@@ -2625,134 +2031,11 @@ pub fn _refund_under_threshold(
     Ok(())
 }
 
-/// Domain-separation prefix for oracle attestation messages (Issue #263).
-/// Ensures an attestation signature can never be replayed against another
-/// message type that happens to XDR-encode to the same bytes (e.g. a
-/// different contract's signed struct), independent of the on-chain
-/// network_id/contract_addr equality checks performed separately.
-const ATTESTATION_DOMAIN_PREFIX: &[u8] = b"XELMA_ORACLE_ATTESTATION_V1";
-
-/// Builds the canonical message an oracle operator signs off-chain
-/// (Issue #263): a fixed domain prefix followed by the XDR encoding of
-/// every field that binds this payload to a specific network, contract,
-/// round, price, timestamp, and nonce. Verified on-chain via
-/// `env.crypto().ed25519_verify()` against the configured attestation key.
-///
-/// Deliberately excludes `confidence` and `attestation` itself — the former
-/// is advisory metadata, the latter is the signature being verified.
-pub fn _build_attestation_message(env: &Env, payload: &OraclePayload) -> Bytes {
-    let mut message = Bytes::from_slice(env, ATTESTATION_DOMAIN_PREFIX);
-    message.append(&payload.network_id.clone().into());
-    message.append(&payload.contract_addr.clone().to_xdr(env));
-    message.append(&payload.round_id.to_xdr(env));
-    message.append(&payload.price.to_xdr(env));
-    message.append(&payload.timestamp.to_xdr(env));
-    message.append(&payload.nonce.to_xdr(env));
-    message
-}
-
-/// Computes the TWAP reference price from the last `window_samples` recorded
-/// settlement prices (Issue #266). Simple arithmetic mean — samples are
-/// recorded once per settled round (not on a continuous clock), so a
-/// duration-weighted average would weight every sample equally anyway.
-///
-/// Returns `InsufficientTwapSamples` if fewer than `window_samples` have
-/// been recorded yet, so an admin can't silently settle against a thin or
-/// empty window early in a deployment's life.
-pub fn _twap_reference_price(env: &Env, window_samples: u32) -> Result<u128, ContractError> {
-    let samples = _load_twap_samples(env);
-    if samples.len() < window_samples {
-        return Err(ContractError::WindowOutOfRange);
-    }
-
-    let start = samples.len() - window_samples;
-    let mut sum: u128 = 0;
-    let mut count: u128 = 0;
-    for i in start..samples.len() {
-        if let Some(sample) = samples.get(i) {
-            sum = sum
-                .checked_add(sample.price)
-                .ok_or(ContractError::Overflow)?;
-            count += 1;
-        }
-    }
-    if count == 0 {
-        return Err(ContractError::WindowOutOfRange);
-    }
-    Ok(sum / count)
-}
-
-/// Loads the bounded ring of recent settlement price samples (Issue #266).
-pub fn _load_twap_samples(env: &Env) -> Vec<PriceSample> {
-    let key = TwapSamplesKey::Samples;
-    if env.storage().persistent().has(&key) {
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
-    }
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Vec::new(env))
-}
-
-/// Appends a settled price to the TWAP sample ring, evicting the oldest
-/// entry once the ring exceeds `MAX_TWAP_WINDOW_SAMPLES` (Issue #266).
-pub fn _record_twap_sample(env: &Env, price: u128, timestamp: u64) {
-    let key = TwapSamplesKey::Samples;
-    let mut samples = _load_twap_samples(env);
-    samples.push_back(PriceSample { price, timestamp });
-    while samples.len() > crate::common::MAX_TWAP_WINDOW_SAMPLES {
-        samples.remove(0);
-    }
-    env.storage().persistent().set(&key, &samples);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
-}
-
-/// Returns `true` if the oracle heartbeat health gate should block settlement (Issue #264).
-///
-/// Checks:
-/// 1. No heartbeat recorded → blocked
-/// 2. Status = 2 (offline) → blocked
-/// 3. Heartbeat stale beyond (threshold + grace) → blocked
-/// 4. Otherwise → not blocked (allowed)
-pub fn _check_heartbeat_health_blocked(env: &Env, config: &HbGateConfig) -> bool {
-    use crate::common::DEFAULT_ORACLE_STALE_THRESHOLD;
-
-    let heartbeat_key = DataKeyCore::OracleHeartbeat;
-    _extend_persistent_ttl(env, &heartbeat_key);
-    let record: OracleHeartbeatRecord = match env.storage().persistent().get(&heartbeat_key) {
-        Some(r) => r,
-        None => return true, // No heartbeat → blocked
-    };
-
-    // Offline status always blocks
-    if record.status == 2 {
-        return true;
-    }
-
-    // Check staleness with grace period
-    let threshold_key = DataKeyCore::OracleStaleThreshold;
-    _extend_persistent_ttl(env, &threshold_key);
-    let threshold: u64 = env
-        .storage()
-        .persistent()
-        .get(&threshold_key)
-        .unwrap_or(DEFAULT_ORACLE_STALE_THRESHOLD);
-
-    let grace: u64 = config.grace_seconds;
-
-    let current_time = env.ledger().timestamp();
-    let deadline = record
-        .timestamp
-        .saturating_add(threshold)
-        .saturating_add(grace);
-
-    // Blocked if past the stale threshold + grace period
-    current_time > deadline
-}
+#[allow(unused_imports)]
+pub use crate::oracle_validation::{
+    _build_attestation_message, _check_heartbeat_health_blocked, _load_twap_samples,
+    _record_twap_sample, _twap_reference_price,
+};
 
 pub fn _update_stats_win(env: &Env, user: Address) -> Result<(), ContractError> {
     let key = DataKeyScoped::UserStats(user.clone());
@@ -2877,170 +2160,4 @@ fn _round_from_settlement(stl: &RoundSettlement) -> Round {
             RoundMode::Precision
         },
     }
-}
-
-pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
-    _require_supported_schema(&env)?;
-    _ensure_not_paused(&env)?;
-
-    let dispute_ledgers = crate::config::get_dispute_ledgers(&env);
-    if dispute_ledgers == 0 {
-        return Err(ContractError::DisputeWindowExpired);
-    }
-
-    let resolved_at: u32 = _read_resolved_at(&env, round_id).ok_or(ContractError::DisputeWindowExpired)?;
-    if env.ledger().sequence() >= resolved_at.saturating_add(dispute_ledgers) {
-        return Err(ContractError::DisputeWindowExpired);
-    }
-
-    let participants: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&DataKeyScoped::RoundParticipants(round_id))
-        .unwrap_or(Vec::new(&env));
-    if participants.is_empty() {
-        return Err(ContractError::NoActiveRound);
-    }
-
-    let settlement: RoundSettlement =
-        _read_settlement(&env, round_id).ok_or(ContractError::NoActiveRound)?;
-
-    for i in 0..participants.len() {
-        if let Some(user) = participants.get(i) {
-            let pos_key = DataKeyScoped::Position(round_id, user.clone());
-            if let Some(pos) = env.storage().persistent().get::<_, UserPosition>(&pos_key) {
-                _accumulate_pending(&env, user.clone(), pos.amount)?;
-                let side = match pos.side {
-                    BetSide::Up => 0,
-                    BetSide::Down => 1,
-                };
-                _persist_user_outcome(
-                    &env, round_id, 0, &user, side, 0, pos.amount, pos.amount,
-                    UserOutcomeType::Refund,
-                );
-            }
-            let pred_key = DataKeyScoped::PrecisionPosition(round_id, user.clone());
-            let commit_key = DataKeyScoped::PrecisionCommitment(round_id, user.clone());
-            if let Some(pred) = env.storage().persistent().get::<_, PrecisionPrediction>(&pred_key) {
-                _accumulate_pending(&env, user.clone(), pred.amount)?;
-                _persist_user_outcome(
-                    &env, round_id, 1, &user, 2, pred.predicted_price, pred.amount, pred.amount,
-                    UserOutcomeType::Refund,
-                );
-            } else if let Some(commit) =
-                env.storage().persistent().get::<_, PrecisionCommitment>(&commit_key)
-            {
-                _accumulate_pending(&env, user.clone(), commit.amount)?;
-                _persist_user_outcome(
-                    &env, round_id, 1, &user, 2, 0, commit.amount, commit.amount,
-                    UserOutcomeType::Refund,
-                );
-            }
-        }
-    }
-
-    for i in 0..participants.len() {
-        if let Some(user) = participants.get(i) {
-            env.storage().persistent().remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage().persistent().remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage().persistent().remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
-        }
-    }
-    env.storage().persistent().remove(&DataKeyScoped::RoundParticipants(round_id));
-
-    let round = _round_from_settlement(&settlement);
-    _archive_round(
-        &env,
-        &round,
-        RoundArchiveStatus::Voided,
-        settlement.final_price,
-        &participants,
-        settlement.fee_amount,
-        None,
-    );
-
-    _remove_settlement(&env, round_id);
-    _remove_resolved_at(&env, round_id);
-
-    #[allow(deprecated)]
-    env.events().publish(
-        (symbol_short!("round"), symbol_short!("voided")),
-        (round_id, settlement.final_price, participants.len() as u32, settlement.fee_amount),
-    );
-    Ok(())
-}
-
-pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
-    _require_supported_schema(&env)?;
-    _ensure_not_paused(&env)?;
-
-    let dispute_ledgers = crate::config::get_dispute_ledgers(&env);
-    if dispute_ledgers == 0 {
-        return Err(ContractError::DisputeWindowExpired);
-    }
-
-    let resolved_at: u32 = _read_resolved_at(&env, round_id).ok_or(ContractError::DisputeWindowExpired)?;
-    if env.ledger().sequence() < resolved_at.saturating_add(dispute_ledgers) {
-        return Err(ContractError::ClaimLocked);
-    }
-
-    let participants: Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&DataKeyScoped::RoundParticipants(round_id))
-        .unwrap_or(Vec::new(&env));
-    if participants.is_empty() {
-        return Err(ContractError::NoActiveRound);
-    }
-
-    let settlement: RoundSettlement =
-        _read_settlement(&env, round_id).ok_or(ContractError::NoActiveRound)?;
-
-    for i in 0..settlement.participants.len() {
-        if let Some(entry) = settlement.participants.get(i) {
-            match entry.outcome {
-                UserOutcomeType::Win => {
-                    _accumulate_pending(&env, entry.user.clone(), entry.payout)?;
-                    _update_stats_win(&env, entry.user.clone())?;
-                }
-                UserOutcomeType::Loss => {
-                    _update_stats_loss(&env, entry.user.clone())?;
-                }
-                UserOutcomeType::Refund => {
-                    _accumulate_pending(&env, entry.user.clone(), entry.payout)?;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    for i in 0..participants.len() {
-        if let Some(user) = participants.get(i) {
-            env.storage().persistent().remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage().persistent().remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage().persistent().remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
-        }
-    }
-    env.storage().persistent().remove(&DataKeyScoped::RoundParticipants(round_id));
-
-    let round = _round_from_settlement(&settlement);
-    _archive_round(
-        &env,
-        &round,
-        RoundArchiveStatus::Resolved,
-        settlement.final_price,
-        &participants,
-        settlement.fee_amount,
-        None,
-    );
-
-    _remove_settlement(&env, round_id);
-    _remove_resolved_at(&env, round_id);
-
-    #[allow(deprecated)]
-    env.events().publish(
-        (symbol_short!("round"), symbol_short!("finalized")),
-        (round_id, settlement.final_price, participants.len() as u32, settlement.fee_amount),
-    );
-    Ok(())
 }
