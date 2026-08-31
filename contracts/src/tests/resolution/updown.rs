@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 
 #[test]
@@ -81,7 +82,8 @@ fn test_resolve_round_price_unchanged() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Check pending winnings (not claimed yet)
     assert_eq!(client.get_pending_winnings(&user1), 100_0000000);
@@ -190,7 +192,8 @@ fn test_resolve_round_price_went_up() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Check pending winnings
     assert_eq!(client.get_pending_winnings(&alice), 150_0000000);
@@ -291,7 +294,8 @@ fn test_resolve_round_price_went_down() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Check pending winnings
     assert_eq!(client.get_pending_winnings(&alice), 300_0000000);
@@ -396,6 +400,7 @@ fn test_resolve_round_without_active_round() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
 }

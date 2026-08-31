@@ -22,12 +22,7 @@ fn setup() -> (Env, Address, Address, VirtualTokenContractClient<'static>) {
 }
 
 /// Write pending winnings and the tracking ledger key at the current sequence.
-fn set_pending_at_current_ledger(
-    env: &Env,
-    contract_id: &Address,
-    user: &Address,
-    amount: i128,
-) {
+fn set_pending_at_current_ledger(env: &Env, contract_id: &Address, user: &Address, amount: i128) {
     let ledger = env.ledger().sequence();
     env.as_contract(contract_id, || {
         let key = DataKey::PendingWinnings(user.clone());
@@ -205,7 +200,7 @@ fn test_claim_winnings_clears_tracking_key() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // Verify tracking key exists after resolve

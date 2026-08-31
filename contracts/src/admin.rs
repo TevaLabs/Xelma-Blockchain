@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 use crate::common::{
     _derive_round_phase, _emit_action_rejected, _extend_persistent_ttl, _set_balance, balance,
-    payout_add, CURRENT_SCHEMA_VERSION, DEFAULT_BET_WINDOW_LEDGERS,
-    DEFAULT_ORACLE_STALE_THRESHOLD, DEFAULT_RUN_WINDOW_LEDGERS, MAX_TWAP_WINDOW_SAMPLES,
-    MIN_TWAP_WINDOW_SAMPLES, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
+    payout_add, CURRENT_SCHEMA_VERSION, DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_ORACLE_STALE_THRESHOLD,
+    DEFAULT_RUN_WINDOW_LEDGERS, MAX_TWAP_WINDOW_SAMPLES, MIN_TWAP_WINDOW_SAMPLES, TTL_BUMP_AMOUNT,
+    TTL_BUMP_THRESHOLD,
 };
 use crate::errors::ContractError;
 use crate::types::{
-    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt,
-    DeviationConfig, DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey,
-    OracleHeartbeatRecord, OracleQuorumConfig, PolicyAction, ProtocolHealthStatus, Round,
-    RuntimeMode, PENDING_WINNINGS_EXPIRY_KEY, PendingWinningsUpdatedAtKey,
+    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt, DeviationConfig,
+    DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey, OracleHeartbeatRecord,
+    OracleQuorumConfig, PendingWinningsUpdatedAtKey, PolicyAction, ProtocolHealthStatus, Round,
+    RuntimeMode, PENDING_WINNINGS_EXPIRY_KEY,
 };
 use soroban_sdk::{symbol_short, Address, BytesN, Env, Symbol, Vec};
 
@@ -27,7 +27,9 @@ pub fn initialize(env: Env, admin: Address, oracle: Address) -> Result<(), Contr
     }
 
     env.storage().persistent().set(&DataKeyCore::Admin, &admin);
-    env.storage().persistent().set(&DataKeyCore::Oracle, &oracle);
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::Oracle, &oracle);
     env.storage()
         .persistent()
         .set(&DataKeyCore::Paused, &RuntimeMode::Normal);
@@ -374,11 +376,9 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
 pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
     let key = DeviationConfigKey::Config;
     if env.storage().persistent().has(&key) {
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_BUMP_THRESHOLD,
-            TTL_BUMP_AMOUNT,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
     }
     env.storage()
         .persistent()
@@ -392,11 +392,9 @@ pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
 fn _save_deviation_config(env: &Env, config: &DeviationConfig) {
     let key = DeviationConfigKey::Config;
     env.storage().persistent().set(&key, config);
-    env.storage().persistent().extend_ttl(
-        &key,
-        TTL_BUMP_THRESHOLD,
-        TTL_BUMP_AMOUNT,
-    );
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
 }
 
 /// Sets the oracle deviation reference mode and (for `Twap`) the trailing
@@ -461,11 +459,9 @@ pub fn get_deviation_window_samples(env: Env) -> u32 {
 pub fn _load_attestation_config(env: &Env) -> AttestationConfig {
     let key = AttestationConfigKey::Config;
     if env.storage().persistent().has(&key) {
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_BUMP_THRESHOLD,
-            TTL_BUMP_AMOUNT,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
     }
     env.storage()
         .persistent()
@@ -492,11 +488,9 @@ pub fn set_attestation_key(env: Env, key: Option<BytesN<32>>) -> Result<(), Cont
     env.storage()
         .persistent()
         .set(&storage_key, &AttestationConfig { key: key.clone() });
-    env.storage().persistent().extend_ttl(
-        &storage_key,
-        TTL_BUMP_THRESHOLD,
-        TTL_BUMP_AMOUNT,
-    );
+    env.storage()
+        .persistent()
+        .extend_ttl(&storage_key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -676,11 +670,9 @@ pub fn _consume_hb_override(env: &Env) -> bool {
 pub fn _load_hb_config(env: &Env) -> HbGateConfig {
     let key = HbGateKey::Config;
     if env.storage().persistent().has(&key) {
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_BUMP_THRESHOLD,
-            TTL_BUMP_AMOUNT,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
     }
     env.storage()
         .persistent()
@@ -696,11 +688,9 @@ pub fn _load_hb_config(env: &Env) -> HbGateConfig {
 pub fn _save_hb_config(env: &Env, config: &HbGateConfig) {
     let key = HbGateKey::Config;
     env.storage().persistent().set(&key, config);
-    env.storage().persistent().extend_ttl(
-        &key,
-        TTL_BUMP_THRESHOLD,
-        TTL_BUMP_AMOUNT,
-    );
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
 }
 
 /// Records an oracle heartbeat (oracle only).
@@ -829,6 +819,7 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
     let schema_version = _schema_version(&env).unwrap_or(1);
     let mode = _current_mode(&env);
     let is_claims_only = mode == RuntimeMode::ClaimsOnly;
+    let access_restricted = crate::access_control::is_access_control_enabled(env.clone());
 
     let mut issues: u32 = 0;
     if paused {
@@ -853,6 +844,8 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         3u32 // ROUND_STALE
     } else if !has_active_round {
         4u32 // NO_ACTIVE_ROUND
+    } else if access_restricted {
+        7u32 // ACCESS_RESTRICTED
     } else {
         0u32 // HEALTHY
     };
@@ -1219,11 +1212,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
 
     // Read the expiry config. 0 or absent means expiry is disabled.
     let expiry_key = PENDING_WINNINGS_EXPIRY_KEY;
-    let expiry_ledgers: u32 = env
-        .storage()
-        .persistent()
-        .get(&expiry_key)
-        .unwrap_or(0);
+    let expiry_ledgers: u32 = env.storage().persistent().get(&expiry_key).unwrap_or(0);
     if expiry_ledgers == 0 {
         _emit_action_rejected(
             &env,

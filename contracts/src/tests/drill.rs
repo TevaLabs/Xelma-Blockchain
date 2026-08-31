@@ -6,7 +6,7 @@ use crate::errors::ContractError;
 use crate::types::{BetSide, DataKey, OraclePayload, ProtocolStatus};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    Address, Env, BytesN,
+    Address, BytesN, Env,
 };
 
 fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address, Address) {
@@ -52,14 +52,16 @@ fn test_claims_only_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     assert!(client.get_pending_winnings(&user1) > 0);
 
     // Seed protocol fee treasury for test fee withdrawal validation
     env.as_contract(&contract_id, || {
-        env.storage().persistent().set(&DataKey::ProtocolFeeTreasury, &5000_0000000i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolFeeTreasury, &5000_0000000i128);
     });
 
     // ─── ENTER CLAIMS-ONLY MODE ────────────────────────────────────────────────
@@ -129,7 +131,7 @@ fn test_claims_only_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
     assert_eq!(resolve_res, Ok(Ok(())));
 
@@ -186,7 +188,7 @@ fn test_fully_paused_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
     assert_eq!(resolve_res, Err(Ok(ContractError::ContractPaused)));
 
@@ -252,7 +254,7 @@ fn test_emergency_incident_simulation_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // Step E: Claim Winnings Executed Successfully During Emergency Mode

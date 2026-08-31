@@ -54,6 +54,7 @@ declare -A STATUS_LABEL=(
   [4]="NO_ACTIVE_ROUND"
   [5]="MULTIPLE_ISSUES"
   [6]="CLAIMS_ONLY"
+  [7]="ACCESS_RESTRICTED"
 )
 
 declare -A STATUS_SEVERITY=(
@@ -64,6 +65,7 @@ declare -A STATUS_SEVERITY=(
   [4]="OK"
   [5]="CRIT"
   [6]="WARN"
+  [7]="OK"
 )
 
 declare -A ORACLE_STATUS_LABEL=(
@@ -320,6 +322,16 @@ STATUS_CODE=$(echo "$HEALTH_JSON" | jq -r '.status_code')
 
 # ── Severity mapping ──────────────────────────────────────────────────────────
 SEVERITY="${STATUS_SEVERITY[$STATUS_CODE]:-UNKNOWN}"
+
+# ── Unknown code guard ────────────────────────────────────────────────────────
+# If the on-chain status_code is not in our mapping table, fail loud so
+# operators know the probe is out of date and must be refreshed.
+if [[ "$SEVERITY" == "UNKNOWN" ]]; then
+  echo "UNKNOWN: unrecognized on-chain status_code=$STATUS_CODE" >&2
+  echo "The health probe may be out of date. Update STATUS_LABEL / STATUS_SEVERITY" >&2
+  echo "in health_probe.sh to match the current ProtocolHealthStatus enum." >&2
+  exit 3
+fi
 
 # ── Output ────────────────────────────────────────────────────────────────────
 if [[ "$JSON_OUT" -eq 1 ]]; then
