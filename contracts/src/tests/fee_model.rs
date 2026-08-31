@@ -62,6 +62,7 @@ fn resolve_at(
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -586,6 +587,7 @@ proptest! {
             nonce: 1u64,
             network_id: env.ledger().network_id(),
             contract_addr: contract_id.clone(),
+        attestation: None,
             confidence: None,
         attestation: None,
         });
@@ -658,6 +660,7 @@ proptest! {
             nonce: 1u64,
             network_id: env.ledger().network_id(),
             contract_addr: contract_id.clone(),
+        attestation: None,
             confidence: None,
         attestation: None,
         });

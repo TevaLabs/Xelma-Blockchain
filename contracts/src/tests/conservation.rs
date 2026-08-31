@@ -60,8 +60,9 @@
 //! wiring is required for CI inclusion.
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::errors::ContractError;
-use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, RoundArchiveStatus};
+use crate::types::{
+    BetSide, DataKey, DataKeyCore, DataKeyScoped, OraclePayload, RoundArchiveStatus,
+};
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -114,7 +115,8 @@ fn resolve_at(
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 }
 
 /// `sha256(price.to_xdr() || salt.to_xdr())` — matches `reveal_prediction`.
@@ -613,7 +615,10 @@ fn early_cashout_conservation_pins_exact_forfeit() {
 
     // Pool should be reduced by full stake
     let round = client.get_active_round().unwrap();
-    assert_eq!(round.pool_up, 0, "pool_up should be 0 after alice cashed out");
+    assert_eq!(
+        round.pool_up, 0,
+        "pool_up should be 0 after alice cashed out"
+    );
     assert_eq!(round.pool_down, 50);
 
     // Resolve the round — Bob wins (price down). Bob's 50 in pool_down wins
@@ -763,8 +768,7 @@ fn early_cashout_with_settlement_fee_conservation() {
 
     let bob_pay = client.get_pending_winnings(&bob) - bob_pending_before;
     let charlie_pay = client.get_pending_winnings(&charlie) - charlie_pending_before;
-    let resolve_treasury_delta =
-        client.get_protocol_fee_treasury() - treasury_before_resolve;
+    let resolve_treasury_delta = client.get_protocol_fee_treasury() - treasury_before_resolve;
 
     // One-sided pool → refund, no fee applied
     assert_eq!(bob_pay, 100);
@@ -895,7 +899,11 @@ fn test_early_cashout_conservation_invariant() {
 
     let expected_forfeit = stake * (penalty_bps as i128) / 10000i128;
     let expected_cashout = stake - expected_forfeit;
-    assert_eq!(expected_cashout + expected_forfeit, stake, "cashout + forfeit == stake invariant holds");
+    assert_eq!(
+        expected_cashout + expected_forfeit,
+        stake,
+        "cashout + forfeit == stake invariant holds"
+    );
 
     client.cash_out_early(&alice);
 
@@ -904,7 +912,6 @@ fn test_early_cashout_conservation_invariant() {
 }
 
 // ─── Small-random coverage on top of the fixed matrix ───────────────────────
-
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(20))]

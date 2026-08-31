@@ -103,6 +103,15 @@ export enum RuntimeMode {
   FullyPaused = 2,
 }
 
+/**
+ * Participant access-control state (Issue #274).
+ */
+export enum AccessState {
+  Open = 0,
+  Allowlisted = 1,
+  Denylisted = 2,
+}
+
 export enum ProtocolStatus {
   Active = 0,
   Paused = 1,
@@ -552,10 +561,6 @@ export const ContractError = {
    */
   54: {message:"NoPendingRotation"},
   /**
-   * Oracle rotation delay has not elapsed
-   */
-  55: {message:"RotationDelayNotElapsed"},
-  /**
    * Invalid archive retention limit
    */
   62: {message:"InvalidArchiveRetention"},
@@ -565,60 +570,25 @@ export const ContractError = {
   61: {message:"PendingWinningsNotExpired"},
   63: {message:"InvalidCommitment"},
   64: {message:"InvalidSalt"},
-  /**
-   * No round template is configured
-   */
   65: {message:"NoRoundTemplate"},
-  /**
-   * Oracle timestamp is outside the round-relative economic window
-   */
   66: {message:"OracleTimestampOutsideWindow"},
-  /**
-   * Epoch mint budget has been fully consumed
-   */
   67: {message:"EpochBudgetExceeded"},
-  /**
-   * Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
-   */
   68: {message:"OracleNotLive"},
-  /**
-   * Invalid precision payout policy
-   */
   69: {message:"InvalidPayoutPolicy"},
-  /** Stake is below the configured minimum bet. */
   70: {message:"BelowMinBet"},
-  /** Too few oracle observations survived quorum validation. */
   71: {message:"InsufficientOracleQuorum"},
-  /** Multi-feed payload has too few observations. */
   72: {message:"TooFewObservations"},
-  /** Oracle observation was rejected as an outlier. */
   73: {message:"OracleOutlierRejected"},
-  /** Multi-feed payload contains a duplicate source. */
   74: {message:"DuplicateOracleSource"},
-  /** Multi-feed observations are in an invalid order. */
   75: {message:"InvalidObservationOrder"},
-  /** Data key is not allowed for batch TTL touch. */
   76: {message:"UnsupportedDataKeyForTtlTouch"},
-  /** Pending winnings entry was not found. */
   77: {message:"PendingWinningsNotFound"},
-  /** Pending winnings expiry is not configured. */
   78: {message:"ExpiryNotConfigured"},
-  /** Participant is blocked by the active access-control policy. */
-  79: {message:"AccessDenied"},
-  /** Governance proposal was not found. */
-  80: {message:"ProposalNotFound"},
-  /** Governance proposal has expired. */
-  81: {message:"ProposalExpired"},
-  /** Governance proposal is in an invalid state. */
-  82: {message:"GovInvalidState"},
-  /** Caller is unauthorized by the governance policy. */
-  83: {message:"GovUnauthorized"},
-  /** Action is invalid in the current round lifecycle phase. */
-  84: {message:"IllegalPhaseTransition"},
-  /** Oracle heartbeat failed the configured health policy. */
-  85: {message:"OracleHeartbeatUnhealthy"},
-  /** Pending winnings have not reached their expiry threshold. */
-  86: {message:"PendingWinningsNotExpired"}
+  79: {message:"EarlyCashoutDisabled"},
+  80: {message:"PositionNotFound"},
+  81: {message:"InvalidPhaseForCashout"},
+  82: {message:"WrongModeForCashout"},
+  83: {message:"OracleHeartbeatUnhealthy"},
 }
 
 /**
@@ -786,28 +756,6 @@ export interface Client {
    * Mode 1 (Precision/Legends): Closest guess wins full pot; ties split evenly
    */
   resolve_round: ({payload}: {payload: OraclePayload}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
-
-  /**
-   * Construct and simulate a resolve_round_multi transaction.
-   * Resolves the round using multi-feed oracle payload with median calculation and outlier rejection.
-   */
-  resolve_round_multi: ({payload}: {payload: MultiFeedPayload}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
-
-  /**
-   * Construct and simulate an early cash-out transaction.
-   * Allows an UpDown bettor to exit during the running phase with a penalty fee.
-   */
-  cash_out_early: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
-
-  /**
-   * Sets multi-feed oracle quorum configuration (admin only).
-   */
-  set_oracle_quorum_config: ({cfg}: {cfg: OracleQuorumConfig}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
-
-  /**
-   * Gets multi-feed oracle quorum configuration if configured.
-   */
-  get_oracle_quorum_config: (options?: MethodOptions) => Promise<AssembledTransaction<Option<OracleQuorumConfig>>>
 
   /**
    * Construct and simulate a set_max_stake transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -1262,6 +1210,70 @@ export interface Client {
   get_season_archive: ({season_id}: {season_id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Option<SeasonArchive>>>
   get_season_leaderboard_by_wins: ({season_id, offset, limit}: {season_id: u32, offset: u32, limit: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Array<SeasonLeaderboardEntry>>>
   get_season_leaderboard_by_streak: ({season_id, offset, limit}: {season_id: u32, offset: u32, limit: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Array<SeasonLeaderboardEntry>>>
+
+  /**
+   * Resolves the round using multi-feed oracle payload.
+   */
+  resolve_round_multi: ({payload}: {payload: MultiFeedPayload}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Early cash-out for UpDown bettors during the running phase.
+   */
+  cash_out_early: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /** Sets multi-feed oracle quorum config (admin only). */
+  set_oracle_quorum_config: ({cfg}: {cfg: OracleQuorumConfig}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /** Gets multi-feed oracle quorum config. */
+  get_oracle_quorum_config: (options?: MethodOptions) => Promise<AssembledTransaction<Option<OracleQuorumConfig>>>
+
+  /** Adds a user to the allowlist (admin only). */
+  add_allowlisted: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /** Adds a user to the denylist (admin only). */
+  add_denylisted: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /** Arms a one-shot override to bypass heartbeat health gate. */
+  arm_oracle_heartbeat_override: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /** Returns (is_enabled, access_state) for a user. */
+  get_access_policy: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<readonly [boolean, AccessState]>>
+
+  /** Returns access-control state for a user. */
+  get_access_state: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<AccessState>>
+
+  /** Returns oracle heartbeat grace period in seconds. */
+  get_oracle_heartbeat_grace: (options?: MethodOptions) => Promise<AssembledTransaction<u64>>
+
+  /** Returns whether oracle heartbeat strict mode is enabled. */
+  get_oracle_heartbeat_strict_mode: (options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+
+  /** Returns whether access control is enabled. */
+  is_access_control_enabled: (options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+
+  /** Returns whether a user is allowlisted. */
+  is_allowlisted: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+
+  /** Returns whether a user is denylisted. */
+  is_denylisted: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+
+  /** Returns whether the heartbeat override is armed. */
+  is_hb_override_armed: (options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+
+  /** Removes a user from the allowlist (admin only). */
+  remove_allowlisted: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /** Removes a user from the denylist (admin only). */
+  remove_denylisted: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /** Enables or disables access control (admin only). */
+  set_access_control_enabled: ({enabled}: {enabled: boolean}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /** Sets oracle heartbeat grace period in seconds (admin only). */
+  set_oracle_heartbeat_grace: ({seconds}: {seconds: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /** Enables or disables oracle heartbeat strict mode (admin only). */
+  set_oracle_heartbeat_strict_mode: ({enabled}: {enabled: boolean}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 }
 export class Client extends ContractClient {
   static async deploy<T = Client>(
@@ -1475,6 +1487,26 @@ export class Client extends ContractClient {
         reset_leaderboard_season: this.txFromJSON<Result<u32>>,
         get_season_archive: this.txFromJSON<Option<SeasonArchive>>,
         get_season_leaderboard_by_wins: this.txFromJSON<Array<SeasonLeaderboardEntry>>,
-        get_season_leaderboard_by_streak: this.txFromJSON<Array<SeasonLeaderboardEntry>>
+        get_season_leaderboard_by_streak: this.txFromJSON<Array<SeasonLeaderboardEntry>>,
+        resolve_round_multi: this.txFromJSON<Result<void>>,
+        cash_out_early: this.txFromJSON<Result<void>>,
+        set_oracle_quorum_config: this.txFromJSON<Result<void>>,
+        get_oracle_quorum_config: this.txFromJSON<Option<OracleQuorumConfig>>,
+        add_allowlisted: this.txFromJSON<Result<void>>,
+        add_denylisted: this.txFromJSON<Result<void>>,
+        arm_oracle_heartbeat_override: this.txFromJSON<Result<void>>,
+        get_access_policy: this.txFromJSON<readonly [boolean, AccessState]>,
+        get_access_state: this.txFromJSON<AccessState>,
+        get_oracle_heartbeat_grace: this.txFromJSON<u64>,
+        get_oracle_heartbeat_strict_mode: this.txFromJSON<boolean>,
+        is_access_control_enabled: this.txFromJSON<boolean>,
+        is_allowlisted: this.txFromJSON<boolean>,
+        is_denylisted: this.txFromJSON<boolean>,
+        is_hb_override_armed: this.txFromJSON<boolean>,
+        remove_allowlisted: this.txFromJSON<Result<void>>,
+        remove_denylisted: this.txFromJSON<Result<void>>,
+        set_access_control_enabled: this.txFromJSON<Result<void>>,
+        set_oracle_heartbeat_grace: this.txFromJSON<Result<void>>,
+        set_oracle_heartbeat_strict_mode: this.txFromJSON<Result<void>>
   }
 }

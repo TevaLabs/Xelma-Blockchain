@@ -46,7 +46,8 @@ fn resolve_updown(
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 }
 
 // ─── happy-path regression ───────────────────────────────────────────────────
@@ -183,7 +184,8 @@ fn test_record_winnings_mul_overflow_returns_payout_overflow() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(result, Err(Ok(ContractError::PayoutOverflow)));
 }
@@ -223,7 +225,8 @@ fn test_record_refunds_overflow_returns_payout_overflow() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(result, Err(Ok(ContractError::PayoutOverflow)));
 }
@@ -268,11 +271,9 @@ fn test_claim_winnings_boundary_max_exact() {
     client.update_oracle_heartbeat(&0u32);
 
     env.as_contract(&contract_id, || {
-        let bal_key = DataKeyScoped::Balance(user.clone());
-        env.storage()
-            .persistent()
-            .set(&bal_key, &(i128::MAX - 100));
-        let win_key = DataKeyScoped::PendingWinnings(user.clone());
+        let bal_key = DataKey::Balance(user.clone());
+        env.storage().persistent().set(&bal_key, &(i128::MAX - 100));
+        let win_key = DataKey::PendingWinnings(user.clone());
         env.storage().persistent().set(&win_key, &100i128);
     });
 
@@ -296,10 +297,8 @@ fn test_claim_winnings_boundary_max_minus_one() {
     client.update_oracle_heartbeat(&0u32);
 
     env.as_contract(&contract_id, || {
-        let win_key = DataKeyScoped::PendingWinnings(user.clone());
-        env.storage()
-            .persistent()
-            .set(&win_key, &(i128::MAX - 1));
+        let win_key = DataKey::PendingWinnings(user.clone());
+        env.storage().persistent().set(&win_key, &(i128::MAX - 1));
     });
 
     let claimed = client.claim_winnings(&user);
@@ -400,7 +399,8 @@ fn test_pending_winnings_cap_enforced_on_refund() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert_eq!(result, Err(Ok(ContractError::PendingWinningsCapExceeded)));
 
     // Balance unchanged — all-or-nothing guarantee
@@ -439,7 +439,8 @@ fn test_pending_winnings_cap_enforced_on_winnings() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert_eq!(result, Err(Ok(ContractError::PendingWinningsCapExceeded)));
 }
 

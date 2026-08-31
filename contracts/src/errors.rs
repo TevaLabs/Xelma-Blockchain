@@ -104,27 +104,13 @@ pub enum ContractError {
     /// Oracle heartbeat failed the configured freshness or health policy.
     OracleHeartbeatUnhealthy = 85,
     /// Early cash-out feature is disabled or not configured
-    EarlyCashoutDisabled = 79,
+    EarlyCashoutDisabled = 94,
     /// User does not have an active position to cash out
-    PositionNotFound = 80,
+    PositionNotFound = 95,
     /// Early cash-out attempted outside the valid running phase
-    InvalidPhaseForCashout = 81,
+    InvalidPhaseForCashout = 96,
     /// Early cash-out is only supported for UpDown rounds
-    WrongModeForCashout = 82,
-    ProposalNotFound = 83,
-    ProposalExpired = 84,
-    GovInvalidState = 85,
-    GovUnauthorized = 86,
-    /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
-    ClaimBatchTooLarge = 87,
-    /// claim_many batch contains the same address more than once (Issue #277)
-    DuplicateClaimAddress = 88,
-    /// Caller is denylisted, or allowlist mode is enabled and caller is not
-    /// allowlisted (Issue #274 access-control gate).
-    AccessDenied = 89,
-    /// Oracle heartbeat is not live and strict mode blocks single-feed
-    /// settlement (Issue #264 sibling check for `resolve_round`).
-    OracleHeartbeatUnhealthy = 90,
+    WrongModeForCashout = 97,
     /// The dispute window for `void_round` has expired, or dispute windows
     /// are not configured (`dispute_ledgers == 0`).
     DisputeWindowExpired = 91,

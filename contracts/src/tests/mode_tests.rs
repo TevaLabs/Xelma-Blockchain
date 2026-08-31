@@ -1651,6 +1651,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -1669,6 +1670,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         nonce: 2u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -1743,6 +1745,7 @@ fn test_alternation_precision_after_updown_no_stale_data() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -1760,6 +1763,7 @@ fn test_alternation_precision_after_updown_no_stale_data() {
         nonce: 2u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -1851,6 +1855,7 @@ fn test_alternation_three_round_cycle_no_stale_data() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -1867,6 +1872,7 @@ fn test_alternation_three_round_cycle_no_stale_data() {
         nonce: 2u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -1883,6 +1889,7 @@ fn test_alternation_three_round_cycle_no_stale_data() {
         nonce: 3u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });

@@ -9,25 +9,30 @@ use crate::access_control;
 use crate::errors::ContractError;
 use crate::governance;
 use crate::types::{
-    ArchivedRoundSummary, AccessState, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy,
-    MarketSnapshot, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, OracleRotationProposal, PendingConfigChange,
-    PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
-    RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
-    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
-    UserRoundOutcome, UserStats, FeeModel, GovAction, GovProposal,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
+    DataKeyScoped, DeviationReferenceMode, FeeModel, GovAction, GovProposal, LeaderboardEntry,
+    MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload, OracleQuorumConfig,
+    OracleRotationProposal, PendingConfigChange, PolicyAction, PrecisionPrediction, PriceSample,
+    ProtocolHealthStatus, ProtocolStatus, Round, RoundArchiveStatus, RoundPhase, RoundPoolStats,
+    RoundStatus, RoundTemplate, RuntimeMode, SeasonArchive, SeasonLeaderboardEntry,
+    SimulationResult, UserPosition, UserRoundOutcome, UserStats,
 };
 
-use crate::common::{
-    CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
-    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
-    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_MIN_PARTICIPANTS,
-    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
-    MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
-    MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
-    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD, BPS_DENOMINATOR,
-};
+// ─── Economic control limits ─────────────────────────────────────────────────
+/// Minimum allowed value when setting an economic cap to prevent zero-value lockouts.
+const MIN_CAP_VALUE: i128 = 1;
+/// Upper bound on the minimum-participants config to prevent unbounded gas in resolution.
+const MAX_MIN_PARTICIPANTS: u32 = 10_000;
+const DEFAULT_MAX_PRECISION_PARTICIPANTS: u32 = 1_000;
+const MAX_PRECISION_PARTICIPANTS_LIMIT: u32 = 10_000;
+/// Maximum number of entries returned per page by paginated query methods,
+/// regardless of the caller-requested `limit` (Issue #139).
+const MAX_PAGE_SIZE: u32 = 100;
+
+// ─── Oracle heartbeat limits ──────────────────────────────────────────────────
+const DEFAULT_ORACLE_STALE_THRESHOLD: u64 = 3_600; // 1 hour
+const MIN_ORACLE_STALE_THRESHOLD: u64 = 60; // 1 minute
+const MAX_ORACLE_STALE_THRESHOLD: u64 = 86_400; // 24 hours
 
 // ─── Oracle rotation expiry ───────────────────────────────────────────────────
 const MIN_ROTATION_EXPIRY_SECONDS: u64 = 60; // 1 minute minimum
@@ -36,11 +41,53 @@ const MIN_ROTATION_EXPIRY_SECONDS: u64 = 60; // 1 minute minimum
 /// gives operators and monitoring dashboards time to react.
 const MIN_ROTATION_DELAY_SECONDS: u64 = 3_600; // 1 hour
 
+const DEFAULT_BET_WINDOW_LEDGERS: u32 = 6;
+const DEFAULT_RUN_WINDOW_LEDGERS: u32 = 12;
+const MAX_BET_WINDOW_LEDGERS: u32 = 1_440;
+const MAX_RUN_WINDOW_LEDGERS: u32 = 2_880;
+
 const ROUND_MODE_UPDOWN: u32 = 0;
 const ROUND_MODE_PRECISION: u32 = 1;
 const PAYOUT_OUTCOME_LOSS: u32 = 0;
 const PAYOUT_OUTCOME_WIN: u32 = 1;
 const PAYOUT_OUTCOME_REFUND: u32 = 2;
+// ─── Oracle deviation guardrails ─────────────────────────────────────────────
+/// Maximum allowed basis points for oracle deviation is bounded to avoid absurd configs.
+/// 100_000 bp = 1000% deviation (effectively "off", but still explicit).
+const MAX_ORACLE_DEVIATION_BPS: u32 = 100_000;
+
+// ─── Protocol fee (Issue #162) ────────────────────────────────────────────────
+/// Hard cap on the optional protocol settlement fee, in basis points
+/// (1 bp = 0.01%). 1_000 bp = 10% of the round's total pot — the maximum an
+/// admin may ever schedule via timelock. Larger values would risk turning
+/// the protocol into a de-facto extraction mechanism and are explicitly
+/// disallowed to preserve user trust and the conservation invariant.
+const MAX_PROTOCOL_FEE_BPS: u32 = 1_000;
+/// Denominator for bps math: `fee = total_pot * bps / BPS_DENOMINATOR`.
+/// Pinned to 10_000 to match the universal "1 bp = 0.01%" convention.
+const BPS_DENOMINATOR: i128 = 10_000;
+
+// ─── Storage schema versioning ───────────────────────────────────────────────
+const CURRENT_SCHEMA_VERSION: u32 = 3;
+// ─── Start-price bounds (Issue #119) ─────────────────────────────────────────
+/// Minimum start price in protocol units — prevents zero-value and dust rounds.
+const MIN_START_PRICE: u128 = 1;
+/// Maximum start price in protocol units — guards against overflow in payout math.
+const MAX_START_PRICE: u128 = 1_000_000_000_000_000_000;
+// ─── Storage TTL Lifecycle Limits (Issue #142) ──────────────────────────────
+/// Minimum remaining ledgers before a persistent entry is extended.
+const TTL_BUMP_THRESHOLD: u32 = 17_280; // ~1 day at 5-second ledgers
+/// Amount of ledgers to extend a persistent entry to when below threshold.
+const TTL_BUMP_AMOUNT: u32 = 518_400; // ~30 days at 5-second ledgers
+
+/// Default archived round summaries retained on-chain (FIFO pruning).
+const DEFAULT_ARCHIVE_RETENTION: u32 = 128;
+/// Minimum archive retention limit — prevents accidental pruning of all history.
+const MIN_ARCHIVE_RETENTION: u32 = 1;
+/// Maximum archive retention limit — prevents unbounded storage growth.
+const MAX_ARCHIVE_RETENTION: u32 = 10_000;
+/// Ledgers to wait before a scheduled critical config change may be applied (~2 hours).
+const CONFIG_TIMELOCK_LEDGERS: u32 = 1440;
 
 use crate::admin;
 use crate::betting;
@@ -251,6 +298,36 @@ impl VirtualTokenContract {
 
     /// Returns the configured heartbeat grace period in seconds (default 0, Issue #264).
     pub fn get_hb_grace_seconds(env: Env) -> u64 {
+        admin::get_hb_grace_seconds(env)
+    }
+
+    /// Alias: arms a one-shot override to bypass the heartbeat health gate (Issue #264, #398).
+    pub fn arm_oracle_heartbeat_override(env: Env) -> Result<(), ContractError> {
+        admin::arm_hb_override(env)
+    }
+
+    /// Alias: returns whether the heartbeat override is currently armed.
+    pub fn is_hb_override_armed(env: Env) -> bool {
+        admin::get_hb_override_armed(env)
+    }
+
+    /// Alias: enables or disables strict mode for oracle heartbeat health.
+    pub fn set_oracle_heartbeat_strict_mode(env: Env, enabled: bool) -> Result<(), ContractError> {
+        admin::set_hb_strict_mode(env, enabled)
+    }
+
+    /// Alias: returns whether oracle heartbeat strict mode is enabled.
+    pub fn get_oracle_heartbeat_strict_mode(env: Env) -> bool {
+        admin::get_hb_strict_mode(env)
+    }
+
+    /// Alias: sets the heartbeat grace period in seconds.
+    pub fn set_oracle_heartbeat_grace(env: Env, seconds: u64) -> Result<(), ContractError> {
+        admin::set_hb_grace_seconds(env, seconds)
+    }
+
+    /// Alias: returns the heartbeat grace period in seconds.
+    pub fn get_oracle_heartbeat_grace(env: Env) -> u64 {
         admin::get_hb_grace_seconds(env)
     }
 
@@ -474,11 +551,7 @@ impl VirtualTokenContract {
             #[allow(deprecated)]
             env.events().publish(
                 (symbol_short!("oracle"), symbol_short!("early")),
-                (
-                    proposal.new_oracle.clone(),
-                    current_ts,
-                    earliest_accept,
-                ),
+                (proposal.new_oracle.clone(), current_ts, earliest_accept),
             );
             return Err(ContractError::RotationDelayNotElapsed);
         }
@@ -757,10 +830,7 @@ impl VirtualTokenContract {
     }
 
     /// Schedules a timelocked update to the oracle timestamp skew (admin only).
-    pub fn schedule_oracle_timestamp_skew(
-        env: Env,
-        seconds: u64,
-    ) -> Result<(), ContractError> {
+    pub fn schedule_oracle_timestamp_skew(env: Env, seconds: u64) -> Result<(), ContractError> {
         config::schedule_oracle_timestamp_skew(env, seconds)
     }
 
@@ -903,16 +973,6 @@ impl VirtualTokenContract {
         config::get_close_buffer_ledgers(env)
     }
 
-    /// Returns the configured betting-window length in ledgers.
-    pub fn get_bet_window_ledgers(env: Env) -> u32 {
-        config::get_bet_window_ledgers(env)
-    }
-
-    /// Returns the configured run-window length in ledgers.
-    pub fn get_run_window_ledgers(env: Env) -> u32 {
-        config::get_run_window_ledgers(env)
-    }
-
     /// Sets the early cash-out penalty rate in basis points (admin only).
     /// `None` disables early cash-out entirely (default).
     /// `Some(bps)` enables it with the given penalty rate (1–1000 bps).
@@ -1020,10 +1080,7 @@ impl VirtualTokenContract {
     /// Requires `OracleQuorumConfig` to be configured by the admin before
     /// this path is available. The legacy single-oracle `resolve_round`
     /// remains available independently.
-    pub fn resolve_round_multi(
-        env: Env,
-        payload: MultiFeedPayload,
-    ) -> Result<(), ContractError> {
+    pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), ContractError> {
         settlement::resolve_round_multi(env, payload)
     }
 
@@ -1037,14 +1094,6 @@ impl VirtualTokenContract {
 
     pub fn claim_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
         settlement::claim_winnings(env, user)
-    }
-
-    /// Claims pending winnings for up to `MAX_CLAIM_BATCH_SIZE` users in one
-    /// call. All-or-nothing: any failure (batch too large, a duplicate
-    /// address, or a missing per-user auth) reverts every effect in this
-    /// call. See `settlement::claim_many` for full semantics.
-    pub fn claim_many(env: Env, users: Vec<Address>) -> Result<Vec<i128>, ContractError> {
-        settlement::claim_many(env, users)
     }
 
     /// Early cash-out during the Running phase for UpDown rounds.
@@ -1106,13 +1155,6 @@ impl VirtualTokenContract {
         queries::get_round_phase(env)
     }
 
-    /// Returns a single-read composite snapshot of current market state:
-    /// round phase, pool composition, timing buffers, and fee configuration.
-    /// See `MarketSnapshot` for empty-round semantics.
-    pub fn get_market_snapshot(env: Env) -> MarketSnapshot {
-        queries::get_market_snapshot(env)
-    }
-
     pub fn get_last_round_id(env: Env) -> u64 {
         queries::get_last_round_id(env)
     }
@@ -1171,7 +1213,6 @@ impl VirtualTokenContract {
         limit: u32,
     ) -> Vec<(Address, UserPosition)> {
         queries::get_updown_positions_page(env, offset, limit)
-
     }
 
     /// Returns user's vXLM balance
@@ -1597,7 +1638,10 @@ impl VirtualTokenContract {
         config::_apply_config_payload(env, kind, payload)
     }
 
-    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(env: &Env, key: &T) {
+    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(
+        env: &Env,
+        key: &T,
+    ) {
         if env.storage().persistent().has(key) {
             env.storage()
                 .persistent()

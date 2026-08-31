@@ -27,11 +27,9 @@ fn test_fee_gaming_mid_round_schedule_does_not_affect_settlement() {
 
     // Mid-round fee schedule via public API (attacker with admin key)
     client.schedule_protocol_fee_bps(&Some(1_000u32));
-    assert!(
-        client
-            .get_pending_config_change(&ConfigChangeKind::ProtocolFeeBps)
-            .is_some()
-    );
+    assert!(client
+        .get_pending_config_change(&ConfigChangeKind::ProtocolFeeBps)
+        .is_some());
     assert_eq!(client.get_protocol_fee_bps(), None);
 
     env.ledger().with_mut(|li| li.sequence_number = 12);

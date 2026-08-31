@@ -250,6 +250,7 @@ fn test_claim_winnings_respects_runtime_mode() {
         nonce: 1,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -284,6 +285,7 @@ fn test_claim_winnings_respects_runtime_mode() {
         nonce: 2,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
@@ -322,6 +324,7 @@ fn test_claim_winnings_respects_runtime_mode() {
         nonce: 3,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        attestation: None,
         confidence: None,
     attestation: None,
     });
