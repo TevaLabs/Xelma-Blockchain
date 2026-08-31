@@ -1273,8 +1273,7 @@ fn _complete_settlement(
     );
 
     _clear_dispute_round_storage(env, round_id, &participants);
-    if env
-        .storage()
+
     // Mode-scoped position cleanup (eliminates redundant storage delete lookups)
     match round.mode {
         RoundMode::UpDown => {
@@ -1306,7 +1305,7 @@ fn _complete_settlement(
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     env.storage().persistent().remove(&DataKeyCore::Positions);
     env.storage().persistent().remove(&DataKeyCore::UpDownPositions);
-    env.storage()
+    if env.storage()
         .persistent()
         .get::<_, Round>(&DataKeyCore::ActiveRound)
         .map(|active| active.round_id == round_id)
@@ -1464,6 +1463,8 @@ pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         (round_id, pending.final_price, participant_count, fee_amount),
     );
     Ok(())
+}
+
 /// Deterministically selects the active one-sided settlement policy for a round.
 pub fn _select_one_sided_policy(_round: &Round) -> OneSidedPolicy {
     OneSidedPolicy::Refund

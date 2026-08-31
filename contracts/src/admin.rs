@@ -62,9 +62,17 @@ pub fn get_schema_version(env: Env) -> u32 {
 
 /// Migrates legacy schema version 1 → version 2 (admin only).
 ///
-/// When `dry_run` is `true`, all validation checks are performed but no storage
-/// writes or events are emitted. This lets operators verify that a migration
-/// would succeed before committing to it.
+/// **Dry-run safety guarantee**: When `dry_run` is `true`, the function is
+/// strictly read-only — it performs all validation checks (admin auth,
+/// runtime mode guard, active round guard, source version match) but never
+/// writes to storage, emits events, or modifies any on-chain state. This
+/// makes dry-run safe to call repeatedly without side effects.
+///
+/// **Migration guards** (applied in both dry-run and real mode):
+/// - Admin auth required.
+/// - Contract must be in `Normal` mode (blocked by `FullyPaused` and `ClaimsOnly`).
+/// - No active round may exist (`MigrationActiveRound`).
+/// - Schema version must be exactly 1 (`UnsupportedSchemaVersion`).
 pub fn migrate_schema_v1_to_v2(env: Env, dry_run: bool) -> Result<(), ContractError> {
     let admin_key = DataKeyCore::Admin;
     _extend_persistent_ttl(&env, &admin_key);
@@ -74,7 +82,9 @@ pub fn migrate_schema_v1_to_v2(env: Env, dry_run: bool) -> Result<(), ContractEr
         .get(&admin_key)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
-    _ensure_not_paused(&env).inspect_err(|&e| {
+    // Block migration in any non-Normal mode: FullyPaused (emergency stop)
+    // and ClaimsOnly (transitional) are both unsafe for schema changes.
+    _ensure_normal_mode(&env).inspect_err(|&e| {
         _emit_action_rejected(&env, &admin, symbol_short!("migrate"), e);
     })?;
 
@@ -119,9 +129,17 @@ pub fn migrate_schema_v1_to_v2(env: Env, dry_run: bool) -> Result<(), ContractEr
 
 /// Migrates schema version 2 → version 3 (admin only).
 ///
-/// When `dry_run` is `true`, all validation checks are performed but no storage
-/// writes or events are emitted. This lets operators verify that a migration
-/// would succeed before committing to it.
+/// **Dry-run safety guarantee**: When `dry_run` is `true`, the function is
+/// strictly read-only — it performs all validation checks (admin auth,
+/// runtime mode guard, active round guard, source version match) but never
+/// writes to storage, emits events, or modifies any on-chain state. This
+/// makes dry-run safe to call repeatedly without side effects.
+///
+/// **Migration guards** (applied in both dry-run and real mode):
+/// - Admin auth required.
+/// - Contract must be in `Normal` mode (blocked by `FullyPaused` and `ClaimsOnly`).
+/// - No active round may exist (`MigrationActiveRound`).
+/// - Schema version must be exactly 2 (`UnsupportedSchemaVersion`).
 pub fn migrate_schema_v2_to_v3(env: Env, dry_run: bool) -> Result<(), ContractError> {
     let admin_key = DataKeyCore::Admin;
     _extend_persistent_ttl(&env, &admin_key);
@@ -131,7 +149,9 @@ pub fn migrate_schema_v2_to_v3(env: Env, dry_run: bool) -> Result<(), ContractEr
         .get(&admin_key)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
-    _ensure_not_paused(&env).inspect_err(|&e| {
+    // Block migration in any non-Normal mode: FullyPaused (emergency stop)
+    // and ClaimsOnly (transitional) are both unsafe for schema changes.
+    _ensure_normal_mode(&env).inspect_err(|&e| {
         _emit_action_rejected(&env, &admin, symbol_short!("migrate"), e);
     })?;
 
