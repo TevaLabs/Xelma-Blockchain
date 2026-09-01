@@ -1084,7 +1084,7 @@ impl VirtualTokenContract {
     /// Anyone may call `finalize_round` after the dispute window expires to
     /// distribute winnings to winners (normal settlement outcome).
     pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
-        settlement::finalize_round(env, round_id)
+        settlement::_finalize_round(env, round_id)
     }
 
     pub fn get_active_round(env: Env) -> Option<Round> {

@@ -122,15 +122,10 @@ pub enum DataKeyCore {
     OracleQuorum,
     /// Announced next schema version for migration preview.
     NextSchemaVersion,
-    /// Minimum bet amount (dust protection). Unset = no minimum.
     MinBet,
-    /// Epoch mint budget: total mints allowed per epoch.
     EpochMintBudget,
-    /// Early cash-out penalty in basis points. Unset = early cash-out disabled.
     EarlyCashoutBps,
-    /// Fee incidence model: FeeOnPot (default) or FeeOnWinnings.
     FeeModel,
-    /// Dispute window length in ledgers. 0 = no dispute window.
     DisputeLedgers,
     /// Payout policy for Precision mode rounds.
     PrecisionPayoutPolicy,
@@ -270,11 +265,8 @@ pub enum ConfigChangePayload {
     MintLimit(u32),
     ArchiveRetention(u32),
     CloseBufferLedgers(u32),
-    OracleTimestampSkew(u64),
     EpochMintBudget(i128),
     PendingWinningsExpiry(u32),
-    PrecisionPayoutPolicy(u32),
-    MinBet(Option<i128>),
     DisputeLedgers(u32),
     FeeModel(FeeModel),
     EarlyCashoutBps(Option<u32>),
@@ -548,14 +540,10 @@ pub struct MarketSnapshot {
 #[derive(Clone, Debug, PartialEq)]
 #[repr(u32)]
 pub enum RoundArchiveStatus {
-    /// Oracle settlement completed (normal resolution path).
-    Resolved = 0,
-    /// Admin cancelled the round and refunded participants.
-    Cancelled = 1,
-    /// Settlement aborted due to insufficient participants; stakes refunded.
-    FallbackRefund = 2,
-    /// Dispute window ended via void; all participants refunded their stake.
-    Voided = 3,
+    Resolved,
+    Cancelled,
+    FallbackRefund,
+    Voided,
 }
 
 /// Composite protocol health status returned by `get_protocol_health`.

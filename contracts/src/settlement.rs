@@ -2473,6 +2473,24 @@ pub fn _archive_round(
     let fee_model_value: u32 = _read_fee_model(env) as u32;
 
     #[allow(deprecated)]
+    let event_data: soroban_sdk::Vec<soroban_sdk::Val> = soroban_sdk::vec![
+        env,
+        0u32.into_val(env),
+        round.round_id.into_val(env),
+        status_val.into_val(env),
+        (round.mode.clone() as u32).into_val(env),
+        round.price_start.into_val(env),
+        final_price.into_val(env),
+        round.pool_up.into_val(env),
+        round.pool_down.into_val(env),
+        (participant_count as u32).into_val(env),
+        total_pot.into_val(env),
+        fee_amount.into_val(env),
+        settled_at_ledger.into_val(env),
+        confidence.into_val(env),
+        status_val.into_val(env),
+        fee_model_value.into_val(env),
+    ];
     env.events().publish(
         (symbol_short!("round"), symbol_short!("summary")),
         (
