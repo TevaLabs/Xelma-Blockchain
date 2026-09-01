@@ -22,6 +22,7 @@ mod edge_cases;
 mod drill;
 mod event_coverage;
 mod fee_model;
+mod governance;
 mod guard_tests;
 // mod initialization; // upstream bug
 mod invariant_harness;
