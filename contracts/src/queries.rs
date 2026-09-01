@@ -256,7 +256,7 @@ pub fn get_user_archive_history(
 
     let total = user_rounds.len();
     if offset >= total {
-        return Vec::new(env_ref);
+        return Ok(Vec::new(env_ref));
     }
 
     let start = total.saturating_sub(offset + 1);
