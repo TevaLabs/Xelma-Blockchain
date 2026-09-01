@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
-use alloc::vec::Vec as StdVec;
 use crate::errors::ContractError;
-use crate::types::{ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, PendingWinningsUpdatedAtKey, Round, RoundPhase};
+use crate::types::{
+    ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, PendingWinningsUpdatedAtKey,
+    Round, RoundPhase,
+};
+use alloc::vec::Vec as StdVec;
 use soroban_sdk::{symbol_short, Address, Env, IntoVal, Symbol, Val, Vec};
 
 pub const DEFAULT_PENDING_WINNINGS_EXPIRY: u32 = 0; // 0 = disabled
-pub const MIN_PENDING_WINNINGS_EXPIRY: u32 = 128;   // ~10 min at 5s ledgers
+pub const MIN_PENDING_WINNINGS_EXPIRY: u32 = 128; // ~10 min at 5s ledgers
 pub const MAX_PENDING_WINNINGS_EXPIRY: u32 = 1_000_000; // ~58 days
 pub const DEFAULT_GOV_PROPOSAL_TTL_LEDGERS: u32 = 100;
 
@@ -163,7 +166,9 @@ pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(),
     // Track the ledger when this entry was last written for expiry checks.
     let updated_key = PendingWinningsUpdatedAtKey(user_key);
     let current_ledger = env.ledger().sequence();
-    env.storage().persistent().set(&updated_key, &current_ledger);
+    env.storage()
+        .persistent()
+        .set(&updated_key, &current_ledger);
     _extend_persistent_ttl(env, &updated_key);
 
     Ok(())
@@ -203,7 +208,11 @@ pub fn _derive_round_phase(ledger_sequence: u32, round: &Round) -> RoundPhase {
 /// Rejects `amount` if it falls below the configured minimum bet, when set (Issue #269).
 /// `None` (unset) preserves pre-#269 behaviour: any amount `> 0` is accepted.
 pub fn _enforce_min_bet(env: &Env, amount: i128) -> Result<(), ContractError> {
-    if let Some(min_bet) = env.storage().persistent().get::<_, i128>(&DataKeyCore::MinBet) {
+    if let Some(min_bet) = env
+        .storage()
+        .persistent()
+        .get::<_, i128>(&DataKeyCore::MinBet)
+    {
         if amount < min_bet {
             return Err(ContractError::BelowMinBet);
         }

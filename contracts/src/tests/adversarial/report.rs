@@ -11,7 +11,9 @@ use std::eprintln;
 fn test_adversarial_suite_inventory() {
     const SCENARIO_COUNT: usize = 13;
 
-    assert!(SCENARIO_COUNT >= 8, "Issue #372 requires ≥8 scenarios");
+    const {
+        assert!(SCENARIO_COUNT >= 8, "Issue #372 requires ≥8 scenarios");
+    }
 
     eprintln!(
         "ADVERSARIAL_SUITE:{{\"seed\":{seed},\"scenario_count\":{count},\"modules\":[\"sybil\",\"sniping\",\"precision\",\"oracle\",\"economic\",\"lifecycle\"]}}",

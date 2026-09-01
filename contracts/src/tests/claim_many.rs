@@ -4,7 +4,7 @@
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
 use crate::types::DataKey;
-use soroban_sdk::testutils::{storage::Persistent as _, Address as _};
+use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env, Vec};
 
 /// `claim_many`'s hard cap, mirrored here so the "over cap" test stays in

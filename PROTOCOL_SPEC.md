@@ -259,6 +259,44 @@ Evidence:
 - Code: `cancel_round`, `_refund_under_threshold`.
 - Tests: `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs`.
 
+### I13. Blue/Green Migration (Issue #366)
+
+The blue/green migration exports canonical economic state (user balances,
+pending claims, and the config subset) from the source contract as a Merkle
+commitment, freezes the source into a claims-only drain mode, and imports the
+verified state into a fresh destination contract with per-record Merkle proofs.
+
+Entrypoints:
+- `migration_export_start`, `migration_export_balances`,
+  `migration_export_pendings`, `migration_export_finalize`,
+  `migration_get_status`
+- `migration_import_init`, `migration_import_config`,
+  `migration_import_balance`, `migration_import_pending`,
+  `migration_import_finalize`
+
+Error identifiers:
+- `MigrationActiveRound`
+- `MigrationNotFinalized`
+- `MigrationAlreadyFinalized`
+- `MigrationUnauthorized`
+- `MigrationCommitmentMismatch`
+- `MigrationVersionMismatch`
+- `MigrationAlreadyFrozen`
+- `MigrationNotInitialized`
+- `MigrationAlreadyInitialized`
+- `MigrationRecordAlreadyImported`
+- `MigrationProofInvalid`
+- `MigrationExportIncomplete`
+- `MigrationFrozen`
+- `MigrationNotReady`
+- `MigrationRecordMismatch`
+- `MigrationAlreadyMigrated`
+
+Evidence:
+- Code: `contracts/src/migration.rs`, entrypoints in `contract.rs`,
+  storage keys in `types.rs`.
+- Spec: `docs/UPGRADE_BLUE_GREEN.md`.
+
 ### I12. Storage Cleanup and Migration Compatibility
 
 Resolution and cancellation must remove indexed participant keys and participant

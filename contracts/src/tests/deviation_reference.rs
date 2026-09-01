@@ -20,7 +20,11 @@ fn setup(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address, Addres
     (client, contract_id, admin, oracle)
 }
 
-fn schedule_and_apply_deviation_bps(env: &Env, client: &VirtualTokenContractClient, bps: Option<u32>) {
+fn schedule_and_apply_deviation_bps(
+    env: &Env,
+    client: &VirtualTokenContractClient,
+    bps: Option<u32>,
+) {
     client.set_oracle_max_deviation_bps(&bps);
     env.ledger().with_mut(|li| {
         li.sequence_number += crate::common::CONFIG_TIMELOCK_LEDGERS + 1;
@@ -66,7 +70,7 @@ fn test_start_price_mode_unchanged_behaviour_with_deviation_bps() {
     client.mint_initial(&user);
 
     schedule_and_apply_deviation_bps(&env, &client, Some(500)); // 5%
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
     let round = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
@@ -77,7 +81,7 @@ fn test_start_price_mode_unchanged_behaviour_with_deviation_bps() {
     let result = client.try_resolve_round(&payload_for(
         &env,
         &contract_id,
-        1_100_0000,
+        11_000_000,
         round.start_ledger,
         1,
     ));
@@ -93,7 +97,7 @@ fn test_twap_mode_rejects_settlement_with_insufficient_samples() {
 
     client.set_deviation_ref_mode(&DeviationReferenceMode::Twap, &3u32);
     schedule_and_apply_deviation_bps(&env, &client, Some(500));
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
     let round = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
@@ -105,7 +109,7 @@ fn test_twap_mode_rejects_settlement_with_insufficient_samples() {
     let result = client.try_resolve_round(&payload_for(
         &env,
         &contract_id,
-        1_000_0000,
+        10_000_000,
         round.start_ledger,
         1,
     ));
@@ -121,7 +125,7 @@ fn test_twap_mode_settles_once_window_is_filled() {
 
     // Window of 2 — build up samples via StartPrice-mode settlements first
     // (recording happens regardless of active reference mode).
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
     let round1 = client.get_active_round().unwrap();
     env.ledger().with_mut(|li| {
         li.sequence_number = round1.end_ledger;
@@ -129,12 +133,12 @@ fn test_twap_mode_settles_once_window_is_filled() {
     client.resolve_round(&payload_for(
         &env,
         &contract_id,
-        1_000_0000,
+        10_000_000,
         round1.start_ledger,
         1,
     ));
 
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
     let round2 = client.get_active_round().unwrap();
     env.ledger().with_mut(|li| {
         li.sequence_number = round2.end_ledger;
@@ -142,7 +146,7 @@ fn test_twap_mode_settles_once_window_is_filled() {
     client.resolve_round(&payload_for(
         &env,
         &contract_id,
-        1_010_0000,
+        10_100_000,
         round2.start_ledger,
         2,
     ));
@@ -153,7 +157,7 @@ fn test_twap_mode_settles_once_window_is_filled() {
 
     client.set_deviation_ref_mode(&DeviationReferenceMode::Twap, &2u32);
     schedule_and_apply_deviation_bps(&env, &client, Some(10_000)); // 100%, generous bound
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
     let round3 = client.get_active_round().unwrap();
     env.ledger().with_mut(|li| {
         li.sequence_number = round3.end_ledger;
@@ -162,7 +166,7 @@ fn test_twap_mode_settles_once_window_is_filled() {
     client.resolve_round(&payload_for(
         &env,
         &contract_id,
-        1_005_0000,
+        10_050_000,
         round3.start_ledger,
         3,
     ));

@@ -10,14 +10,14 @@ use crate::errors::ContractError;
 use crate::governance;
 use crate::insurance;
 use crate::types::{
-    ArchivedRoundSummary, AccessState, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy,
-    MarketSnapshot, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, OracleRotationProposal, PendingConfigChange,
-    PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
-    RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
-    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
-    UserRoundOutcome, UserStats, FeeModel, GovAction, GovProposal,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
+    DataKeyScoped, DeviationReferenceMode, FeeModel, GovAction, GovProposal, LeaderboardEntry,
+    MarketSnapshot, MerkleProof, MigrationBalance, MigrationConfig, MigrationPending,
+    MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload, OracleQuorumConfig,
+    OracleRotationProposal, PendingConfigChange, PolicyAction, PrecisionPrediction, PriceSample,
+    ProtocolHealthStatus, ProtocolStatus, Round, RoundArchiveStatus, RoundPhase, RoundPoolStats,
+    RoundStatus, RoundTemplate, RuntimeMode, SeasonArchive, SeasonLeaderboardEntry,
+    SimulationResult, UserPosition, UserRoundOutcome, UserStats,
 };
 
 use crate::common::{
@@ -48,6 +48,7 @@ use crate::betting;
 use crate::common;
 use crate::config;
 use crate::leaderboard;
+use crate::migration;
 use crate::queries;
 use crate::settlement;
 
@@ -98,6 +99,93 @@ impl VirtualTokenContract {
     /// Clears a previously announced next schema version (admin only).
     pub fn clear_next_schema(env: Env) -> Result<(), ContractError> {
         admin::clear_next_schema(env)
+    }
+
+    // ─── Blue/green migration (Issue #366) ──────────────────────────────────
+    /// Opens a migration export session on the source contract (admin only).
+    pub fn migration_export_start(env: Env, dry_run: bool) -> Result<(), ContractError> {
+        migration::export_start(env, dry_run)
+    }
+
+    /// Exports balances for a batch of users from the source (admin only).
+    pub fn migration_export_balances(
+        env: Env,
+        users: Vec<Address>,
+        dry_run: bool,
+    ) -> Result<(), ContractError> {
+        migration::export_balances(env, users, dry_run)
+    }
+
+    /// Exports pending claims for a batch of users from the source (admin only).
+    pub fn migration_export_pendings(
+        env: Env,
+        users: Vec<Address>,
+        dry_run: bool,
+    ) -> Result<(), ContractError> {
+        migration::export_pendings(env, users, dry_run)
+    }
+
+    /// Finalizes the source export: computes the commitment and freezes the
+    /// source into claims-only drain mode (admin only).
+    pub fn migration_export_finalize(env: Env, dry_run: bool) -> Result<(), ContractError> {
+        migration::export_finalize(env, dry_run)
+    }
+
+    /// Returns the source migration lifecycle status (read-only).
+    pub fn migration_get_status(env: Env) -> migration::MigrationStatus {
+        migration::get_migration_status(env)
+    }
+
+    /// Initializes the destination import session bound to an expected
+    /// source commitment (admin only).
+    pub fn migration_import_init(
+        env: Env,
+        expected_root: BytesN<32>,
+        source_version: u32,
+        destination_version: u32,
+        leaf_count: u32,
+    ) -> Result<(), ContractError> {
+        migration::import_init(
+            env,
+            expected_root,
+            source_version,
+            destination_version,
+            leaf_count,
+        )
+    }
+
+    /// Imports a single canonical balance record with a Merkle proof (admin only).
+    pub fn migration_import_balance(
+        env: Env,
+        rec: MigrationBalance,
+        proof: MerkleProof,
+    ) -> Result<(), ContractError> {
+        migration::import_balance(env, rec, proof)
+    }
+
+    /// Imports a single canonical pending-claim record with a Merkle proof
+    /// (admin only).
+    pub fn migration_import_pending(
+        env: Env,
+        rec: MigrationPending,
+        proof: MerkleProof,
+    ) -> Result<(), ContractError> {
+        migration::import_pending(env, rec, proof)
+    }
+
+    /// Applies the canonical configuration subset to the destination (admin only).
+    pub fn migration_import_config(
+        env: Env,
+        cfg: MigrationConfig,
+        proof: MerkleProof,
+    ) -> Result<(), ContractError> {
+        migration::import_config(env, cfg, proof)
+    }
+
+    /// Finalizes the destination migration once the full expected subset has
+    /// been imported (admin only).
+    pub fn migration_import_finalize(env: Env) -> Result<(), ContractError> {
+        migration::import_finalize(env)
     }
 
     /// Returns whether the contract is currently paused
@@ -476,11 +564,7 @@ impl VirtualTokenContract {
             #[allow(deprecated)]
             env.events().publish(
                 (symbol_short!("oracle"), symbol_short!("early")),
-                (
-                    proposal.new_oracle.clone(),
-                    current_ts,
-                    earliest_accept,
-                ),
+                (proposal.new_oracle.clone(), current_ts, earliest_accept),
             );
             return Err(ContractError::RotationDelayNotElapsed);
         }
@@ -759,10 +843,7 @@ impl VirtualTokenContract {
     }
 
     /// Schedules a timelocked update to the oracle timestamp skew (admin only).
-    pub fn schedule_oracle_timestamp_skew(
-        env: Env,
-        seconds: u64,
-    ) -> Result<(), ContractError> {
+    pub fn schedule_oracle_timestamp_skew(env: Env, seconds: u64) -> Result<(), ContractError> {
         config::schedule_oracle_timestamp_skew(env, seconds)
     }
 
@@ -1022,10 +1103,7 @@ impl VirtualTokenContract {
     /// Requires `OracleQuorumConfig` to be configured by the admin before
     /// this path is available. The legacy single-oracle `resolve_round`
     /// remains available independently.
-    pub fn resolve_round_multi(
-        env: Env,
-        payload: MultiFeedPayload,
-    ) -> Result<(), ContractError> {
+    pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), ContractError> {
         settlement::resolve_round_multi(env, payload)
     }
 
@@ -1173,7 +1251,6 @@ impl VirtualTokenContract {
         limit: u32,
     ) -> Vec<(Address, UserPosition)> {
         queries::get_updown_positions_page(env, offset, limit)
-
     }
 
     /// Returns user's vXLM balance
@@ -1654,7 +1731,10 @@ impl VirtualTokenContract {
         config::_apply_config_payload(env, kind, payload)
     }
 
-    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(env: &Env, key: &T) {
+    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(
+        env: &Env,
+        key: &T,
+    ) {
         if env.storage().persistent().has(key) {
             env.storage()
                 .persistent()

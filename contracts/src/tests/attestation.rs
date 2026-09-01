@@ -61,7 +61,7 @@ fn base_payload(
 fn test_attestation_disabled_by_default_no_signature_required() {
     let env = Env::default();
     let (client, contract_id, _admin, _oracle) = setup(&env);
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
@@ -70,7 +70,7 @@ fn test_attestation_disabled_by_default_no_signature_required() {
     assert_eq!(client.get_attestation_key(), None);
     // No attestation configured — resolves with account auth only, exactly
     // as before Issue #263 existed.
-    client.resolve_round(&base_payload(&env, &contract_id, 0, 1, 1_000_0000));
+    client.resolve_round(&base_payload(&env, &contract_id, 0, 1, 10_000_000));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -81,13 +81,13 @@ fn test_attestation_required_rejects_missing_signature() {
     let (pubkey, _signing_key) = generate_keypair(&env);
 
     client.set_attestation_key(&Some(pubkey));
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
     });
 
-    let result = client.try_resolve_round(&base_payload(&env, &contract_id, 0, 1, 1_000_0000));
+    let result = client.try_resolve_round(&base_payload(&env, &contract_id, 0, 1, 10_000_000));
     assert_eq!(result, Err(Ok(ContractError::WindowOutOfRange)));
 }
 
@@ -98,13 +98,13 @@ fn test_attestation_valid_signature_resolves_successfully() {
     let (pubkey, signing_key) = generate_keypair(&env);
 
     client.set_attestation_key(&Some(pubkey));
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
     });
 
-    let mut payload = base_payload(&env, &contract_id, 0, 1, 1_000_0000);
+    let mut payload = base_payload(&env, &contract_id, 0, 1, 10_000_000);
     let signature = sign_payload(&env, &signing_key, &payload);
     payload.attestation = Some(signature);
 
@@ -121,13 +121,13 @@ fn test_attestation_wrong_key_signature_rejected() {
     let (_other_pubkey, wrong_key) = generate_keypair(&env);
 
     client.set_attestation_key(&Some(pubkey));
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
     });
 
-    let mut payload = base_payload(&env, &contract_id, 0, 1, 1_000_0000);
+    let mut payload = base_payload(&env, &contract_id, 0, 1, 10_000_000);
     // Signed with a different key than the one configured on-chain —
     // `ed25519_verify` traps the host, matching the "fail closed" design:
     // an invalid signature must never let settlement continue.
@@ -145,18 +145,18 @@ fn test_attestation_tampered_price_after_signing_rejected() {
     let (pubkey, signing_key) = generate_keypair(&env);
 
     client.set_attestation_key(&Some(pubkey));
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
     });
 
-    let mut payload = base_payload(&env, &contract_id, 0, 1, 1_000_0000);
+    let mut payload = base_payload(&env, &contract_id, 0, 1, 10_000_000);
     let signature = sign_payload(&env, &signing_key, &payload);
     // Tamper with the price after signing — the signature no longer covers
     // this message, so verification must fail even though the signature
     // bytes themselves are well-formed.
-    payload.price = 2_000_0000;
+    payload.price = 20_000_000;
     payload.attestation = Some(signature);
 
     client.resolve_round(&payload);
@@ -169,12 +169,12 @@ fn test_attestation_key_disabled_after_clearing() {
     let (pubkey, signing_key) = generate_keypair(&env);
 
     client.set_attestation_key(&Some(pubkey));
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
     });
 
-    let mut payload = base_payload(&env, &contract_id, 0, 1, 1_000_0000);
+    let mut payload = base_payload(&env, &contract_id, 0, 1, 10_000_000);
     let signature = sign_payload(&env, &signing_key, &payload);
     payload.attestation = Some(signature);
     client.resolve_round(&payload);
@@ -183,11 +183,11 @@ fn test_attestation_key_disabled_after_clearing() {
     client.set_attestation_key(&None);
     assert_eq!(client.get_attestation_key(), None);
 
-    client.create_round(&1_000_0000, &None);
+    client.create_round(&10_000_000, &None);
     env.ledger().with_mut(|li| {
         li.sequence_number = 24;
     });
-    client.resolve_round(&base_payload(&env, &contract_id, 12, 2, 1_000_0000));
+    client.resolve_round(&base_payload(&env, &contract_id, 12, 2, 10_000_000));
     assert_eq!(client.get_active_round(), None);
 }
 

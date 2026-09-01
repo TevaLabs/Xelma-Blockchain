@@ -14,8 +14,9 @@ use crate::common::{
     MIN_PENDING_WINNINGS_EXPIRY, MIN_START_PRICE,
 };
 use crate::errors::ContractError;
+use crate::migration::_ensure_not_migration_frozen;
 use crate::types::{
-    ConfigChangeKind, ConfigChangePayload, DataKey, DataKeyCore, DataKeyScoped, FeeModel,
+    ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, FeeModel, MigrationConfig,
     PendingConfigChange, PrecisionPayoutPolicy, RoundTemplate, PENDING_WINNINGS_EXPIRY_KEY,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol};
@@ -272,6 +273,7 @@ pub fn get_pending_config_change(env: Env, kind: ConfigChangeKind) -> Option<Pen
 
 pub fn apply_scheduled_changes(env: Env, kind: ConfigChangeKind) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
 
     let key = DataKeyScoped::PendingConfigChange(kind.clone());
@@ -868,10 +870,8 @@ pub fn set_early_cashout_bps(env: Env, bps: Option<u32>) -> Result<(), ContractE
     }
 
     #[allow(deprecated)]
-    env.events().publish(
-        (symbol_short!("config"), symbol_short!("ec_bps")),
-        (bps,),
-    );
+    env.events()
+        .publish((symbol_short!("config"), symbol_short!("ec_bps")), (bps,));
     _emit_config_updated(
         &env,
         ConfigChangeKind::EarlyCashoutBps,
@@ -916,14 +916,16 @@ pub fn get_pending_winnings_expiry(env: Env) -> u32 {
 // ─── Validation helpers ─────────────────────────────────────────────────────
 
 pub fn _validate_pending_winnings_expiry(ledgers: u32) -> Result<(), ContractError> {
-    if ledgers != 0 && (ledgers < MIN_PENDING_WINNINGS_EXPIRY || ledgers > MAX_PENDING_WINNINGS_EXPIRY) {
+    if ledgers != 0
+        && !(MIN_PENDING_WINNINGS_EXPIRY..=MAX_PENDING_WINNINGS_EXPIRY).contains(&ledgers)
+    {
         return Err(ContractError::InvalidDuration);
     }
     Ok(())
 }
 
 pub fn _validate_round_template(start_price: u128, mode: Option<u32>) -> Result<(), ContractError> {
-    if start_price < MIN_START_PRICE || start_price > MAX_START_PRICE {
+    if !(MIN_START_PRICE..=MAX_START_PRICE).contains(&start_price) {
         return Err(ContractError::InvalidStartPrice);
     }
     if let Some(m) = mode {
@@ -1214,7 +1216,9 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
                 .get(&DataKeyCore::MaxUserRoundExposure),
         ),
         ConfigChangeKind::MaxPendingWinnings => ConfigChangePayload::MaxPendingWinnings(
-            env.storage().persistent().get(&DataKeyCore::MaxPendingWinnings),
+            env.storage()
+                .persistent()
+                .get(&DataKeyCore::MaxPendingWinnings),
         ),
         ConfigChangeKind::OracleStaleThreshold => ConfigChangePayload::OracleStaleThreshold(
             env.storage()
@@ -1231,7 +1235,9 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
             env.storage().persistent().get(&DataKeyCore::ProtocolFeeBps),
         ),
         ConfigChangeKind::MinParticipants => ConfigChangePayload::MinParticipants(
-            env.storage().persistent().get(&DataKeyCore::MinParticipants),
+            env.storage()
+                .persistent()
+                .get(&DataKeyCore::MinParticipants),
         ),
         ConfigChangeKind::MaxPrecisionParticipants => {
             ConfigChangePayload::MaxPrecisionParticipants(
@@ -1294,7 +1300,9 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
         ),
         ConfigChangeKind::FeeModel => ConfigChangePayload::FeeModel(_read_fee_model(env)),
         ConfigChangeKind::EarlyCashoutBps => ConfigChangePayload::EarlyCashoutBps(
-            env.storage().persistent().get(&DataKeyCore::EarlyCashoutBps),
+            env.storage()
+                .persistent()
+                .get(&DataKeyCore::EarlyCashoutBps),
         ),
     }
 }
@@ -1436,14 +1444,18 @@ pub fn _apply_config_payload(
             ConfigChangePayload::OracleTimestampSkew(seconds),
         ) => {
             _validate_oracle_timestamp_skew(*seconds)?;
-            env.storage().instance().set(&symbol_short!("otskew"), seconds);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("otskew"), seconds);
         }
         (
             ConfigChangeKind::PendingWinningsExpiry,
             ConfigChangePayload::PendingWinningsExpiry(ledgers),
         ) => {
             _validate_pending_winnings_expiry(*ledgers)?;
-            env.storage().persistent().set(&PENDING_WINNINGS_EXPIRY_KEY, ledgers);
+            env.storage()
+                .persistent()
+                .set(&PENDING_WINNINGS_EXPIRY_KEY, ledgers);
             _extend_persistent_ttl(env, &PENDING_WINNINGS_EXPIRY_KEY);
             #[allow(deprecated)]
             env.events().publish(
@@ -1504,9 +1516,7 @@ pub fn _apply_config_payload(
             if *budget < 0 {
                 return Err(ContractError::InvalidBetAmount);
             }
-            env.storage()
-                .instance()
-                .set(&EPOCH_MINT_BUDGET_KEY, budget);
+            env.storage().instance().set(&EPOCH_MINT_BUDGET_KEY, budget);
         }
         (ConfigChangeKind::MintLimit, ConfigChangePayload::MintLimit(limit)) => {
             env.storage()
@@ -1535,7 +1545,10 @@ pub fn _apply_config_payload(
                 env.storage().persistent().remove(&key);
             }
         }
-        (ConfigChangeKind::MaxPrecisionParticipants, ConfigChangePayload::MaxPrecisionParticipants(max)) => {
+        (
+            ConfigChangeKind::MaxPrecisionParticipants,
+            ConfigChangePayload::MaxPrecisionParticipants(max),
+        ) => {
             if *max == 0 || *max > MAX_PRECISION_PARTICIPANTS_LIMIT {
                 return Err(ContractError::InvalidPrecisionCap);
             }
@@ -1560,5 +1573,143 @@ pub fn _apply_config_payload(
         _ => return Err(ContractError::InvalidMode),
     }
     _emit_config_updated(env, kind.clone(), old_value, payload.clone());
+    Ok(())
+}
+
+/// Directly applies a canonical configuration subset to the destination
+/// contract during blue/green import (Issue #366). Unlike the timelocked
+/// setters, this bypasses the timelock because the value is administratively
+/// verified against the source commitment and the upgrade is already gated by
+/// a full migration freeze of the source. Storage writes mirror
+/// [`_apply_config_payload`] so both paths converge on identical state.
+pub fn _apply_imported_config(env: &Env, cfg: &MigrationConfig) -> Result<(), ContractError> {
+    match cfg.protocol_fee_bps {
+        Some(v) => {
+            if v > MAX_PROTOCOL_FEE_BPS {
+                return Err(ContractError::InvalidProtocolFeeBps);
+            }
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::ProtocolFeeBps, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::ProtocolFeeBps);
+        }
+        None => {
+            env.storage()
+                .persistent()
+                .remove(&DataKeyCore::ProtocolFeeBps);
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::FeeModel, &(cfg.fee_model as u32));
+    _extend_persistent_ttl(env, &DataKeyCore::FeeModel);
+    env.storage().persistent().set(
+        &DataKeyCore::ProtocolFeeTreasury,
+        &cfg.protocol_fee_treasury,
+    );
+    _extend_persistent_ttl(env, &DataKeyCore::ProtocolFeeTreasury);
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::BetWindowLedgers, &cfg.bet_window_ledgers);
+    _extend_persistent_ttl(env, &DataKeyCore::BetWindowLedgers);
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::RunWindowLedgers, &cfg.run_window_ledgers);
+    _extend_persistent_ttl(env, &DataKeyCore::RunWindowLedgers);
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::CloseBufferLedgers, &cfg.close_buffer_ledgers);
+    _extend_persistent_ttl(env, &DataKeyCore::CloseBufferLedgers);
+    match cfg.max_stake {
+        Some(v) => {
+            _validate_max_stake(Some(v))?;
+            env.storage().persistent().set(&DataKeyCore::MaxStake, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MaxStake);
+        }
+        None => {
+            env.storage().persistent().remove(&DataKeyCore::MaxStake);
+        }
+    }
+    match cfg.max_user_round_exposure {
+        Some(v) => {
+            _validate_max_stake(Some(v))?;
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::MaxUserRoundExposure, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MaxUserRoundExposure);
+        }
+        None => {
+            env.storage()
+                .persistent()
+                .remove(&DataKeyCore::MaxUserRoundExposure);
+        }
+    }
+    match cfg.max_pending_winnings {
+        Some(v) => {
+            _validate_max_stake(Some(v))?;
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::MaxPendingWinnings, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MaxPendingWinnings);
+        }
+        None => {
+            env.storage()
+                .persistent()
+                .remove(&DataKeyCore::MaxPendingWinnings);
+        }
+    }
+    match cfg.min_bet {
+        Some(v) => {
+            _validate_min_bet(Some(v))?;
+            env.storage().persistent().set(&DataKeyCore::MinBet, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MinBet);
+        }
+        None => {
+            env.storage().persistent().remove(&DataKeyCore::MinBet);
+        }
+    }
+    match cfg.min_participants {
+        Some(v) => {
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::MinParticipants, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::MinParticipants);
+        }
+        None => {
+            env.storage()
+                .persistent()
+                .remove(&DataKeyCore::MinParticipants);
+        }
+    }
+    env.storage().persistent().set(
+        &DataKeyCore::MaxPrecisionParticipants,
+        &cfg.max_precision_participants,
+    );
+    _extend_persistent_ttl(env, &DataKeyCore::MaxPrecisionParticipants);
+    env.storage().persistent().set(
+        &DataKeyCore::PrecisionPayoutPolicy,
+        &cfg.precision_payout_policy,
+    );
+    _extend_persistent_ttl(env, &DataKeyCore::PrecisionPayoutPolicy);
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::DisputeLedgers, &cfg.dispute_ledgers);
+    _extend_persistent_ttl(env, &DataKeyCore::DisputeLedgers);
+    match cfg.early_cashout_bps {
+        Some(v) => {
+            if v == 0 || v > MAX_PROTOCOL_FEE_BPS {
+                return Err(ContractError::InvalidProtocolFeeBps);
+            }
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::EarlyCashoutBps, &v);
+            _extend_persistent_ttl(env, &DataKeyCore::EarlyCashoutBps);
+        }
+        None => {
+            env.storage()
+                .persistent()
+                .remove(&DataKeyCore::EarlyCashoutBps);
+        }
+    }
     Ok(())
 }

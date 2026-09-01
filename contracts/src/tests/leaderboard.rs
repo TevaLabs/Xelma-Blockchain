@@ -2,8 +2,7 @@
 //! Tests for the Leaderboard Read APIs with cursor-based pagination (Issue #296).
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{LeaderboardEntry, UserStats};
-use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
 fn test_leaderboard_ordered_by_wins() {

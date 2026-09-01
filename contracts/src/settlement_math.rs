@@ -11,8 +11,8 @@
 
 use alloc::vec::Vec;
 
-use crate::math_common::{payout_add, payout_mul, BPS_DENOMINATOR};
 use crate::errors::ContractError;
+use crate::math_common::{payout_add, payout_mul, BPS_DENOMINATOR};
 
 /// Payout policy for Precision mode
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,21 +210,14 @@ pub fn find_precision_winners_with_policy(
             continue;
         }
 
-        let abs_diff = if entry.predicted_price >= final_price {
-            entry.predicted_price - final_price
-        } else {
-            final_price - entry.predicted_price
-        };
+        let abs_diff = entry.predicted_price.abs_diff(final_price);
 
         let score = match policy.mode {
             PrecisionScoringMode::AbsoluteDistance => abs_diff,
-            PrecisionScoringMode::RelativeDistance => {
-                if final_price > 0 {
-                    abs_diff.saturating_mul(10_000) / final_price
-                } else {
-                    abs_diff
-                }
-            }
+            PrecisionScoringMode::RelativeDistance => abs_diff
+                .saturating_mul(10_000)
+                .checked_div(final_price)
+                .unwrap_or(abs_diff),
         };
 
         scores.push((entry.index, score));
@@ -349,7 +342,6 @@ pub fn split_pot_stake_weighted(
 
     Ok(payouts)
 }
-
 
 // ─── Composite: compute full UpDown payout vector ────────────────────────────
 
@@ -518,8 +510,7 @@ pub fn compute_precision_payouts_with_policy(
         return Ok(payouts);
     }
 
-    let (distributable, _fee_amount) =
-        compute_precision_fee(result.total_pot, fee_bps)?;
+    let (distributable, _fee_amount) = compute_precision_fee(result.total_pot, fee_bps)?;
 
     let winner_payouts = match payout_policy {
         PrecisionPayoutPolicy::Equal => {
@@ -537,7 +528,10 @@ pub fn compute_precision_payouts_with_policy(
 
     let mut payouts: Vec<PrecisionPayoutEntry> = Vec::new();
     for entry in entries {
-        let winner_pos = result.winner_indices.iter().position(|&idx| idx == entry.index);
+        let winner_pos = result
+            .winner_indices
+            .iter()
+            .position(|&idx| idx == entry.index);
         let (payout, is_winner, is_refund) = if let Some(pos) = winner_pos {
             (winner_payouts[pos], true, false)
         } else {
@@ -561,10 +555,7 @@ pub fn compute_precision_payouts_with_policy(
 /// Computes the basis-point deviation of `price` from `reference`.
 ///
 /// Returns `(diff_bps, diff_abs)` where `diff_bps = |price - ref| * 10000 / ref`.
-pub fn compute_deviation_bps(
-    price: u128,
-    reference: u128,
-) -> Result<u32, ContractError> {
+pub fn compute_deviation_bps(price: u128, reference: u128) -> Result<u32, ContractError> {
     if reference == 0 {
         return Err(ContractError::InvalidPrice);
     }
@@ -734,17 +725,28 @@ mod tests {
     #[test]
     fn test_updown_full_payouts_price_up() {
         let positions = vec![
-            UpDownPosition { index: 0, amount: 100, side_up: true },
-            UpDownPosition { index: 1, amount: 200, side_up: true },
-            UpDownPosition { index: 2, amount: 150, side_up: false },
+            UpDownPosition {
+                index: 0,
+                amount: 100,
+                side_up: true,
+            },
+            UpDownPosition {
+                index: 1,
+                amount: 200,
+                side_up: true,
+            },
+            UpDownPosition {
+                index: 2,
+                amount: 150,
+                side_up: false,
+            },
         ];
         let results = compute_updown_payouts(
-            &positions,
-            1_0000000,  // start
-            1_5000000,  // final (up)
-            300,        // pool_up
-            150,        // pool_down
-            None,       // no fee
+            &positions, 1_0000000, // start
+            1_5000000, // final (up)
+            300,       // pool_up
+            150,       // pool_down
+            None,      // no fee
         )
         .unwrap();
 
@@ -762,12 +764,19 @@ mod tests {
     #[test]
     fn test_updown_full_payouts_unchanged_refunds() {
         let positions = vec![
-            UpDownPosition { index: 0, amount: 100, side_up: true },
-            UpDownPosition { index: 1, amount: 50, side_up: false },
+            UpDownPosition {
+                index: 0,
+                amount: 100,
+                side_up: true,
+            },
+            UpDownPosition {
+                index: 1,
+                amount: 50,
+                side_up: false,
+            },
         ];
         let results = compute_updown_payouts(
-            &positions,
-            1_0000000, 1_0000000, // unchanged
+            &positions, 1_0000000, 1_0000000, // unchanged
             100, 50, None,
         )
         .unwrap();
@@ -781,12 +790,19 @@ mod tests {
     #[test]
     fn test_updown_full_payouts_one_sided_refunds() {
         let positions = vec![
-            UpDownPosition { index: 0, amount: 100, side_up: true },
-            UpDownPosition { index: 1, amount: 200, side_up: true },
+            UpDownPosition {
+                index: 0,
+                amount: 100,
+                side_up: true,
+            },
+            UpDownPosition {
+                index: 1,
+                amount: 200,
+                side_up: true,
+            },
         ];
         let results = compute_updown_payouts(
-            &positions,
-            1_0000000, 1_5000000, // up
+            &positions, 1_0000000, 1_5000000, // up
             300, 0, // one-sided (no down pool)
             None,
         )
@@ -804,9 +820,24 @@ mod tests {
     #[test]
     fn test_find_precision_winners_single_winner() {
         let entries = vec![
-            PrecisionEntry { index: 0, predicted_price: 2297, amount: 100, revealed: true },
-            PrecisionEntry { index: 1, predicted_price: 2300, amount: 150, revealed: true },
-            PrecisionEntry { index: 2, predicted_price: 2500, amount: 50, revealed: true },
+            PrecisionEntry {
+                index: 0,
+                predicted_price: 2297,
+                amount: 100,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 1,
+                predicted_price: 2300,
+                amount: 150,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 2,
+                predicted_price: 2500,
+                amount: 50,
+                revealed: true,
+            },
         ];
         let result = find_precision_winners(&entries, 2298);
         // Alice (diff 1) wins alone
@@ -819,8 +850,18 @@ mod tests {
     #[test]
     fn test_find_precision_winners_tie() {
         let entries = vec![
-            PrecisionEntry { index: 0, predicted_price: 2100, amount: 100, revealed: true },
-            PrecisionEntry { index: 1, predicted_price: 2300, amount: 150, revealed: true },
+            PrecisionEntry {
+                index: 0,
+                predicted_price: 2100,
+                amount: 100,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 1,
+                predicted_price: 2300,
+                amount: 150,
+                revealed: true,
+            },
         ];
         let result = find_precision_winners(&entries, 2200);
         // Both diff 100
@@ -830,8 +871,18 @@ mod tests {
     #[test]
     fn test_find_precision_winners_exact_match() {
         let entries = vec![
-            PrecisionEntry { index: 0, predicted_price: 2250, amount: 100, revealed: true },
-            PrecisionEntry { index: 1, predicted_price: 2200, amount: 100, revealed: true },
+            PrecisionEntry {
+                index: 0,
+                predicted_price: 2250,
+                amount: 100,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 1,
+                predicted_price: 2200,
+                amount: 100,
+                revealed: true,
+            },
         ];
         let result = find_precision_winners(&entries, 2250);
         assert_eq!(result.winner_indices, vec![0]);
@@ -840,8 +891,18 @@ mod tests {
     #[test]
     fn test_find_precision_winners_unrevealed_lose() {
         let entries = vec![
-            PrecisionEntry { index: 0, predicted_price: 2297, amount: 100, revealed: false },
-            PrecisionEntry { index: 1, predicted_price: 3000, amount: 100, revealed: true },
+            PrecisionEntry {
+                index: 0,
+                predicted_price: 2297,
+                amount: 100,
+                revealed: false,
+            },
+            PrecisionEntry {
+                index: 1,
+                predicted_price: 3000,
+                amount: 100,
+                revealed: true,
+            },
         ];
         let result = find_precision_winners(&entries, 2298);
         // Only Bob revealed, so Bob wins even though Alice was closer
@@ -851,8 +912,18 @@ mod tests {
     #[test]
     fn test_find_precision_winners_all_unrevealed() {
         let entries = vec![
-            PrecisionEntry { index: 0, predicted_price: 0, amount: 100, revealed: false },
-            PrecisionEntry { index: 1, predicted_price: 0, amount: 100, revealed: false },
+            PrecisionEntry {
+                index: 0,
+                predicted_price: 0,
+                amount: 100,
+                revealed: false,
+            },
+            PrecisionEntry {
+                index: 1,
+                predicted_price: 0,
+                amount: 100,
+                revealed: false,
+            },
         ];
         let result = find_precision_winners(&entries, 2298);
         // No winners — all refund

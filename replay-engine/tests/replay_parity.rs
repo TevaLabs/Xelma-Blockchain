@@ -7,13 +7,15 @@ use std::path::PathBuf;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use xelma_replay::{
-    assert_live_matches_replay, replay_round, replay_to_expected, ArchiveStatus, CommitRevealRecord,
-    OracleTranscript, OutcomeKind, RoundTranscript, TerminalAction, TranscriptMode,
-    TranscriptParticipant, TRANSCRIPT_SCHEMA_VERSION,
+    assert_live_matches_replay, replay_round, replay_to_expected, ArchiveStatus,
+    CommitRevealRecord, OracleTranscript, OutcomeKind, RoundTranscript, TerminalAction,
+    TranscriptMode, TranscriptParticipant, TRANSCRIPT_SCHEMA_VERSION,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures").join(name)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(name)
 }
 
 fn load_fixture(name: &str) -> RoundTranscript {
@@ -72,65 +74,63 @@ fn arb_updown_transcript() -> impl Strategy<Value = RoundTranscript> {
         1_000_000u128..5_000_000,
         prop::option::of(0u32..500),
     )
-        .prop_map(
-            |(round_id, stakes, start, final_price, fee_bps)| {
-                let mut pool_up = 0i128;
-                let mut pool_down = 0i128;
-                let participants: Vec<TranscriptParticipant> = stakes
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (amount, side_up))| {
-                        if side_up {
-                            pool_up = pool_up.saturating_add(amount);
-                        } else {
-                            pool_down = pool_down.saturating_add(amount);
-                        }
-                        TranscriptParticipant {
-                            index,
-                            address: None,
-                            amount,
-                            side_up: Some(side_up),
-                            commit_reveal: CommitRevealRecord {
-                                commit_hash_hex: None,
-                                revealed: true,
-                                predicted_price: 0,
-                            },
-                        }
-                    })
-                    .collect();
+        .prop_map(|(round_id, stakes, start, final_price, fee_bps)| {
+            let mut pool_up = 0i128;
+            let mut pool_down = 0i128;
+            let participants: Vec<TranscriptParticipant> = stakes
+                .into_iter()
+                .enumerate()
+                .map(|(index, (amount, side_up))| {
+                    if side_up {
+                        pool_up = pool_up.saturating_add(amount);
+                    } else {
+                        pool_down = pool_down.saturating_add(amount);
+                    }
+                    TranscriptParticipant {
+                        index,
+                        address: None,
+                        amount,
+                        side_up: Some(side_up),
+                        commit_reveal: CommitRevealRecord {
+                            commit_hash_hex: None,
+                            revealed: true,
+                            predicted_price: 0,
+                        },
+                    }
+                })
+                .collect();
 
-                let mut t = RoundTranscript {
-                    schema_version: TRANSCRIPT_SCHEMA_VERSION,
+            let mut t = RoundTranscript {
+                schema_version: TRANSCRIPT_SCHEMA_VERSION,
+                round_id,
+                mode: TranscriptMode::UpDown,
+                terminal: TerminalAction::Resolve,
+                price_start: start,
+                final_price,
+                pool_up,
+                pool_down,
+                fee_bps,
+                min_participants: None,
+                participant_count: participants.len() as u32,
+                oracle: OracleTranscript {
+                    price: final_price,
+                    timestamp: 1_700_000_000,
                     round_id,
-                    mode: TranscriptMode::UpDown,
-                    terminal: TerminalAction::Resolve,
-                    price_start: start,
-                    final_price,
-                    pool_up,
-                    pool_down,
-                    fee_bps,
-                    min_participants: None,
-                    participant_count: participants.len() as u32,
-                    oracle: OracleTranscript {
-                        price: final_price,
-                        timestamp: 1_700_000_000,
-                        round_id,
-                        nonce: 1,
-                        confidence: None,
-                    },
-                    participants,
-                    expected: xelma_replay::ExpectedOutcome {
-                        archive_status: ArchiveStatus::Resolved,
-                        total_fee: 0,
-                        payouts: vec![],
-                    },
-                };
+                    nonce: 1,
+                    confidence: None,
+                },
+                participants,
+                expected: xelma_replay::ExpectedOutcome {
+                    archive_status: ArchiveStatus::Resolved,
+                    total_fee: 0,
+                    payouts: vec![],
+                },
+            };
 
-                let replay = replay_round(&t).expect("random replay");
-                t.expected = replay_to_expected(&replay);
-                t
-            },
-        )
+            let replay = replay_round(&t).expect("random replay");
+            t.expected = replay_to_expected(&replay);
+            t
+        })
 }
 
 proptest! {
@@ -151,17 +151,19 @@ fn arb_precision_transcript() -> impl Strategy<Value = RoundTranscript> {
             let participants: Vec<TranscriptParticipant> = rows
                 .into_iter()
                 .enumerate()
-                .map(|(index, (amount, predicted_price, revealed))| TranscriptParticipant {
-                    index,
-                    address: None,
-                    amount,
-                    side_up: None,
-                    commit_reveal: CommitRevealRecord {
-                        commit_hash_hex: None,
-                        revealed,
-                        predicted_price,
+                .map(
+                    |(index, (amount, predicted_price, revealed))| TranscriptParticipant {
+                        index,
+                        address: None,
+                        amount,
+                        side_up: None,
+                        commit_reveal: CommitRevealRecord {
+                            commit_hash_hex: None,
+                            revealed,
+                            predicted_price,
+                        },
                     },
-                })
+                )
                 .collect();
 
             let mut t = RoundTranscript {
@@ -169,7 +171,7 @@ fn arb_precision_transcript() -> impl Strategy<Value = RoundTranscript> {
                 round_id,
                 mode: TranscriptMode::Precision,
                 terminal: TerminalAction::Resolve,
-                price_start: 2_000_0000,
+                price_start: 200_000_000,
                 final_price,
                 pool_up: 0,
                 pool_down: 0,
@@ -216,15 +218,15 @@ proptest! {
             round_id: 42,
             mode: TranscriptMode::UpDown,
             terminal,
-            price_start: 1_000_0000,
-            final_price: 1_500_0000,
+            price_start: 100_000_000,
+            final_price: 150_000_000,
             pool_up: amount,
             pool_down: 0,
             fee_bps: None,
             min_participants: None,
             participant_count: 1,
             oracle: OracleTranscript {
-                price: 1_500_0000,
+                price: 150_000_000,
                 timestamp: 1,
                 round_id: 42,
                 nonce: 1,

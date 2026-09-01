@@ -10,6 +10,7 @@ use crate::config::{
     _collect_protocol_fee, _read_fee_model, get_early_cashout_bps, get_max_precision_participants,
 };
 use crate::errors::ContractError;
+use crate::migration::_ensure_not_migration_frozen;
 use crate::settlement::_persist_user_outcome;
 use crate::types::{
     BetSide, DataKeyCore, DataKeyScoped, PrecisionCommitment, PrecisionPrediction, Round,
@@ -111,6 +112,7 @@ fn _enforce_user_round_exposure(
 /// Creates a new prediction round (admin only)
 pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
+    _ensure_not_migration_frozen(&env)?;
     if start_price < MIN_START_PRICE {
         return Err(ContractError::InvalidStartPrice);
     }
@@ -301,6 +303,7 @@ pub fn place_bet(
 ) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
@@ -424,6 +427,7 @@ pub fn place_precision_prediction(
 ) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
@@ -542,6 +546,7 @@ pub fn commit_prediction(
     amount: i128,
 ) -> Result<(), ContractError> {
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
@@ -649,6 +654,7 @@ pub fn reveal_prediction(
     salt: BytesN<32>,
 ) -> Result<(), ContractError> {
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
@@ -756,12 +762,13 @@ pub fn reveal_prediction(
 pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
+    _ensure_not_migration_frozen(&env)?;
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
 
     // Check early cash-out is enabled
-    let penalty_bps = get_early_cashout_bps(env.clone())
-        .ok_or(ContractError::EarlyCashoutDisabled)?;
+    let penalty_bps =
+        get_early_cashout_bps(env.clone()).ok_or(ContractError::EarlyCashoutDisabled)?;
 
     if penalty_bps == 0 || penalty_bps > 10_000 {
         return Err(ContractError::EarlyCashoutDisabled);
@@ -807,9 +814,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // If forfeit rounds down to zero (very small stake relative to penalty),
     // user gets full refund — still remove position from pool.
-    let cashout = stake
-        .checked_sub(forfeit)
-        .ok_or(ContractError::Overflow)?;
+    let cashout = stake.checked_sub(forfeit).ok_or(ContractError::Overflow)?;
 
     // Deduct full stake from the appropriate pool
     match position.side {
@@ -900,6 +905,9 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
     if let Err(e) = _require_supported_schema(&env) {
         soroban_sdk::panic_with_error!(&env, e);
     }
+    if let Err(e) = _ensure_not_migration_frozen(&env) {
+        soroban_sdk::panic_with_error!(&env, e);
+    }
     if let Err(e) = _ensure_normal_mode(&env) {
         soroban_sdk::panic_with_error!(&env, e);
     }
@@ -940,38 +948,23 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
 
     // ─── Epoch budget check ──────────────────────────────────────────────
     const EP_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
-    let epoch_budget: i128 = env
-        .storage()
-        .instance()
-        .get(&EP_BUDGET_KEY)
-        .unwrap_or(0);
+    let epoch_budget: i128 = env.storage().instance().get(&EP_BUDGET_KEY).unwrap_or(0);
     if epoch_budget > 0 {
         let current_epoch = _current_epoch_id(&env);
         const EP_CONSUMED_KEY: Symbol = symbol_short!("EpMintCsm");
         const EP_EPOCH_KEY: Symbol = symbol_short!("EpMintEpc");
-        let stored_epoch: u32 = env
-            .storage()
-            .temporary()
-            .get(&EP_EPOCH_KEY)
-            .unwrap_or(0);
+        let stored_epoch: u32 = env.storage().temporary().get(&EP_EPOCH_KEY).unwrap_or(0);
         let consumed: i128 = if stored_epoch == current_epoch {
-            env.storage()
-                .temporary()
-                .get(&EP_CONSUMED_KEY)
-                .unwrap_or(0)
+            env.storage().temporary().get(&EP_CONSUMED_KEY).unwrap_or(0)
         } else {
             0
         };
         let new_consumed = consumed.checked_add(initial_amount);
         match new_consumed {
             Some(val) if val <= epoch_budget => {
-                env.storage()
-                    .temporary()
-                    .set(&EP_CONSUMED_KEY, &val);
+                env.storage().temporary().set(&EP_CONSUMED_KEY, &val);
                 if stored_epoch != current_epoch {
-                    env.storage()
-                        .temporary()
-                        .set(&EP_EPOCH_KEY, &current_epoch);
+                    env.storage().temporary().set(&EP_EPOCH_KEY, &current_epoch);
                 }
             }
             _ => {

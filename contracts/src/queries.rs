@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use crate::common::{
-    _derive_round_phase, _extend_persistent_ttl, _legacy_positions_key, payout_add, payout_mul,
-    sort_addresses, BPS_DENOMINATOR, DEFAULT_ARCHIVE_RETENTION, MAX_PAGE_SIZE,
+    _derive_round_phase, _extend_persistent_ttl, payout_add, payout_mul, sort_addresses,
+    BPS_DENOMINATOR, DEFAULT_ARCHIVE_RETENTION, MAX_PAGE_SIZE,
 };
 use crate::config::{
     _read_fee_model, _read_precision_payout_policy, _read_protocol_fee_bps,
@@ -10,10 +10,10 @@ use crate::config::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
-    MarketSnapshot, PrecisionCommitment, PrecisionPayoutPolicy, PrecisionPrediction,
-    PendingWinningsUpdatedAtKey, Round, RoundMode, RoundPhase, RoundPoolStats, RoundTemplate,
-    SeasonArchive, SimulationResult, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
+    ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, LeaderboardEntry, MarketSnapshot,
+    PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy, PrecisionPrediction,
+    Round, RoundMode, RoundPhase, RoundPoolStats, SimulationResult, UserOutcomeType, UserPosition,
+    UserRoundOutcome, UserStats,
 };
 use soroban_sdk::{Address, Env, Map, Vec};
 
@@ -273,7 +273,7 @@ pub fn get_user_archive_history(
                 result.push_back(summary);
             }
         }
-        if idx == end || result.len() as u32 == limit {
+        if idx == end || result.len() == limit {
             break;
         }
         idx = idx.saturating_sub(1);
@@ -563,16 +563,24 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
                 if price_went_up {
                     winning_side = BetSide::Up;
                     winning_pool = round.pool_up;
-                    let (dw, dl, fee) =
-                        calculate_protocol_fee_updown(bps, fee_model, round.pool_up, round.pool_down)?;
+                    let (dw, dl, fee) = calculate_protocol_fee_updown(
+                        bps,
+                        fee_model,
+                        round.pool_up,
+                        round.pool_down,
+                    )?;
                     dist_winning = dw;
                     dist_losing = dl;
                     total_fee = fee;
                 } else if price_went_down {
                     winning_side = BetSide::Down;
                     winning_pool = round.pool_down;
-                    let (dw, dl, fee) =
-                        calculate_protocol_fee_updown(bps, fee_model, round.pool_down, round.pool_up)?;
+                    let (dw, dl, fee) = calculate_protocol_fee_updown(
+                        bps,
+                        fee_model,
+                        round.pool_down,
+                        round.pool_up,
+                    )?;
                     dist_winning = dw;
                     dist_losing = dl;
                     total_fee = fee;
@@ -583,10 +591,13 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
 
             for i in 0..participants.len() {
                 if let Some(user) = participants.get(i) {
-                    if let Some(pos) = env
-                        .storage()
-                        .persistent()
-                        .get::<_, UserPosition>(&DataKeyScoped::Position(round.round_id, user.clone()))
+                    if let Some(pos) =
+                        env.storage()
+                            .persistent()
+                            .get::<_, UserPosition>(&DataKeyScoped::Position(
+                                round.round_id,
+                                user.clone(),
+                            ))
                     {
                         let prediction_side = match pos.side {
                             BetSide::Up => 0,
@@ -698,9 +709,9 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
             let mut payout_pool: i128 = 0;
             if !winners.is_empty() && total_pot > 0 {
                 // Sum winner stakes for fee-on-winnings model
-                let winner_stakes: i128 = winners.iter().fold(0, |acc, w| {
-                    acc.checked_add(w.amount).unwrap_or(acc)
-                });
+                let winner_stakes: i128 = winners
+                    .iter()
+                    .fold(0, |acc, w| acc.checked_add(w.amount).unwrap_or(acc));
                 let (dist, fee) =
                     calculate_protocol_fee_precision(bps, fee_model, total_pot, winner_stakes)?;
                 total_fee = fee;

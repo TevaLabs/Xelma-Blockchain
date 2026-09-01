@@ -119,17 +119,17 @@ fn call_every_admin_config_entrypoint(
         ),
         is_paused(
             "set_max_stake",
-            client.try_set_max_stake(&Some(1_000_0000000i128))
+            client.try_set_max_stake(&Some(10_000_000_000i128))
                 == Err(Ok(ContractError::ContractPaused)),
         ),
         is_paused(
             "set_max_user_exposure",
-            client.try_set_max_user_exposure(&Some(1_000_0000000i128))
+            client.try_set_max_user_exposure(&Some(10_000_000_000i128))
                 == Err(Ok(ContractError::ContractPaused)),
         ),
         is_paused(
             "set_max_pending_winnings",
-            client.try_set_max_pending_winnings(&Some(1_000_0000000i128))
+            client.try_set_max_pending_winnings(&Some(10_000_000_000i128))
                 == Err(Ok(ContractError::ContractPaused)),
         ),
         is_paused(
@@ -147,17 +147,17 @@ fn call_every_admin_config_entrypoint(
         ),
         is_paused(
             "schedule_max_stake",
-            client.try_schedule_max_stake(&Some(1_000_0000000i128))
+            client.try_schedule_max_stake(&Some(10_000_000_000i128))
                 == Err(Ok(ContractError::ContractPaused)),
         ),
         is_paused(
             "schedule_max_user_exposure",
-            client.try_schedule_max_user_exposure(&Some(1_000_0000000i128))
+            client.try_schedule_max_user_exposure(&Some(10_000_000_000i128))
                 == Err(Ok(ContractError::ContractPaused)),
         ),
         is_paused(
             "schedule_max_pending_winnings",
-            client.try_schedule_max_pending_winnings(&Some(1_000_0000000i128))
+            client.try_schedule_max_pending_winnings(&Some(10_000_000_000i128))
                 == Err(Ok(ContractError::ContractPaused)),
         ),
         is_paused(
@@ -205,7 +205,7 @@ fn call_every_admin_config_entrypoint(
         ),
         is_paused(
             "set_epoch_mint_budget",
-            client.try_set_epoch_mint_budget(&1_000_0000000i128)
+            client.try_set_epoch_mint_budget(&10_000_000_000i128)
                 == Err(Ok(ContractError::ContractPaused)),
         ),
         is_paused(
