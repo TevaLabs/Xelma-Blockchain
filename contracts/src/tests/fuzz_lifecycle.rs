@@ -153,6 +153,7 @@ fn fuzz_protocol_lifecycle_invariants() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let users: Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
     let mut total_minted: i128 = 0;

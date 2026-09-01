@@ -81,7 +81,8 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
     client.resolve_round(&payload);
 
     // Alice should have pending winnings.
@@ -120,10 +121,8 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
         .find(|e| {
             let (_contract, topics, _data) = e;
             topics.len() == 2
-                && topics.get(0).unwrap().try_into_val(&env)
-                    == Ok(symbol_short!("claim"))
-                && topics.get(1).unwrap().try_into_val(&env)
-                    == Ok(symbol_short!("winnings"))
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("claim"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("winnings"))
         })
         .expect("claim_winnings event must be present");
 
@@ -251,7 +250,7 @@ fn test_claim_winnings_respects_runtime_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     let pending = client.get_pending_winnings(&alice);
@@ -285,19 +284,19 @@ fn test_claim_winnings_respects_runtime_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     let pending2 = client.get_pending_winnings(&alice);
-    assert!(pending2 > 0, "alice should have pending winnings after round 2");
+    assert!(
+        pending2 > 0,
+        "alice should have pending winnings after round 2"
+    );
 
     client.set_runtime_mode(&1u32); // switch to ClaimsOnly
     let bal_before2 = client.balance(&alice);
     let claimed2 = client.claim_winnings(&alice);
-    assert_eq!(
-        claimed2, pending2,
-        "claim must succeed in ClaimsOnly mode"
-    );
+    assert_eq!(claimed2, pending2, "claim must succeed in ClaimsOnly mode");
     assert_eq!(client.balance(&alice), bal_before2 + pending2);
     assert_eq!(client.get_pending_winnings(&alice), 0);
 
@@ -323,11 +322,14 @@ fn test_claim_winnings_respects_runtime_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     let pending3 = client.get_pending_winnings(&alice);
-    assert!(pending3 > 0, "alice should have pending winnings after round 3");
+    assert!(
+        pending3 > 0,
+        "alice should have pending winnings after round 3"
+    );
     let bal_before3 = client.balance(&alice);
 
     client.set_runtime_mode(&2u32); // switch to FullyPaused

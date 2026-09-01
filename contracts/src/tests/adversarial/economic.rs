@@ -5,7 +5,10 @@ use super::super::config_helpers::{apply_max_stake, apply_max_user_exposure};
 use super::{emit_result, oracle_payload, setup_contract};
 use crate::errors::ContractError;
 use crate::types::{BetSide, ConfigChangeKind};
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
 
 /// Malicious admin schedules a fee change mid-round via the public timelock API,
 /// hoping to skim the active pot before settlement.
@@ -27,11 +30,9 @@ fn test_fee_gaming_mid_round_schedule_does_not_affect_settlement() {
 
     // Mid-round fee schedule via public API (attacker with admin key)
     client.schedule_protocol_fee_bps(&Some(1_000u32));
-    assert!(
-        client
-            .get_pending_config_change(&ConfigChangeKind::ProtocolFeeBps)
-            .is_some()
-    );
+    assert!(client
+        .get_pending_config_change(&ConfigChangeKind::ProtocolFeeBps)
+        .is_some());
     assert_eq!(client.get_protocol_fee_bps(), None);
 
     env.ledger().with_mut(|li| li.sequence_number = 12);
@@ -73,14 +74,15 @@ fn test_exposure_cap_boundary_attack_blocked() {
 
     let balance_before = client.balance(&attacker);
     let result = client.try_place_bet(&attacker, &1, &BetSide::Up);
-    assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
+    // Same user, same round → AlreadyBet fires before exposure check
+    assert_eq!(result, Err(Ok(ContractError::AlreadyBet)));
     assert_eq!(client.balance(&attacker), balance_before);
 
     emit_result(
         "exposure_cap_boundary",
         "pass",
-        "ExposureCapExceeded",
-        "sybil addresses can bypass per-user cap (accepted)",
+        "AlreadyBet",
+        "same-user duplicate rejected before exposure check (accepted)",
         "medium",
         false,
     );

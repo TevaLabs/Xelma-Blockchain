@@ -17,10 +17,15 @@ fn setup(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address, Addres
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     (client, contract_id, admin, oracle)
 }
 
-fn schedule_and_apply_deviation_bps(env: &Env, client: &VirtualTokenContractClient, bps: Option<u32>) {
+fn schedule_and_apply_deviation_bps(
+    env: &Env,
+    client: &VirtualTokenContractClient,
+    bps: Option<u32>,
+) {
     client.set_oracle_max_deviation_bps(&bps);
     env.ledger().with_mut(|li| {
         li.sequence_number += crate::common::CONFIG_TIMELOCK_LEDGERS + 1;
@@ -195,6 +200,7 @@ fn test_deviation_reference_mode_requires_admin_auth() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &attacker,

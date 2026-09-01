@@ -1,0 +1,111 @@
+name: Differential Verification — settlement_math
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'contracts/src/settlement_math.rs'
+      - 'contracts/src/tests/diff_verify.rs'
+      - 'contracts/src/math_common.rs'
+  pull_request:
+    paths:
+      - 'contracts/src/settlement_math.rs'
+      - 'contracts/src/tests/diff_verify.rs'
+      - 'contracts/src/math_common.rs'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Execution mode: fast or extended'
+        required: false
+        default: 'fast'
+      seed:
+        description: 'Base seed for deterministic replay (blank = random)'
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  diff-verify:
+    name: "Differential Verification (${{ github.event.inputs.mode || 'fast' }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-diff-verify-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-diff-verify-
+
+      - name: Fixed regression cases (always run)
+        run: |
+          cargo test --package xelma-contract --lib \
+            tests::diff_verify::differential_verify_fixed_regression \
+            --features testutils -- --nocapture
+
+      - name: Fuzz — fast (PR CI default)
+        if: ${{ github.event.inputs.mode != 'extended' }}
+        env:
+          DIFF_VERIFY_MODE: fast
+          SEED: ${{ github.event.inputs.seed || '3735928559' }}
+        run: |
+          cargo test --package xelma-contract --lib \
+            tests::diff_verify::differential_verify_fuzz \
+            --features testutils -- --nocapture
+
+      - name: Fuzz — extended (nightly / manual)
+        if: ${{ github.event.inputs.mode == 'extended' }}
+        env:
+          DIFF_VERIFY_MODE: extended
+          SEED: ${{ github.event.inputs.seed || '3735928559' }}
+        run: |
+          cargo test --package xelma-contract --lib \
+            tests::diff_verify::differential_verify_fuzz \
+            --features testutils -- --nocapture
+
+  nightly-extended:
+    name: "Nightly Extended Diff Verify"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-diff-verify-nightly-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Fixed regression cases
+        run: |
+          cargo test --package xelma-contract --lib \
+            tests::diff_verify::differential_verify_fixed_regression \
+            --features testutils -- --nocapture
+
+      - name: Extended fuzz (≥1000 cases)
+        env:
+          DIFF_VERIFY_MODE: extended
+          SEED: "3735928559"
+        run: |
+          cargo test --package xelma-contract --lib \
+            tests::diff_verify::differential_verify_fuzz \
+            --features testutils -- --nocapture

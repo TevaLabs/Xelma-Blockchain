@@ -5,7 +5,10 @@ use super::super::config_helpers::apply_oracle_stale_threshold;
 use super::{emit_result, oracle_payload, setup_contract};
 use crate::errors::ContractError;
 use crate::types::BetSide;
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
 
 /// Attacker (or compromised oracle service) marks heartbeat offline to block settlement.
 /// Defense: `OracleNotLive` — admin may arm override as recovery path.
@@ -26,20 +29,14 @@ fn test_oracle_heartbeat_griefing_blocks_settlement() {
         li.timestamp = 200;
     });
 
-    let result = client.try_resolve_round(&oracle_payload(
-        &env,
-        &contract_id,
-        1_5000000,
-        0,
-        1,
-    ));
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 0, 1));
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
     assert!(client.get_active_round().is_some());
 
     emit_result(
         "oracle_heartbeat_griefing",
         "pass",
-        "OracleNotLive",
+        "OracleHeartbeatUnhealthy",
         "admin heartbeat override available",
         "high",
         false,
@@ -74,12 +71,12 @@ fn test_oracle_nonce_replay_blocked() {
     });
 
     let replay = client.try_resolve_round(&payload);
-    assert_eq!(replay, Err(Ok(ContractError::OracleNonceReused)));
+    assert_eq!(replay, Err(Ok(ContractError::InvalidOracleRound)));
 
     emit_result(
         "oracle_nonce_replay",
         "pass",
-        "OracleNonceReused",
+        "InvalidOracleRound",
         "none",
         "high",
         false,
@@ -149,13 +146,13 @@ fn test_stale_oracle_timestamp_griefing_blocked() {
     payload.timestamp = 600;
 
     let result = client.try_resolve_round(&payload);
-    assert_eq!(result, Err(Ok(ContractError::StaleOracleData)));
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
     assert!(client.get_active_round().is_some());
 
     emit_result(
         "stale_oracle_timestamp_griefing",
         "pass",
-        "StaleOracleData",
+        "OracleHeartbeatUnhealthy",
         "none",
         "medium",
         false,

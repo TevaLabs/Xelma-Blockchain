@@ -26,6 +26,7 @@ fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Addres
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     (client, contract_id, admin, oracle)
 }
@@ -63,7 +64,7 @@ fn resolve_at(
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 }
 
@@ -135,7 +136,7 @@ fn fee_zero_both_models_produce_identical_updown() {
     client.place_bet(&charlie2, &5, &BetSide::Down);
     set_fee_model_now(&env, &contract_id, FeeModel::FeeOnWinnings);
 
-    env.ledger().with_mut(|li| li.sequence_number = 13);
+    env.ledger().with_mut(|li| li.sequence_number = 25);
     let treasury_before2 = client.get_protocol_fee_treasury();
     resolve_at(&env, &client, &contract_id, 2_000u128);
 
@@ -188,7 +189,7 @@ fn fee_zero_both_models_produce_identical_precision() {
     client.place_precision_prediction(&bob2, &30, &1_100u128);
     set_fee_model_now(&env, &contract_id, FeeModel::FeeOnWinnings);
 
-    env.ledger().with_mut(|li| li.sequence_number = 13);
+    env.ledger().with_mut(|li| li.sequence_number = 25);
     let treasury_before2 = client.get_protocol_fee_treasury();
     resolve_at(&env, &client, &contract_id, 1_006u128);
 
@@ -462,8 +463,12 @@ fn fee_never_charged_on_tie_regardless_of_model() {
 
         assert_eq!(client.get_pending_winnings(&alice), 7);
         assert_eq!(client.get_pending_winnings(&bob), 13);
-        assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0,
-            "Fee was charged on tie with model {:?}", model);
+        assert_eq!(
+            client.get_protocol_fee_treasury() - treasury_before,
+            0,
+            "Fee was charged on tie with model {:?}",
+            model
+        );
     }
 }
 
@@ -552,6 +557,7 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &None);
 
         let alice = Address::generate(&env);
@@ -630,6 +636,7 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &Some(1));
 
         let alice = Address::generate(&env);

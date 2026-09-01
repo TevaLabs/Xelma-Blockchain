@@ -18,6 +18,7 @@ fn test_simulate_updown() {
     let oracle = Address::generate(&env);
 
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let p1 = Address::generate(&env);
     let p2 = Address::generate(&env);
@@ -74,6 +75,7 @@ fn test_simulate_payout_does_not_mutate_state() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let p1 = Address::generate(&env);
     let p2 = Address::generate(&env);
@@ -111,6 +113,7 @@ fn test_simulate_payout_precision_stake_weighted_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     // 1 = StakeWeighted (see `PrecisionPayoutPolicy`).
     client.set_precision_payout_policy(&1u32);
