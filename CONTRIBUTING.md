@@ -72,6 +72,10 @@ sent back for detail before they are picked up.
 
 Before opening a PR, consult [`docs/CONTRIBUTOR_TASK_MATRIX.md`](./docs/CONTRIBUTOR_TASK_MATRIX.md) for task-type-specific test and evidence requirements.
 
+New to the codebase? Read [`docs/architecture.md`](./docs/architecture.md) first — it
+covers the entrypoints, layers, data stores, runtime modes, and Soroban boundaries
+so you can see the system shape from one doc.
+
 ## Optional pre-commit hooks
 
 This repository ships an optional pre-commit hook configuration to catch trivial
