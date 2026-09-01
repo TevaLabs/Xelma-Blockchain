@@ -168,6 +168,7 @@ pub fn migrate_schema_v2_to_v3(env: Env, dry_run: bool) -> Result<(), ContractEr
     env.storage()
         .persistent()
         .set(&DataKeyCore::MigratedToV3, &true);
+    _extend_persistent_ttl(&env, &DataKeyCore::MigratedToV3);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -1028,6 +1029,8 @@ pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
             | DataKeyCore::MigratedToV3
             | DataKeyCore::ArchiveRetention
             | DataKeyCore::RoundTemplate
+            | DataKeyCore::OracleQuorum
+            | DataKeyCore::DisputeLedgers
             | DataKeyCore::Ext(DataKeyExt::LeaderboardWins)
             | DataKeyCore::Ext(DataKeyExt::LeaderboardStreak)
             | DataKeyCore::Ext(DataKeyExt::SeasonId)
@@ -1036,6 +1039,15 @@ pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
             | DataKeyCore::LastRoundId
             | DataKeyCore::OracleRotationProposal
             | DataKeyCore::MintLimitConfig
+            | DataKeyCore::EpochMintBudget
+            | DataKeyCore::EarlyCashoutBps
+            | DataKeyCore::FeeModel
+            | DataKeyCore::PrecisionPayoutPolicy
+            | DataKeyCore::MinBet
+            | DataKeyCore::AccessControlEnabled
+            | DataKeyCore::GovApprover
+            | DataKeyCore::GovProposalTtlLedgers
+            | DataKeyCore::NextGovProposalId
     )
 }
 
