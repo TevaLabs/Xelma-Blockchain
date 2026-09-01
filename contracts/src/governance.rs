@@ -309,7 +309,7 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
             _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
         }
         GovAction::WithdrawInsuranceFund(recipient, amount) => {
-            crate::insurance::execute_withdraw_insurance_fund(env, &recipient, *amount)?;
+            crate::insurance::execute_withdraw_insurance_fund(&env, &recipient, *amount)?;
         }
         GovAction::SetInsuranceSplitBps(bps) => {
             crate::insurance::set_insurance_split_bps(env.clone(), *bps)?;

@@ -103,28 +103,24 @@ pub enum ContractError {
     IllegalPhaseTransition = 84,
     /// Oracle heartbeat failed the configured freshness or health policy.
     OracleHeartbeatUnhealthy = 85,
-    /// Early cash-out feature is disabled or not configured
-    EarlyCashoutDisabled = 79,
-    /// User does not have an active position to cash out
-    PositionNotFound = 80,
-    /// Early cash-out attempted outside the valid running phase
-    InvalidPhaseForCashout = 81,
-    /// Early cash-out is only supported for UpDown rounds
-    WrongModeForCashout = 82,
-    ProposalNotFound = 83,
-    ProposalExpired = 84,
-    GovInvalidState = 85,
-    GovUnauthorized = 86,
     /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
     ClaimBatchTooLarge = 87,
     /// claim_many batch contains the same address more than once (Issue #277)
     DuplicateClaimAddress = 88,
-    /// Caller is denylisted, or allowlist mode is enabled and caller is not
-    /// allowlisted (Issue #274 access-control gate).
-    AccessDenied = 89,
-    /// Oracle heartbeat is not live and strict mode blocks single-feed
-    /// settlement (Issue #264 sibling check for `resolve_round`).
-    OracleHeartbeatUnhealthy = 90,
+    /// Early cash-out feature is disabled or not configured
+    EarlyCashoutDisabled = 95,
+    /// User does not have an active position to cash out
+    PositionNotFound = 96,
+    /// Early cash-out attempted outside the valid running phase
+    InvalidPhaseForCashout = 97,
+    /// Early cash-out is only supported for UpDown rounds
+    WrongModeForCashout = 98,
+    /// A proposed insurance payout split does not sum to the covered balance.
+    InsuranceInvalidSplit = 99,
+    /// The insurance backstop fund has insufficient balance to cover the claim.
+    InsuranceInsufficientFund = 100,
+    /// The supplied token amount is invalid for the requested operation.
+    InvalidAmount = 101,
     /// The dispute window for `void_round` has expired, or dispute windows
     /// are not configured (`dispute_ledgers == 0`).
     DisputeWindowExpired = 91,
