@@ -262,6 +262,12 @@ fn test_chaos_cancel_and_restart_round_no_state_bleed() {
     client.place_bet(&alice, &100_0000000, &BetSide::Up);
     client.cancel_round(&0u32);
 
+    // A ledger sequence backs at most one round (oracle payloads bind to
+    // `Round.start_ledger`), so advance before creating the replacement.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
     // Round 2: started fresh; bob bets, alice does NOT carry over her round-1 position
     client.create_round(&1_2000000, &None);
     client.place_bet(&bob, &50_0000000, &BetSide::Down);

@@ -49,7 +49,7 @@ field is validated in order; a failure at any step rejects the entire submission
 |-----------------|-------------|----------|-------------|
 | `price`         | `u128`      | Yes      | Final settlement price, 4 decimals (e.g. `2297` = $0.2297). Must be > 0. |
 | `timestamp`     | `u64`       | Yes      | Unix epoch seconds when the price was observed. |
-| `round_id`      | `u32`       | Yes      | Must match the active round's `start_ledger` (not `round_id`). |
+| `round_id`      | `u32`       | Yes      | Must match the active round's **`start_ledger`**, not `Round.round_id`. See [`round_id`](#field-requirements-in-detail). |
 | `nonce`         | `u64`       | Yes      | Per-round replay protection. Must be unique per round. |
 | `network_id`    | `BytesN<32>`| Yes      | SHA-256 hash of the network passphrase. Prevents cross-network replay. |
 | `contract_addr` | `Address`   | Yes      | The contract this payload targets. Prevents cross-contract replay. |
@@ -113,10 +113,40 @@ field is validated in order; a failure at any step rejects the entire submission
   wrong-phase prices from outside the round's active period.
 
 **`round_id`**
-- Must equal the **active round's** `start_ledger` (not the monotonically
-  increasing `round_id` field in the `Round` struct). This is a known naming
-  ambiguity tracked in `SECURITY_REVIEW.md` (SR-2026-04-003).
-- The `Round.start_ledger` value is available via `get_active_round()`.
+
+> **Read this before wiring up an oracle.** `payload.round_id` does **not** hold
+> `Round.round_id`. Submitting the monotonic `Round.round_id` here is the single
+> most common operator misconfiguration and is rejected with
+> `InvalidOracleRound`.
+
+- Must equal the **active round's `start_ledger`** — the ledger sequence at which
+  the round was created — not the monotonically increasing `round_id` field in
+  the `Round` struct.
+- Read it straight off the active round; never derive or cache it:
+
+  ```js
+  const active = await contract.get_active_round();
+  payload.round_id = active.start_ledger;   // correct
+  // payload.round_id = active.round_id;    // WRONG — InvalidOracleRound
+  ```
+
+- The two identifiers serve different purposes inside the contract, which is why
+  they are not interchangeable:
+
+  | Identifier | Type | Used for |
+  |---|---|---|
+  | `Round.start_ledger` | `u32` | Payload round binding (`payload.round_id`) and the signed attestation message |
+  | `Round.round_id` | `u64` | Nonce replay namespace (`ConsumedOracleNonce`), events, archives, and queries |
+
+- Because binding is keyed by `start_ledger`, the protocol guarantees a ledger
+  sequence backs at most one round. A round created, cancelled or settled, and
+  replaced within the same ledger would otherwise let a payload signed for the
+  first round settle the second. `create_round` rejects such a reuse with
+  `RoundStartLedgerReused` (code 93). See `PROTOCOL_SPEC.md` invariant I10.
+- **Operational impact:** after a cancel or settle, the replacement round must be
+  created in a later ledger. Normal sequential operation already satisfies this;
+  a keeper that batches cancel and create into a single ledger must retry the
+  create once the ledger advances.
 
 **`nonce`**
 - 64-bit value, unique **per round**. The contract records
@@ -325,7 +355,9 @@ settlement (plus the admin override).
 
 ## 5. Resolution Flow (Step by Step)
 
-### 5.1 Legacy Single-Feed Path (`resolve_round`)
+### 5.1 Production Resolution Path (`resolve_round`)
+
+> The legacy bulk-map settlement path is intentionally quarantined. It is disabled by default and only available behind the temporary `legacy-map-settlement` Cargo feature for migration validation before the removal deadline of 2026-12-31. Production settlement must use the indexed round/user storage layout.
 
 1. **Verify round eligibility**
    - `get_active_round()` returns a round.
@@ -450,7 +482,8 @@ MultiFeedPayload {
 | Error | Code | Likely Cause | Check | Fix |
 |-------|------|--------------|-------|-----|
 | `OracleTimestampOutsideWindow` | 66 | Payload timestamp is outside the round-relative window `[start - skew, end + skew]` | Compare `payload.timestamp` against `get_active_round()` timestamps and `get_oracle_timestamp_skew()`. | Ensure the price was observed during the round's active window. The timestamp must be after round creation and before the estimated round end + skew. |
-| `InvalidOracleRound` | 19 | `payload.round_id` does not match `ActiveRound.start_ledger` | Call `get_active_round()` — verify `start_ledger`. Note: it's `start_ledger`, not `round_id`! | Set `payload.round_id = start_ledger` from the active round. |
+| `InvalidOracleRound` | 19 | `payload.round_id` does not match `ActiveRound.start_ledger` — most often because the monotonic `Round.round_id` was submitted instead | Call `get_active_round()` and compare `payload.round_id` against **`start_ledger`**, not `round_id`. | Set `payload.round_id = active_round.start_ledger`. |
+| `RoundStartLedgerReused` | 93 | `create_round` was called in a ledger that already backed another round's `start_ledger` (e.g. cancel and re-create batched into one ledger) | Compare `env.ledger().sequence()` against the cancelled round's `start_ledger`. | Wait for the ledger to advance, then retry `create_round`. Oracle payloads bind to `start_ledger`, so it must be unique per round. |
 | `FutureOracleData` | 24 | `payload.timestamp > env.ledger().timestamp()` | Check system clock skew vs ledger time. Oracle machine's clock may be ahead. | Use `Date.now() / 1000` or NTP-synchronised time; never fabricate timestamps. |
 | `OracleNonceReused` | 33 | `(round_id, nonce)` pair was already consumed | Check the oracle's nonce tracking for this round. | Increment the nonce value and resubmit. |
 | `OracleDeviationExceeded` | 41 | Price deviation > configured `OracleMaxDeviationBps` | Compute `diff_bps = abs(price - start_price) * 10000 / start_price`. | Either wait for market stability, ask admin to [arm the override](#34-admin-deviation-override--arming-the-one-shot), or adjust `OracleMaxDeviationBps` via config timelock. |

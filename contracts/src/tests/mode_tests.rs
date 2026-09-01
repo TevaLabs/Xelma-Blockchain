@@ -4,7 +4,10 @@
 use super::config_helpers::{apply_max_stake, apply_max_user_exposure, apply_windows};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, RoundMode};
+use crate::types::{
+    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, PrecisionCommitment, PrecisionPrediction,
+    RoundMode, UserPosition,
+};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -909,6 +912,108 @@ fn test_precision_prediction_exposure_cap_exceeded_fails() {
     client.create_round(&1_0000000, &Some(1));
 
     let result = client.try_place_precision_prediction(&user, &80_0000000, &2297u128);
+    assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
+}
+
+#[test]
+fn test_updown_bet_counts_precision_commitment_toward_exposure_cap() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user);
+    apply_max_user_exposure(&env, &client, Some(100_0000000i128));
+    client.create_round(&1_0000000, &Some(0));
+
+    let round = client.get_active_round().unwrap();
+    let commitment = PrecisionCommitment {
+        hash: BytesN::from_array(&env, &[9u8; 32]),
+        amount: 75_0000000,
+        revealed: false,
+    };
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::PrecisionCommitment(round.round_id, user.clone()), &commitment);
+    });
+
+    let result = client.try_place_bet(&user, &30_0000000, &BetSide::Up);
+    assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
+}
+
+#[test]
+fn test_precision_prediction_counts_updown_position_toward_exposure_cap() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user);
+    apply_max_user_exposure(&env, &client, Some(100_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    let round = client.get_active_round().unwrap();
+    let position = UserPosition {
+        amount: 75_0000000,
+        side: BetSide::Up,
+    };
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Position(round.round_id, user.clone()), &position);
+    });
+
+    let result = client.try_place_precision_prediction(&user, &30_0000000, &2297u128);
+    assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
+}
+
+#[test]
+fn test_commit_prediction_counts_precision_prediction_toward_exposure_cap() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user);
+    apply_max_user_exposure(&env, &client, Some(100_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    let round = client.get_active_round().unwrap();
+    let prediction = PrecisionPrediction {
+        user: user.clone(),
+        predicted_price: 2297,
+        amount: 75_0000000,
+    };
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::PrecisionPosition(round.round_id, user.clone()), &prediction);
+    });
+
+    let result = client.try_commit_prediction(
+        &user,
+        &BytesN::from_array(&env, &[11u8; 32]),
+        &30_0000000,
+    );
     assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
 }
 

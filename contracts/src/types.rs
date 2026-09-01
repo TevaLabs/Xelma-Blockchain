@@ -208,6 +208,14 @@ pub enum DataKeyScoped {
     Denylisted(Address),
     /// Stored governance proposal record (Issue #272).
     GovProposal(u64),
+    /// Records which round claimed a given ledger sequence as its
+    /// `start_ledger`: start_ledger -> round_id.
+    ///
+    /// Oracle payloads bind to `Round.start_ledger` (see `OraclePayload.round_id`),
+    /// which is not unique on its own: a round can be cancelled and replaced
+    /// within a single ledger. This marker lets settlement reject a payload whose
+    /// `start_ledger` resolves to a different round than the active one.
+    RoundStartLedger(u32),
 }
 
 /// Fee incidence model (Issue #268).
@@ -293,7 +301,6 @@ pub enum OneSidedPolicy {
     CarryForward = 2,
 }
 
-#[allow(dead_code)] // legacy alias retained for OneSided tests/clients
 pub type Policy = OneSidedPolicy;
 
 /// Payout policy for Precision mode (on-chain config).
@@ -338,6 +345,12 @@ pub enum GovAction {
     SetTreasuryAddress(Address),
     SetAdmin(Address),
     SetOracle(Address),
+    /// Withdraw from the insurance fund (Issue #367).
+    WithdrawInsuranceFund(Address, i128),
+    /// Set the insurance fee split in basis points (Issue #367).
+    SetInsuranceSplitBps(u32),
+    /// Set the insurance coverage payout rate in basis points (Issue #367).
+    SetInsuranceCoverageBps(u32),
 }
 
 /// Stored governance proposal (Issue #272).
@@ -399,7 +412,19 @@ pub struct PrecisionCommitment {
 pub struct OraclePayload {
     pub price: u128,
     pub timestamp: u64,
-    /// Round identifier that should match `Round.start_ledger`
+    /// Binds this payload to exactly one round.
+    ///
+    /// Must equal the active round's **`Round.start_ledger`** — the ledger
+    /// sequence at which the round was created — NOT the monotonic
+    /// `Round.round_id`. The two identifiers are used in different places:
+    /// `start_ledger` binds the payload (and is covered by the attestation
+    /// signature), while `Round.round_id` namespaces consumed nonces under
+    /// `DataKeyScoped::ConsumedOracleNonce`.
+    ///
+    /// `create_round` guarantees a ledger sequence backs at most one round
+    /// (`DataKeyScoped::RoundStartLedger` / `RoundStartLedgerReused`), so this
+    /// value identifies a single round unambiguously. See `PROTOCOL_SPEC.md`
+    /// invariant I10.
     pub round_id: u32,
     /// Per-round replay-protection nonce.
     ///
@@ -434,15 +459,15 @@ pub struct OracleHeartbeatRecord {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Round {
-    pub round_id: u64,        // Unique monotonically increasing round identifier
-    pub price_start: u128,    // Starting XLM price in stroops
-    pub start_ledger: u32,    // Ledger when round was created
-    pub start_timestamp: u64, // Ledger timestamp when round was created
-    pub bet_end_ledger: u32,  // Ledger when betting closes
-    pub end_ledger: u32,      // Ledger when round ends (~5s per ledger)
-    pub pool_up: i128,        // Total vXLM bet on UP
-    pub pool_down: i128,      // Total vXLM bet on DOWN
-    pub mode: RoundMode,      // Round mode: UpDown (0) or Precision (1)
+    pub round_id: u64,       // Unique monotonically increasing round identifier
+    pub price_start: u128,   // Starting XLM price in stroops
+    pub start_ledger: u32,   // Ledger when round was created
+    pub start_timestamp: u64,  // Ledger timestamp when round was created
+    pub bet_end_ledger: u32, // Ledger when betting closes
+    pub end_ledger: u32,     // Ledger when round ends (~5s per ledger)
+    pub pool_up: i128,       // Total vXLM bet on UP
+    pub pool_down: i128,     // Total vXLM bet on DOWN
+    pub mode: RoundMode,     // Round mode: UpDown (0) or Precision (1)
 }
 
 /// Aggregated active-round pool composition for frontend transparency.
@@ -896,137 +921,38 @@ pub struct PendingWinningsExpiryKey(pub ());
 
 pub const PENDING_WINNINGS_EXPIRY_KEY: PendingWinningsExpiryKey = PendingWinningsExpiryKey(());
 
+/// Eligible failure events for insurance coverage (Issue #367).
+///
+/// Each variant maps to a cancel-round reason code used by the
+/// insurance coverage payout gate. Only events listed in the
+/// admin-configured whitelist trigger coverage.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum InsuranceEvent {
+    /// Cancel due to oracle heartbeat failure / outage.
+    OracleOutage = 0,
+    /// Cancel due to oracle deviation exceeding the configured threshold.
+    OracleDeviation = 1,
+    /// Fallback refund when insufficient participants joined the round.
+    FallbackRefund = 2,
+}
+
+/// Cancel-round reason codes that map to InsuranceEvent variants.
+///
+/// Passed as the `reason` argument to `cancel_round`. The mapping is:
+/// - 0 → not eligible (generic / admin discretion)
+/// - 1 → OracleOutage
+/// - 2 → OracleDeviation
+/// - 3 → FallbackRefund
+pub const CANCEL_REASON_GENERIC: u32 = 0;
+pub const CANCEL_REASON_ORACLE_OUTAGE: u32 = 1;
+pub const CANCEL_REASON_ORACLE_DEVIATION: u32 = 2;
+pub const CANCEL_REASON_FALLBACK_REFUND: u32 = 3;
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingWinningsUpdatedAtKey(pub Address);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Blue/green migration (Issue #366)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Domain-separation marker prepended to every canonical migration leaf
-/// preimage. Guarantees that two different migration formats (or a future
-/// re-version of this one) can never accidentally collide on a commitment:
-/// the marker is part of the hashed input, so a different marker yields a
-/// different commitment with cryptographic certainty.
-///
-/// See `docs/UPGRADE_BLUE_GREEN.md` for the exact canonical encoding spec.
-pub const MIGRATION_DOMAIN: &[u8] = b"XELMA-CPAY-V1";
-
-/// Canonical configuration subset exported from vN and imported into vN+1.
-///
-/// This is the **only** set of contract-wide parameters the new contract
-/// needs to continue operating safely. It deliberately excludes ephemeral /
-/// voluminous storage (round archives, outcome records, leaderboards, oracle
-/// heartbeats) — those are history, not live economic state, and are not part
-/// of the canonical migration subset.
-///
-/// Field order is fixed and documented; the byte encoding in
-/// `migration::_config_bytes` matches this exact order, so identical logical
-/// state always serializes identically.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct MigrationConfig {
-    pub protocol_fee_bps: Option<u32>,
-    pub fee_model: FeeModel,
-    pub protocol_fee_treasury: i128,
-    pub bet_window_ledgers: u32,
-    pub run_window_ledgers: u32,
-    pub close_buffer_ledgers: u32,
-    pub max_stake: Option<i128>,
-    pub max_user_round_exposure: Option<i128>,
-    pub max_pending_winnings: Option<i128>,
-    pub min_bet: Option<i128>,
-    pub min_participants: Option<u32>,
-    pub max_precision_participants: u32,
-    pub precision_payout_policy: u32,
-    pub dispute_ledgers: u32,
-    pub early_cashout_bps: Option<u32>,
-}
-
-/// Canonical per-user balance record (vN `Balance(user)`).
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct MigrationBalance {
-    pub user: Address,
-    pub amount: i128,
-}
-
-/// Canonical per-user pending-claim record (vN `PendingWinnings(user)`).
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct MigrationPending {
-    pub user: Address,
-    pub amount: i128,
-}
-
-/// The finalized on-chain commitment of the canonical exported state.
-///
-/// `root` is the Merkle root over the canonical leaf set (config leaf +
-/// sorted balance leaves + sorted pending leaves), domain-separated and bound
-/// to the source schema version. `leaf_count` is the number of leaves
-/// committed (i.e. 1 + balances + pendings).
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct MigrationCommitment {
-    pub source_version: u32,
-    pub destination_version: u32,
-    pub root: BytesN<32>,
-    pub leaf_count: u32,
-    pub finalized_at_ledger: u32,
-}
-
-/// A standard binary Merkle proof over the canonical leaf set.
-///
-/// `siblings` holds one hash per tree level (leaf level excluded); the
-/// left/right orientation at each level is derived from `leaf_index`
-/// (a node at even index is a left child). `tree_height` is the number of
-/// sibling steps required to reach the root (== `siblings.len()`).
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct MerkleProof {
-    pub leaf_index: u32,
-    pub tree_height: u32,
-    pub siblings: Vec<BytesN<32>>,
-}
-
-/// Storage keys for the blue/green migration subsystem (source export/drain
-/// and destination import). Kept in a dedicated enum so migration state never
-/// collides with contract business state and does not consume part of the
-/// `DataKeyCore` XDR-union budget.
-#[contracttype]
-#[derive(Clone)]
-pub enum MigrationKey {
-    /// Source: `true` once the source contract has entered claims-only drain mode.
-    Frozen,
-    /// Source: `true` while an export session is open (not yet finalized).
-    ExportInProgress,
-    /// Source: accumulated canonical balance records.
-    ExportBalances,
-    /// Source: accumulated canonical pending records.
-    ExportPendings,
-    /// Source: addresses already exported as balances (dedup/replay guard).
-    ExportedBalanceUsers,
-    /// Source: addresses already exported as pending (dedup/replay guard).
-    ExportedPendingUsers,
-    /// Source: the finalized commitment (present only after finalize).
-    Commitment,
-    /// Destination: the expected source commitment this session imports against.
-    ExpectedCommitment,
-    /// Destination: per-address replay guard for imported balances.
-    ImportedBalance(Address),
-    /// Destination: per-address replay guard for imported pending claims.
-    ImportedPending(Address),
-    /// Destination: `true` once migration is finalized.
-    ImportFinalized,
-    /// Destination: `true` once the import session is initialized.
-    ImportInitialized,
-    /// Source + destination: explicit count of records successfully imported
-    /// (used to verify import completeness without storage-key iteration).
-    ImportedRecords,
-    /// Destination: `true` once the canonical config has been imported.
-    ImportedConfig,
-}
 
 /// Legacy monolithic storage key — retained for a few migration/read paths.
 #[contracttype]

@@ -58,6 +58,9 @@ pub enum ContractError {
     NoRoundTemplate = 65,
     /// Oracle payload timestamp is outside the round-relative economic window
     OracleTimestampOutsideWindow = 66,
+    /// Pending winnings entry exists but has not yet reached the configured
+    /// expiry threshold — caller must wait before reclaiming.
+    PendingWinningsNotExpired = 86,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
@@ -86,71 +89,50 @@ pub enum ContractError {
     PendingWinningsNotFound = 77,
     /// Pending winnings expiry is not configured (value is 0).
     ExpiryNotConfigured = 78,
-    /// Early cash-out feature is disabled or not configured
-    EarlyCashoutDisabled = 79,
-    /// User does not have an active position to cash out
-    PositionNotFound = 80,
-    /// Early cash-out attempted outside the valid running phase
-    InvalidPhaseForCashout = 81,
-    /// Early cash-out is only supported for UpDown rounds
-    WrongModeForCashout = 82,
+    /// Participant is blocked by the active allowlist or denylist policy.
+    AccessDenied = 79,
     /// Governance proposal does not exist.
-    ProposalNotFound = 83,
+    ProposalNotFound = 80,
     /// Governance proposal is past its execution deadline.
-    ProposalExpired = 84,
+    ProposalExpired = 81,
     /// Governance proposal cannot transition from its current state.
-    GovInvalidState = 85,
+    GovInvalidState = 82,
     /// Caller is not authorized by the configured governance policy.
-    GovUnauthorized = 86,
+    GovUnauthorized = 83,
+    /// Requested action is not valid in the round's current lifecycle phase.
+    IllegalPhaseTransition = 84,
+    /// Oracle heartbeat failed the configured freshness or health policy.
+    OracleHeartbeatUnhealthy = 85,
     /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
     ClaimBatchTooLarge = 87,
     /// claim_many batch contains the same address more than once (Issue #277)
     DuplicateClaimAddress = 88,
-    /// Caller is denylisted, or allowlist mode is enabled and caller is not
-    /// allowlisted (Issue #274 access-control gate).
-    AccessDenied = 89,
-    /// Oracle heartbeat is not live and strict mode blocks single-feed
-    /// settlement (Issue #264 sibling check for `resolve_round`).
-    OracleHeartbeatUnhealthy = 90,
+    /// Early cash-out feature is disabled or not configured
+    EarlyCashoutDisabled = 95,
+    /// User does not have an active position to cash out
+    PositionNotFound = 96,
+    /// Early cash-out attempted outside the valid running phase
+    InvalidPhaseForCashout = 97,
+    /// Early cash-out is only supported for UpDown rounds
+    WrongModeForCashout = 98,
+    /// A proposed insurance payout split does not sum to the covered balance.
+    InsuranceInvalidSplit = 99,
+    /// The insurance backstop fund has insufficient balance to cover the claim.
+    InsuranceInsufficientFund = 100,
+    /// The supplied token amount is invalid for the requested operation.
+    InvalidAmount = 101,
     /// The dispute window for `void_round` has expired, or dispute windows
     /// are not configured (`dispute_ledgers == 0`).
     DisputeWindowExpired = 91,
     /// `finalize_round` was called before the dispute window elapsed.
     ClaimLocked = 92,
-    // ─── Blue/green migration (Issue #366) ──────────────────────────────────
-    /// A migration commitment has not been finalized yet.
-    MigrationNotFinalized = 93,
-    /// The migration has already been finalized; further commits are rejected.
-    MigrationAlreadyFinalized = 94,
-    /// Attempted migration action failed an authorization check.
-    MigrationUnauthorized = 95,
-    /// The supplied proof/commitment does not match the expected migration root.
-    MigrationCommitmentMismatch = 96,
-    /// The migration source/destination version does not match what is in flight.
-    MigrationVersionMismatch = 97,
-    /// The source contract is already in the migration drain/frozen state.
-    MigrationAlreadyFrozen = 98,
-    /// The destination migration session has not been initialized.
-    MigrationNotInitialized = 99,
-    /// The destination migration session was already initialized.
-    MigrationAlreadyInitialized = 100,
-    /// A record has already been imported into the destination contract.
-    MigrationRecordAlreadyImported = 101,
-    /// The supplied Merkle proof is malformed or does not verify.
-    MigrationProofInvalid = 102,
-    /// The source-contract export has not produced a finalized commitment.
-    MigrationExportIncomplete = 103,
-    /// The source contract is frozen for migration; this action is disabled.
-    MigrationFrozen = 104,
-    /// The destination contract is not ready to accept imports.
-    MigrationNotReady = 105,
-    /// A canonical record was supplied for a value that does not match on-chain state.
-    MigrationRecordMismatch = 106,
-    /// Someone attempted to re-open rounds in a contract already migrated.
-    MigrationAlreadyMigrated = 107,
-    /// Requested action is not valid in the round's current lifecycle phase.
-    IllegalPhaseTransition = 108,
-    /// Pending winnings entry exists but has not yet reached the configured
-    /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 109,
+    /// A round cannot be created because the current ledger sequence has
+    /// already backed another round's `start_ledger`.
+    ///
+    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
+    /// sequence would make a payload signed for the earlier round valid for
+    /// the later one. Retry once the ledger has advanced.
+    RoundStartLedgerReused = 93,
+    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
+    PageSizeExceeded = 94,
 }

@@ -769,6 +769,12 @@ fn test_cancelled_round_allows_new_round() {
     client.create_round(&1_0000000, &None);
     client.cancel_round(&0u32);
 
+    // A ledger sequence backs at most one round (oracle payloads bind to
+    // `Round.start_ledger`), so advance before creating the replacement.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
     // A new round can be started after cancellation
     client.create_round(&1_2000000, &None);
     let new_round = client.get_active_round().unwrap();
@@ -1205,6 +1211,12 @@ fn test_create_next_from_template_after_cancel() {
     let round1 = client.get_active_round().unwrap();
     client.cancel_round(&1u32);
     assert_eq!(client.get_active_round(), None);
+
+    // A ledger sequence backs at most one round (oracle payloads bind to
+    // `Round.start_ledger`), so advance before creating the replacement.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
 
     let next_round_id = client.create_next_from_template();
     assert_eq!(next_round_id, round1.round_id + 1);

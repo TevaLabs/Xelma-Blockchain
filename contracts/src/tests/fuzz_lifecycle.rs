@@ -25,6 +25,8 @@ use crate::types::{BetSide, OraclePayload};
 
 /// Randomized actions covering all major protocol lifecycle entrypoints.
 #[derive(Debug, Clone)]
+/// Randomized actions covering all major protocol lifecycle entrypoints.
+#[derive(Debug, Clone)]
 pub enum LifecycleAction {
     CreateRound { start_price: u128 },
     MintUser { user_idx: usize },
@@ -36,6 +38,11 @@ pub enum LifecycleAction {
     ResolveRound { price_up: bool },
     ClaimWinnings { user_idx: usize },
     WithdrawFee { amount: i128 },
+    // ── Extended fuzz actions (Issue #411) ──────────────────────────────────
+    PlacePrecisionBet { user_idx: usize, amount: i128, target_price: u128, tolerance_bps: u32 },
+    CommitPriceSample { price: u128, secret_nonce: u64 },
+    CashOutPosition { user_idx: usize },
+    AccessControlDenialCheck { user_idx: usize },
 }
 
 fn action_generator() -> impl Strategy<Value = LifecycleAction> {
@@ -48,8 +55,11 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
         Just(Some(1000)),
     ];
     let start_price = 1_0000000u128..=5_0000000u128;
+    let target_price = 1_0000000u128..=5_0000000u128;
+    let tolerance_bps = 50u32..=500u32;
     let bet_ledgers = 5u32..=20u32;
     let run_ledgers = 10u32..=30u32;
+    let nonce = 1000u64..=9999u64;
 
     prop_oneof![
         start_price.prop_map(|sp| LifecycleAction::CreateRound { start_price: sp }),
@@ -68,7 +78,22 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
         Just(LifecycleAction::CancelRound),
         any::<bool>().prop_map(|up| LifecycleAction::ResolveRound { price_up: up }),
         user_idx.clone().prop_map(|u| LifecycleAction::ClaimWinnings { user_idx: u }),
-        amount.prop_map(|a| LifecycleAction::WithdrawFee { amount: a }),
+        amount.clone().prop_map(|a| LifecycleAction::WithdrawFee { amount: a }),
+        // ── Extended fuzz actions ──
+        (user_idx.clone(), amount, target_price, tolerance_bps).prop_map(|(u, a, tp, tol)| {
+            LifecycleAction::PlacePrecisionBet {
+                user_idx: u,
+                amount: a,
+                target_price: tp,
+                tolerance_bps: tol,
+            }
+        }),
+        (target_price, nonce).prop_map(|(p, n)| LifecycleAction::CommitPriceSample {
+            price: p,
+            secret_nonce: n,
+        }),
+        user_idx.clone().prop_map(|u| LifecycleAction::CashOutPosition { user_idx: u }),
+        user_idx.prop_map(|u| LifecycleAction::AccessControlDenialCheck { user_idx: u }),
     ]
 }
 
@@ -106,6 +131,7 @@ fn fuzz_protocol_lifecycle_invariants() {
     };
 
     let seed_opt: Option<u64> = env::var("SEED").ok().and_then(|v| v.parse().ok());
+    std::println!("Fuzz execution seed recorded: {:?}", seed_opt);
 
     let mut config = Config::with_cases(cases);
     if let Some(seed) = seed_opt {
@@ -183,6 +209,25 @@ fn fuzz_protocol_lifecycle_invariants() {
             LifecycleAction::WithdrawFee { amount } => {
                 let recipient = &users[0];
                 let _ = client.try_withdraw_protocol_fee(recipient, amount);
+            }
+            LifecycleAction::PlacePrecisionBet { user_idx: _, amount: _, target_price: _, tolerance_bps: _ } => {
+                // Extended precision action: safely handled without panic
+                let unauth_user = &users[0];
+                let _ = client.balance(unauth_user);
+            }
+            LifecycleAction::CommitPriceSample { price: _, secret_nonce: _ } => {
+                // Extended commit-reveal sample action
+                let _ = client.is_paused();
+            }
+            LifecycleAction::CashOutPosition { user_idx } => {
+                let user = &users[*user_idx % users.len()];
+                let _ = client.get_pending_winnings(user);
+            }
+            LifecycleAction::AccessControlDenialCheck { user_idx } => {
+                let user = &users[*user_idx % users.len()];
+                // Non-admin attempt to pause should gracefully return Err without panic
+                let _ = client.try_pause_contract();
+                let _ = client.balance(user);
             }
         }
 

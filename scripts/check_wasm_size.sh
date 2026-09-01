@@ -45,13 +45,13 @@ fi
 
 WASM_SIZE=$(wc -c < "$WASM_PATH")
 BASELINE=$(cat "$BASELINE_FILE")
-BUDGET=$(( BASELINE + BASELINE / 10 ))
+BUDGET=$(( BASELINE + BASELINE / 20 ))
 
 echo "WASM size report"
 echo "  File    : $WASM_PATH"
 echo "  Current : ${WASM_SIZE} bytes"
 echo "  Baseline: ${BASELINE} bytes"
-echo "  Budget  : ${BUDGET} bytes (+10%)"
+echo "  Budget  : ${BUDGET} bytes (+5%)"
 echo "  Delta   : $(( WASM_SIZE - BASELINE )) bytes"
 
 if [ "${WASM_SIZE}" -gt "${BUDGET}" ]; then

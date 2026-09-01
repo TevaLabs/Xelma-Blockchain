@@ -694,6 +694,12 @@ fn test_create_round_accepts_boundary_prices() {
     // Cancel to allow a second round
     client.cancel_round(&0u32);
 
+    // A ledger sequence backs at most one round (oracle payloads bind to
+    // `Round.start_ledger`), so advance before creating the replacement.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
     // Maximum allowed price
     client.create_round(&1_000_000_000_000_000_000u128, &None);
     assert!(client.get_active_round().is_some());

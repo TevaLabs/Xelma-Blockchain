@@ -19,10 +19,11 @@ ever active at a given moment.
 
 | Value | Variant      | Meaning                                                                  |
 |-------|--------------|--------------------------------------------------------------------------|
-| `0`   | `Active`     | Not paused; a round is currently live (bets open or in reveal window).   |
-| `1`   | `Paused`     | Emergency-paused by admin; all mutations rejected except `unpause`.      |
-| `2`   | `ClaimsOnly` | Not paused; no active round. Only `claim_winnings` is meaningful.        |
+| `0`   | `Active`     | Protocol in `Normal` runtime mode; active round is live.                 |
+| `1`   | `Paused`     | Protocol in `FullyPaused` runtime mode; all mutations blocked.            |
+| `2`   | `ClaimsOnly` | Protocol in `ClaimsOnly` runtime mode or idle state; claims permitted.   |
 
+> **RuntimeMode Mapping**: `ProtocolStatus::Paused` corresponds strictly to `RuntimeMode::FullyPaused` (`set_runtime_mode(2)`), while `ProtocolStatus::ClaimsOnly` corresponds to `RuntimeMode::ClaimsOnly` (`set_runtime_mode(1)`).
 > **Priority rule**: `Paused` is returned first regardless of round state.
 > When the contract is paused and an active round exists, `get_protocol_status()`
 > still returns `Paused`. The round's own `get_round_status()` continues to

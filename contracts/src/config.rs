@@ -1039,10 +1039,18 @@ pub fn _collect_protocol_fee(
     if fee_amount <= 0 {
         return Ok(());
     }
+
+    // Insurance fund split (Issue #367): a configurable portion of the
+    // fee goes to the segregated insurance fund, the remainder to ops.
+    let insurance_amount = crate::insurance::collect_insurance_fee(env, round_id, fee_amount)?;
+    let ops_amount = fee_amount
+        .checked_sub(insurance_amount)
+        .ok_or(ContractError::Overflow)?;
+
     let treasury_key = DataKeyCore::ProtocolFeeTreasury;
     let current: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
     let new_treasury = current
-        .checked_add(fee_amount)
+        .checked_add(ops_amount)
         .ok_or(ContractError::Overflow)?;
     env.storage().persistent().set(&treasury_key, &new_treasury);
     _extend_persistent_ttl(env, &treasury_key);
