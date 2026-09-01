@@ -3,7 +3,7 @@
 
 use super::config_helpers::apply_max_stake;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{DataKeyCore, DataKeyScoped};
+use crate::types::{DataKeyCore, DataKeyExt, DataKeyScoped};
 use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
@@ -175,6 +175,13 @@ fn test_batch_touch_ttl_skips_absent_keys() {
             DataKeyCore::Admin,
             DataKeyCore::CloseBufferLedgers, // not set during init
             DataKeyCore::MaxStake,            // not set during init
+            DataKeyCore::OracleQuorum,
+            DataKeyCore::DisputeLedgers,
+            DataKeyCore::Ext(DataKeyExt::LeaderboardWins),
+            DataKeyCore::Ext(DataKeyExt::LeaderboardStreak),
+            DataKeyCore::Ext(DataKeyExt::SeasonId),
+            DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins),
+            DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak),
         ],
     );
 
@@ -222,4 +229,101 @@ fn test_batch_touch_ttl_rejects_paused_contract() {
         result.is_err(),
         "batch_touch_ttl should fail when contract is paused"
     );
+}
+
+/// Ensures every key in the Ext/leaderboard/quorum/dispute family is accepted
+/// by the batch_touch_ttl allowlist (issue #423). The keys are absent from
+/// storage after a plain initialize so they are expected to be *skipped* (not
+/// touched), but the call must not be rejected.
+#[test]
+fn test_batch_touch_ttl_accepts_ext_leaderboard_quorum_dispute_keys() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // All keys are allowlisted but none exist yet after bare init.
+    let keys: Vec<DataKeyCore> = Vec::from_array(
+        &env,
+        [
+            DataKeyCore::OracleQuorum,
+            DataKeyCore::DisputeLedgers,
+            DataKeyCore::Ext(DataKeyExt::LeaderboardWins),
+            DataKeyCore::Ext(DataKeyExt::LeaderboardStreak),
+            DataKeyCore::Ext(DataKeyExt::SeasonId),
+            DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins),
+            DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak),
+        ],
+    );
+
+    // None exist yet → all skipped, none touched; the call itself must succeed.
+    let touched = client.batch_touch_ttl(&keys);
+    assert_eq!(touched, 0, "newly allowlisted keys absent from storage should be skipped");
+}
+
+/// Ensures the new governance/config keys added in issue #423 are accepted
+/// by the batch_touch_ttl allowlist. After setting each key the call must
+/// touch it and return a count ≥ 1.
+#[test]
+fn test_batch_touch_ttl_accepts_new_config_and_gov_keys() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Write each new key so it exists in storage, then assert batch_touch_ttl
+    // can bump all of them without an allowlist rejection.
+    client.set_gov_approver(&Address::generate(&env));
+    client.set_gov_proposal_ttl(&200u32);
+    client.set_access_control_enabled(&true);
+
+    let keys: Vec<DataKeyCore> = Vec::from_array(
+        &env,
+        [
+            DataKeyCore::GovApprover,
+            DataKeyCore::GovProposalTtlLedgers,
+            DataKeyCore::AccessControlEnabled,
+            // Absent-but-allowlisted: touching skips them gracefully.
+            DataKeyCore::EpochMintBudget,
+            DataKeyCore::EarlyCashoutBps,
+            DataKeyCore::FeeModel,
+            DataKeyCore::PrecisionPayoutPolicy,
+            DataKeyCore::MinBet,
+            DataKeyCore::NextGovProposalId,
+        ],
+    );
+
+    let touched = client.batch_touch_ttl(&keys);
+    // GovApprover, GovProposalTtlLedgers, AccessControlEnabled exist → 3 touched.
+    assert_eq!(touched, 3, "only keys written to storage should be counted as touched");
+
+    // Verify the touched keys have fresh TTLs.
+    let gov_approver_ttl = env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKeyCore::GovApprover)
+    });
+    assert!(gov_approver_ttl >= 518_400, "GovApprover TTL should be bumped");
+
+    let gov_ttl_ttl = env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKeyCore::GovProposalTtlLedgers)
+    });
+    assert!(gov_ttl_ttl >= 518_400, "GovProposalTtlLedgers TTL should be bumped");
+
+    let ac_ttl = env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKeyCore::AccessControlEnabled)
+    });
+    assert!(ac_ttl >= 518_400, "AccessControlEnabled TTL should be bumped");
 }
