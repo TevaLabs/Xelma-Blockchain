@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
-use alloc::vec::Vec as StdVec;
 use crate::admin::{
     _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
     _require_supported_schema,
@@ -23,11 +22,17 @@ use crate::settlement_math::{
 use crate::storage::clear_round_storage;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
+    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord,
+    OraclePayload, OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment,
+    PrecisionPayoutPolicy, PrecisionPrediction, PriceSample, ResolvedParticipant, Round,
+    RoundArchiveStatus, RoundMode, RoundSettlement, TwapSamplesKey, UserOutcomeType, UserPosition,
+    UserRoundOutcome, UserStats,
     HbGateConfig, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord, OraclePayload,
     OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy,
     PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode, TwapSamplesKey,
     UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
+use alloc::vec::Vec as StdVec;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
 
@@ -942,7 +947,11 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         .checked_sub(round.start_ledger)
         .ok_or(ContractError::Overflow)?;
     let round_end_estimate = round_start
-        .checked_add((round_duration_ledgers as u64).checked_mul(SECONDS_PER_LEDGER).ok_or(ContractError::Overflow)?)
+        .checked_add(
+            (round_duration_ledgers as u64)
+                .checked_mul(SECONDS_PER_LEDGER)
+                .ok_or(ContractError::Overflow)?,
+        )
         .ok_or(ContractError::Overflow)?;
 
     let lower_bound = round_start.saturating_sub(skew);
@@ -1353,6 +1362,10 @@ fn _complete_settlement(
 
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     env.storage().persistent().remove(&DataKeyCore::Positions);
+    env.storage()
+        .persistent()
+        .remove(&DataKeyCore::UpDownPositions);
+    env.storage()
     env.storage().persistent().remove(&DataKeyCore::UpDownPositions);
     // A merge left this guarded re-remove of the active round split across
     // two fragments (the `if` keyword and its condition were separated from
@@ -1549,10 +1562,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                round.pool_up.saturating_add(round.pool_down),
-                0i128,
-            )
+            (round.pool_up.saturating_add(round.pool_down), 0i128)
         }
         OneSidedPolicy::CarryForward => {
             if !participants.is_empty() {
@@ -1563,10 +1573,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                0i128,
-                round.pool_up.saturating_add(round.pool_down),
-            )
+            (0i128, round.pool_up.saturating_add(round.pool_down))
         }
     };
 
@@ -2941,7 +2948,8 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         return Err(ContractError::DisputeWindowExpired);
     }
 
-    let resolved_at: u32 = _read_resolved_at(&env, round_id).ok_or(ContractError::DisputeWindowExpired)?;
+    let resolved_at: u32 =
+        _read_resolved_at(&env, round_id).ok_or(ContractError::DisputeWindowExpired)?;
     if env.ledger().sequence() >= resolved_at.saturating_add(dispute_ledgers) {
         return Err(ContractError::DisputeWindowExpired);
     }
@@ -2968,24 +2976,51 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
                     BetSide::Down => 1,
                 };
                 _persist_user_outcome(
-                    &env, round_id, 0, &user, side, 0, pos.amount, pos.amount,
+                    &env,
+                    round_id,
+                    0,
+                    &user,
+                    side,
+                    0,
+                    pos.amount,
+                    pos.amount,
                     UserOutcomeType::Refund,
                 );
             }
             let pred_key = DataKeyScoped::PrecisionPosition(round_id, user.clone());
             let commit_key = DataKeyScoped::PrecisionCommitment(round_id, user.clone());
-            if let Some(pred) = env.storage().persistent().get::<_, PrecisionPrediction>(&pred_key) {
+            if let Some(pred) = env
+                .storage()
+                .persistent()
+                .get::<_, PrecisionPrediction>(&pred_key)
+            {
                 _accumulate_pending(&env, user.clone(), pred.amount)?;
                 _persist_user_outcome(
-                    &env, round_id, 1, &user, 2, pred.predicted_price, pred.amount, pred.amount,
+                    &env,
+                    round_id,
+                    1,
+                    &user,
+                    2,
+                    pred.predicted_price,
+                    pred.amount,
+                    pred.amount,
                     UserOutcomeType::Refund,
                 );
-            } else if let Some(commit) =
-                env.storage().persistent().get::<_, PrecisionCommitment>(&commit_key)
+            } else if let Some(commit) = env
+                .storage()
+                .persistent()
+                .get::<_, PrecisionCommitment>(&commit_key)
             {
                 _accumulate_pending(&env, user.clone(), commit.amount)?;
                 _persist_user_outcome(
-                    &env, round_id, 1, &user, 2, 0, commit.amount, commit.amount,
+                    &env,
+                    round_id,
+                    1,
+                    &user,
+                    2,
+                    0,
+                    commit.amount,
+                    commit.amount,
                     UserOutcomeType::Refund,
                 );
             }
@@ -2994,12 +3029,20 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
 
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
-            env.storage().persistent().remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage().persistent().remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage().persistent().remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
+            env.storage()
+                .persistent()
+                .remove(&DataKeyScoped::Position(round_id, user.clone()));
+            env.storage()
+                .persistent()
+                .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
+            env.storage()
+                .persistent()
+                .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
         }
     }
-    env.storage().persistent().remove(&DataKeyScoped::RoundParticipants(round_id));
+    env.storage()
+        .persistent()
+        .remove(&DataKeyScoped::RoundParticipants(round_id));
 
     let round = _round_from_settlement(&settlement);
     _archive_round(
@@ -3018,7 +3061,12 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("round"), symbol_short!("voided")),
-        (round_id, settlement.final_price, participants.len() as u32, settlement.fee_amount),
+        (
+            round_id,
+            settlement.final_price,
+            participants.len() as u32,
+            settlement.fee_amount,
+        ),
     );
     Ok(())
 }
@@ -3032,7 +3080,8 @@ pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         return Err(ContractError::DisputeWindowExpired);
     }
 
-    let resolved_at: u32 = _read_resolved_at(&env, round_id).ok_or(ContractError::DisputeWindowExpired)?;
+    let resolved_at: u32 =
+        _read_resolved_at(&env, round_id).ok_or(ContractError::DisputeWindowExpired)?;
     if env.ledger().sequence() < resolved_at.saturating_add(dispute_ledgers) {
         return Err(ContractError::ClaimLocked);
     }
@@ -3069,12 +3118,20 @@ pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
 
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
-            env.storage().persistent().remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage().persistent().remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage().persistent().remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
+            env.storage()
+                .persistent()
+                .remove(&DataKeyScoped::Position(round_id, user.clone()));
+            env.storage()
+                .persistent()
+                .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
+            env.storage()
+                .persistent()
+                .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
         }
     }
-    env.storage().persistent().remove(&DataKeyScoped::RoundParticipants(round_id));
+    env.storage()
+        .persistent()
+        .remove(&DataKeyScoped::RoundParticipants(round_id));
 
     let round = _round_from_settlement(&settlement);
     _archive_round(
@@ -3093,7 +3150,12 @@ pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("round"), symbol_short!("finalized")),
-        (round_id, settlement.final_price, participants.len() as u32, settlement.fee_amount),
+        (
+            round_id,
+            settlement.final_price,
+            participants.len() as u32,
+            settlement.fee_amount,
+        ),
     );
     Ok(())
 }

@@ -143,6 +143,22 @@ jobs:
       - name: Build contract (release)
         run: cargo rustc --manifest-path=contracts/Cargo.toml --crate-type=cdylib --target=wasm32v1-none --release --locked
 
+      - name: Optimize WASM for deployment
+        run: |
+          WASM=target/wasm32v1-none/release/xelma_contract.wasm
+          BEFORE=$(stat -c%s "$WASM")
+          # Install wasm-opt from binaryen if not present
+          if ! command -v wasm-opt &>/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq binaryen >/dev/null 2>&1 || true
+          fi
+          if command -v wasm-opt &>/dev/null; then
+            wasm-opt -Oz "$WASM" -o "$WASM"
+            AFTER=$(stat -c%s "$WASM")
+            echo "WASM optimized: $BEFORE -> $AFTER bytes (saved $(( BEFORE - AFTER )) bytes)"
+          else
+            echo "wasm-opt not available, skipping optimization"
+          fi
+
       - name: Check WASM artifact exists
         run: |
           if [ ! -f "target/wasm32v1-none/release/xelma_contract.wasm" ]; then

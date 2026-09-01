@@ -525,7 +525,8 @@ fn test_resolution_only_allowed_after_run_ledgers() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert_eq!(result, Err(Ok(ContractError::RoundNotEnded)));
 
     // Advance to end_ledger
@@ -542,7 +543,8 @@ fn test_resolution_only_allowed_after_run_ledgers() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Round should be cleared
     assert_eq!(client.get_active_round(), None);
