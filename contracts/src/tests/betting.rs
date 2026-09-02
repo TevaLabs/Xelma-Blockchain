@@ -8,7 +8,7 @@ use crate::types::BetSide;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, Env, TryIntoVal,
+    Address, BytesN, Env, TryIntoVal,
 };
 
 #[test]
@@ -361,6 +361,29 @@ fn test_exposure_cap_at_boundary_succeeds() {
     // Exactly at cap — must succeed
     client.place_bet(&user, &100_0000000, &BetSide::Up);
     assert_eq!(client.balance(&user), 900_0000000);
+}
+
+#[test]
+fn test_exposure_cap_counts_existing_precision_commitment() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user);
+    apply_max_user_exposure(&env, &client, Some(100_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    client.commit_prediction(&user, &BytesN::from_array(&env, &[7; 32]), &60_0000000);
+    let result = client.try_place_precision_prediction(&user, &41_0000000, &2297u128);
+    assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
+    assert_eq!(client.balance(&user), 40_0000000);
 }
 
 #[test]
