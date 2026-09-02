@@ -355,7 +355,9 @@ settlement (plus the admin override).
 
 ## 5. Resolution Flow (Step by Step)
 
-### 5.1 Legacy Single-Feed Path (`resolve_round`)
+### 5.1 Production Resolution Path (`resolve_round`)
+
+> The legacy bulk-map settlement path is intentionally quarantined. It is disabled by default and only available behind the temporary `legacy-map-settlement` Cargo feature for migration validation before the removal deadline of 2026-12-31. Production settlement must use the indexed round/user storage layout.
 
 1. **Verify round eligibility**
    - `get_active_round()` returns a round.

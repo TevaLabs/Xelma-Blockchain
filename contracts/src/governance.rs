@@ -105,6 +105,9 @@ fn _action_code(action: &GovAction) -> u32 {
         GovAction::SetTreasuryAddress(_) => 4,
         GovAction::SetAdmin(_) => 5,
         GovAction::SetOracle(_) => 6,
+        GovAction::WithdrawInsuranceFund(_, _) => 7,
+        GovAction::SetInsuranceSplitBps(_) => 8,
+        GovAction::SetInsuranceCoverageBps(_) => 9,
     }
 }
 
@@ -304,6 +307,15 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
         GovAction::SetOracle(new_oracle) => {
             env.storage().persistent().set(&DataKeyCore::Oracle, &new_oracle);
             _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
+        }
+        GovAction::WithdrawInsuranceFund(recipient, amount) => {
+            crate::insurance::execute_withdraw_insurance_fund(&env, &recipient, *amount)?;
+        }
+        GovAction::SetInsuranceSplitBps(bps) => {
+            crate::insurance::set_insurance_split_bps(env.clone(), *bps)?;
+        }
+        GovAction::SetInsuranceCoverageBps(bps) => {
+            crate::insurance::set_insurance_coverage_bps(env.clone(), *bps)?;
         }
     }
 

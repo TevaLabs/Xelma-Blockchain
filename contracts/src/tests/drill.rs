@@ -291,3 +291,185 @@ fn test_emergency_incident_simulation_lifecycle() {
     assert!(!health.paused);
     assert!(health.has_active_round);
 }
+
+// ─── Issue #417: chaos recovery across migrate + active round + pause ───────
+//
+// The full emergency interleaving the ops runbook cares about:
+//   create round → pause → migration dry-run → claims-only → resume/cancel.
+// Both drills prove the central invariant — **no funds are ever stuck** —
+// regardless of how the emergency states are interleaved, and that migration
+// dry-runs are atomic (they never move funds or mutate storage, even when
+// refused).
+
+/// Chaos recovery drill, resume path (Issue #417):
+/// create round → pause → migration dry-run → claims-only → resolve → claim.
+#[test]
+fn test_chaos_recovery_migrate_active_round_pause_resume() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+
+    // ── 1. Normal operation: create round and place bets ──────────────────
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&carol);
+    let initial_total = 3 * 1000_0000000i128;
+
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &200_0000000, &BetSide::Down);
+    let total_staked = 300_0000000i128;
+
+    // Migration dry-run with an active round is refused atomically: no
+    // storage is touched and no funds move.
+    assert_eq!(
+        client.try_migrate_schema_v1_to_v2(&true),
+        Err(Ok(ContractError::MigrationActiveRound))
+    );
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+
+    // ── 2. Emergency pause (FullyPaused mode 2) ───────────────────────────
+    client.pause_contract();
+    assert!(client.is_paused());
+
+    // Trading and claiming are locked.
+    assert_eq!(
+        client.try_place_bet(&carol, &50_0000000, &BetSide::Up),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert_eq!(
+        client.try_claim_winnings(&alice),
+        Err(Ok(ContractError::ContractPaused))
+    );
+
+    // Migration dry-run while paused is refused by the pause gate and leaves
+    // balances untouched.
+    assert_eq!(
+        client.try_migrate_schema_v1_to_v2(&true),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+
+    // ── 3. Claims-only (mode 1): claims/resolution allowed, bets blocked ──
+    client.set_runtime_mode(&1u32);
+    assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);
+    assert!(!client.is_paused());
+    assert_eq!(
+        client.try_place_bet(&carol, &50_0000000, &BetSide::Up),
+        Err(Ok(ContractError::ContractPaused))
+    );
+
+    // Migration dry-run is still refused (active round) during claims-only.
+    assert_eq!(
+        client.try_migrate_schema_v1_to_v2(&true),
+        Err(Ok(ContractError::MigrationActiveRound))
+    );
+
+    // ── 4. Resume path: resolve the in-flight round during claims-only ────
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 20;
+    });
+    let round = client.get_active_round().unwrap();
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000, // price went UP → alice wins
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 900,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(client.get_active_round(), None);
+
+    // No funds stuck: every staked stroop is pending (or already claimed).
+    let pending_sum = client.get_pending_winnings(&alice)
+        + client.get_pending_winnings(&bob)
+        + client.get_pending_winnings(&carol);
+    assert_eq!(pending_sum, total_staked);
+
+    // Claim everything; balances fully reconcile to the initial mints.
+    client.claim_winnings(&alice);
+    client.claim_winnings(&bob);
+    client.claim_winnings(&carol);
+    let balance_sum = client.balance(&alice) + client.balance(&bob) + client.balance(&carol);
+    assert_eq!(balance_sum, initial_total);
+
+    // ── 5. Recovery to Normal ─────────────────────────────────────────────
+    client.set_runtime_mode(&0u32);
+    assert_eq!(client.get_runtime_mode(), 0u32);
+    let health = client.get_protocol_health();
+    assert!(!health.paused);
+}
+
+/// Chaos recovery drill, cancel path (Issue #417):
+/// create round → pause → migration dry-run → claims-only → cancel → claim.
+#[test]
+fn test_chaos_recovery_migrate_active_round_pause_cancel() {
+    let env = Env::default();
+    let (client, _contract_id, _admin, _oracle) = setup_contract(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // ── 1. Normal operation: create round and place bets ──────────────────
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    let initial_total = 2 * 1000_0000000i128;
+
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &200_0000000, &BetSide::Down);
+    let total_staked = 300_0000000i128;
+
+    // ── 2. Emergency pause ────────────────────────────────────────────────
+    client.pause_contract();
+    assert!(client.is_paused());
+
+    // ── 3. Migration dry-run while paused: refused, no funds touched ──────
+    assert_eq!(
+        client.try_migrate_schema_v1_to_v2(&true),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+
+    // ── 4. Claims-only ────────────────────────────────────────────────────
+    client.set_runtime_mode(&1u32);
+    assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);
+
+    // Migration dry-run in claims-only with an active round is refused
+    // atomically by the active-round gate.
+    assert_eq!(
+        client.try_migrate_schema_v1_to_v2(&true),
+        Err(Ok(ContractError::MigrationActiveRound))
+    );
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+
+    // ── 5. Cancel path: refunds every stake in full during claims-only ────
+    client.cancel_round(&3u32);
+    assert_eq!(client.get_active_round(), None);
+    assert_eq!(client.get_pending_winnings(&alice), 100_0000000);
+    assert_eq!(client.get_pending_winnings(&bob), 200_0000000);
+    assert_eq!(
+        client.get_pending_winnings(&alice) + client.get_pending_winnings(&bob),
+        total_staked
+    );
+
+    client.claim_winnings(&alice);
+    client.claim_winnings(&bob);
+    assert_eq!(client.balance(&alice) + client.balance(&bob), initial_total);
+
+    // ── 6. Recovery to Normal: a fresh round can be created and traded ────
+    client.set_runtime_mode(&0u32);
+    assert_eq!(client.get_runtime_mode(), 0u32);
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+    client.create_round(&1_0000000, &None);
+    assert!(client.get_active_round().is_some());
+}
