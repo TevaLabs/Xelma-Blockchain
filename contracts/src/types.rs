@@ -156,6 +156,12 @@ pub enum DataKeyExt {
     SeasonLeaderboardWins,
     SeasonLeaderboardStreak,
     SeasonArchive(u32),
+    /// On-chain constitution metadata defining parameter governance rules (Issue #363).
+    ConstitutionMetadata,
+    /// Pending amendment proposal by ID (Issue #363).
+    Amendment(u64),
+    /// Monotonic counter for amendment IDs (Issue #363).
+    NextAmendmentId,
 }
 
 /// Parameterised and round-scoped storage keys.
@@ -953,6 +959,73 @@ pub const CANCEL_REASON_FALLBACK_REFUND: u32 = 3;
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingWinningsUpdatedAtKey(pub Address);
+
+/// Parameter classification for the on-chain constitution (Issue #363).
+/// Immutable parameters cannot be changed; timelocked parameters require
+/// a timelock before activation; dual-approval parameters require both
+/// admin and approver sign-off.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum ParameterClass {
+    /// Cannot be modified after initialization
+    Immutable = 0,
+    /// Requires timelock period before activation
+    Timelocked = 1,
+    /// Requires both admin and approver approval
+    DualApproval = 2,
+    /// May be changed immediately (least restrictive)
+    Normal = 3,
+}
+
+/// Amendment proposal lifecycle status for the constitution (Issue #363).
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum AmendmentStatus {
+    /// Proposal submitted, awaiting veto window expiry or approvals
+    Pending = 0,
+    /// Veto has been exercised, proposal is cancelled
+    Vetoed = 1,
+    /// Timelock period has elapsed, ready for activation
+    ActivationReady = 2,
+    /// Amendment has been activated and parameter changed
+    Activated = 3,
+    /// Amendment expired before activation
+    Expired = 4,
+}
+
+/// Amendment proposal for parameter changes with timelock and veto window (Issue #363).
+/// Represents a proposed change to a protocol parameter that must pass through a
+/// governance lifecycle: optional veto window, timelock, then activation.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Amendment {
+    pub id: u64,
+    pub proposer: Address,
+    pub parameter_name: Symbol,
+    pub new_value: Val,
+    pub created_at_ledger: u32,
+    pub veto_deadline_ledger: u32,
+    pub activation_deadline_ledger: u32,
+    pub status: AmendmentStatus,
+}
+
+/// On-chain constitution defining parameter governance rules (Issue #363).
+/// Classifies each protocol parameter and defines the amendment lifecycle
+/// (veto window, timelock, dual approval requirements).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstitutionMetadata {
+    /// Veto window duration in ledgers (0 = no veto window)
+    pub veto_window_ledgers: u32,
+    /// Timelock duration in ledgers before amendments can activate
+    pub timelock_ledgers: u32,
+    /// Whether dual-approval (admin + approver) is required for amendments
+    pub dual_approval_required: bool,
+    /// Ledger at which the constitution was established
+    pub established_at_ledger: u32,
+}
 
 /// Legacy monolithic storage key — retained for a few migration/read paths.
 #[contracttype]
