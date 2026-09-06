@@ -677,6 +677,48 @@ impl VirtualTokenContract {
         governance::get_gov_proposal(env, proposal_id)
     }
 
+    // ─── On-Chain Constitution Framework (Issue #363) ──────────────────────────
+
+    /// Establishes the on-chain constitution with governance rules (admin only).
+    pub fn establish_constitution(
+        env: Env,
+        veto_window_ledgers: u32,
+        timelock_ledgers: u32,
+        dual_approval_required: bool,
+    ) -> Result<(), ContractError> {
+        governance::establish_constitution(env, veto_window_ledgers, timelock_ledgers, dual_approval_required)
+    }
+
+    /// Returns the on-chain constitution metadata, if established.
+    pub fn get_constitution(env: Env) -> Option<crate::types::ConstitutionMetadata> {
+        governance::get_constitution(env)
+    }
+
+    /// Proposes a parameter amendment with timelock and optional veto window.
+    pub fn propose_amendment(
+        env: Env,
+        proposer: Address,
+        parameter_name: Symbol,
+        new_value: Val,
+    ) -> Result<u64, ContractError> {
+        governance::propose_amendment(env, proposer, parameter_name, new_value)
+    }
+
+    /// Vetoes a pending amendment before its veto window expires.
+    pub fn veto_amendment(env: Env, vetoer: Address, amendment_id: u64) -> Result<(), ContractError> {
+        governance::veto_amendment(env, vetoer, amendment_id)
+    }
+
+    /// Activates an amendment after timelock expires.
+    pub fn activate_amendment(env: Env, activator: Address, amendment_id: u64) -> Result<(), ContractError> {
+        governance::activate_amendment(env, activator, amendment_id)
+    }
+
+    /// Retrieves an amendment proposal record by ID.
+    pub fn get_amendment(env: Env, amendment_id: u64) -> Option<crate::types::Amendment> {
+        governance::get_amendment(env, amendment_id)
+    }
+
     /// Schedules a timelocked windows update (alias for [`Self::schedule_windows`]).
     /// bet_ledgers: Number of ledgers users can place bets
     /// run_ledgers: Total number of ledgers before round can be resolved

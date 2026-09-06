@@ -52,4 +52,6 @@ mod windows;
 mod archive_participation;
 mod insurance;
 mod precision_scoring;
+mod simulate_tests;
+mod simulate_parity_tests;
 
