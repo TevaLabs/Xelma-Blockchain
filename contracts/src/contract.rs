@@ -3,7 +3,7 @@
 
 #![allow(dead_code)]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Val, Vec};
 
 use crate::access_control;
 use crate::errors::ContractError;
@@ -699,7 +699,7 @@ impl VirtualTokenContract {
         env: Env,
         proposer: Address,
         parameter_name: Symbol,
-        new_value: Val,
+        new_value: i128,
     ) -> Result<u64, ContractError> {
         governance::propose_amendment(env, proposer, parameter_name, new_value)
     }
@@ -967,6 +967,18 @@ impl VirtualTokenContract {
     /// Returns the configured early cash-out penalty bps, if enabled.
     pub fn get_early_cashout_bps(env: Env) -> Option<u32> {
         config::get_early_cashout_bps(env)
+    }
+
+    /// Sets the optional sealed-bid commit fee (admin only, direct set — not timelocked).
+    /// `None` disables the fee entirely (default).
+    /// `Some(amount)` sets the fee in stroops; amount must be >= 0.
+    pub fn set_commit_fee(env: Env, amount: Option<i128>) -> Result<(), ContractError> {
+        config::set_commit_fee(env, amount)
+    }
+
+    /// Returns the configured commit fee in stroops, or 0 if not set.
+    pub fn get_commit_fee(env: Env) -> i128 {
+        config::get_commit_fee(env)
     }
 
     /// Creates a new prediction round (admin only)

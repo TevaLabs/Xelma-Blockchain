@@ -498,6 +498,82 @@ pub fn get_max_precision_participants(env: Env) -> u32 {
         .unwrap_or(DEFAULT_MAX_PRECISION_PARTICIPANTS)
 }
 
+/// Sets the optional sealed-bid commit fee (admin only, direct set — not timelocked).
+///
+/// `None` disables the fee entirely (backward-compatible default).
+/// `Some(amount)` sets the fee in stroops; amount must be >= 0.
+/// A zero fee is equivalent to fee disabled.
+pub fn set_commit_fee(env: Env, amount: Option<i128>) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("cmt_fee"), e);
+    })?;
+
+    let key = DataKeyCore::CommitFee;
+    if let Some(v) = amount {
+        if v < 0 {
+            _emit_action_rejected(
+                &env,
+                &admin,
+                symbol_short!("cmt_fee"),
+                ContractError::InvalidBetAmount,
+            );
+            return Err(ContractError::InvalidBetAmount);
+        }
+        env.storage().persistent().set(&key, &v);
+        _extend_persistent_ttl(&env, &key);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("commit"), symbol_short!("fee_set")),
+        (amount,),
+    );
+    Ok(())
+}
+
+/// Returns the configured commit fee in stroops, or 0 if not set.
+pub fn get_commit_fee(env: Env) -> i128 {
+    let key = DataKeyCore::CommitFee;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key).unwrap_or(0)
+}
+
+/// Collects a commit fee into the protocol treasury and emits an event.
+pub fn _collect_commit_fee(
+    env: &Env,
+    user: &Address,
+    round_id: u64,
+    fee_amount: i128,
+) -> Result<(), ContractError> {
+    if fee_amount <= 0 {
+        return Ok(());
+    }
+    let treasury_key = DataKeyCore::ProtocolFeeTreasury;
+    let current: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
+    let new_treasury = current
+        .checked_add(fee_amount)
+        .ok_or(ContractError::Overflow)?;
+    env.storage().persistent().set(&treasury_key, &new_treasury);
+    _extend_persistent_ttl(env, &treasury_key);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("commit"), symbol_short!("fee")),
+        (user.clone(), round_id, fee_amount, new_treasury),
+    );
+
+    Ok(())
+}
+
 pub fn set_precision_payout_policy(env: Env, policy: u32) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env

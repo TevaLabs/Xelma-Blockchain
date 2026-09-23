@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Val, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -142,6 +142,9 @@ pub enum DataKeyCore {
     GovProposalTtlLedgers,
     /// Monotonic counter for governance proposal ids.
     NextGovProposalId,
+    /// Optional sealed-bid commit fee in stroops (i128), charged once per commit.
+    /// `None` (key absent) or `Some(0)` means fee disabled — backward-compatible.
+    CommitFee,
     /// Overflow bucket for leaderboard/season keys under XDR 50-case limit.
     Ext(DataKeyExt),
 }
@@ -1004,7 +1007,7 @@ pub struct Amendment {
     pub id: u64,
     pub proposer: Address,
     pub parameter_name: Symbol,
-    pub new_value: Val,
+    pub new_value: i128,
     pub created_at_ledger: u32,
     pub veto_deadline_ledger: u32,
     pub activation_deadline_ledger: u32,
@@ -1075,5 +1078,6 @@ pub enum DataKey {
     OracleRotationProposal,
     ArchiveRetention,
     RoundTemplate,
+    CommitFee,
     Ext(DataKeyExt),
 }
