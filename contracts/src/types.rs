@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -1004,7 +1004,7 @@ pub struct Amendment {
     pub id: u64,
     pub proposer: Address,
     pub parameter_name: Symbol,
-    pub new_value: Val,
+    pub new_value: i128,
     pub created_at_ledger: u32,
     pub veto_deadline_ledger: u32,
     pub activation_deadline_ledger: u32,

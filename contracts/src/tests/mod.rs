@@ -54,4 +54,5 @@ mod insurance;
 mod precision_scoring;
 mod simulate_tests;
 mod simulate_parity_tests;
+mod state_machine;
 
