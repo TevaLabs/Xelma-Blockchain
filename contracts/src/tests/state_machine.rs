@@ -536,3 +536,107 @@ fn test_reveal_prediction_fails_in_resolvable_phase() {
         "reveal_prediction in Resolvable phase must return IllegalPhaseTransition"
     );
 }
+
+/// place_precision_prediction fails in Resolvable phase.
+#[test]
+fn test_place_precision_prediction_fails_in_resolvable_phase() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+
+    env.ledger().with_mut(|li| li.sequence_number = 100);
+    client.create_round(&10_0000u128, &Some(1));
+
+    // Advance to Resolvable phase
+    env.ledger().with_mut(|li| li.sequence_number = 120);
+
+    let result = client.try_place_precision_prediction(&user, &100_0000000, &12_5000);
+    assert_eq!(
+        result,
+        Err(Ok(ContractError::IllegalPhaseTransition)),
+        "place_precision_prediction in Resolvable phase must return IllegalPhaseTransition"
+    );
+}
+
+/// commit_prediction fails in Resolvable phase.
+#[test]
+fn test_commit_prediction_fails_in_resolvable_phase() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+
+    env.ledger().with_mut(|li| li.sequence_number = 100);
+    client.create_round(&10_0000u128, &Some(1));
+
+    let hash = BytesN::from_array(&env, &[1u8; 32]);
+
+    // Advance to Resolvable phase
+    env.ledger().with_mut(|li| li.sequence_number = 120);
+
+    let result = client.try_commit_prediction(&user, &hash, &100_0000000);
+    assert_eq!(
+        result,
+        Err(Ok(ContractError::IllegalPhaseTransition)),
+        "commit_prediction in Resolvable phase must return IllegalPhaseTransition"
+    );
+}
+
+
+/// Test that a sequence of rounds can cleanly alternate between UpDown and Precision modes.
+#[test]
+fn test_mode_alternation() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+
+    // Round 1: UpDown mode
+    env.ledger().with_mut(|li| li.sequence_number = 100);
+    client.create_round(&10_0000u128, &None);
+    client.place_bet(&user, &100_0000, &BetSide::Up);
+    
+    // Resolve Round 1
+    env.ledger().with_mut(|li| li.sequence_number = 120);
+    client.resolve_round(&OraclePayload {
+        price: 11_0000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 100,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: client.address.clone(),
+        confidence: None,
+    });
+
+    // Round 2: Precision mode
+    env.ledger().with_mut(|li| li.sequence_number = 130);
+    client.create_round(&11_0000u128, &Some(1)); // Mode 1 is Precision
+    let hash = BytesN::from_array(&env, &[1u8; 32]);
+    client.commit_prediction(&user, &hash, &100_0000);
+
+    // Cancel Round 2
+    env.ledger().with_mut(|li| li.sequence_number = 140);
+    client.cancel_round(&client.get_active_round().unwrap().round_id);
+
+    // Round 3: UpDown mode again
+    env.ledger().with_mut(|li| li.sequence_number = 150);
+    client.create_round(&11_0000u128, &None);
+    client.place_bet(&user, &100_0000, &BetSide::Down);
+}
+
