@@ -85,3 +85,30 @@ fn test_exposure_cap_boundary_attack_blocked() {
         false,
     );
 }
+
+/// A user cannot spread exposure across a settled-but-unclaimed round and a
+/// new active round to bypass the configured portfolio limit.
+#[test]
+fn test_cross_round_portfolio_exposure_and_claim_release() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+    let user = Address::generate(&env);
+
+    apply_max_user_exposure(&env, &client, Some(100));
+    client.mint_initial(&user);
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&user, &60, &BetSide::Up);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    client.resolve_round(&oracle_payload(&env, &contract_id, 2_000u128, 0, 1));
+
+    client.create_round(&1_000u128, &None);
+    let result = client.try_place_bet(&user, &41, &BetSide::Down);
+    assert_eq!(
+        result,
+        Err(Ok(ContractError::PortfolioExposureCapExceeded))
+    );
+
+    client.claim_winnings(&user);
+    client.place_bet(&user, &41, &BetSide::Down);
+}

@@ -11,8 +11,8 @@
 //! (`Position` + `PrecisionPosition` + `PrecisionCommitment`) should route
 //! through `clear_user_positions` or `clear_round_storage`.
 
-use crate::types::DataKeyCore;
-use crate::types::DataKeyScoped;
+use crate::risk;
+use crate::types::{DataKeyCore, DataKeyScoped, PrecisionCommitment, PrecisionPrediction, UserPosition};
 use soroban_sdk::{Address, Env, Vec};
 
 /// Removes **all** position storage keys for a single participant,
@@ -27,9 +27,30 @@ use soroban_sdk::{Address, Env, Vec};
 /// on a missing key).
 #[inline]
 pub fn clear_user_positions(env: &Env, round_id: u64, user: &Address) {
+    let position_key = DataKeyScoped::Position(round_id, user.clone());
+    if let Some(position) = env.storage().persistent().get::<_, UserPosition>(&position_key) {
+        let _ = risk::remove_stake(env, user.clone(), position.amount, Some(position.side));
+    } else {
+        let prediction_key = DataKeyScoped::PrecisionPosition(round_id, user.clone());
+        let commitment_key = DataKeyScoped::PrecisionCommitment(round_id, user.clone());
+        let amount = env
+            .storage()
+            .persistent()
+            .get::<_, PrecisionPrediction>(&prediction_key)
+            .map(|prediction| prediction.amount)
+            .or_else(|| {
+                env.storage()
+                    .persistent()
+                    .get::<_, PrecisionCommitment>(&commitment_key)
+                    .map(|commitment| commitment.amount)
+            });
+        if let Some(amount) = amount {
+            let _ = risk::remove_stake(env, user.clone(), amount, None);
+        }
+    }
     env.storage()
         .persistent()
-        .remove(&DataKeyScoped::Position(round_id, user.clone()));
+        .remove(&position_key);
     env.storage()
         .persistent()
         .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));

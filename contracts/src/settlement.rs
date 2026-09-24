@@ -21,6 +21,7 @@ use crate::settlement_math::{
     is_one_sided_pool, total_pot_updown, PriceDirection,
 };
 use crate::storage::clear_round_storage;
+use crate::risk;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
     HbGateConfig, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord, OraclePayload,
@@ -98,15 +99,7 @@ fn _remove_pending_dispute(env: &Env, round_id: u64) {
 fn _clear_dispute_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>) {
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
+            crate::storage::clear_user_positions(env, round_id, &user);
         }
     }
     env.storage()
@@ -337,6 +330,7 @@ pub fn claim_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     // ── Effects ───────────────────────────────────────────────────────────
     // 1. Remove the pending-winnings claim slot first (prevent double-claim).
     env.storage().persistent().remove(&key);
+    risk::remove_pending(&env, user.clone(), pending)?;
     env.storage()
         .persistent()
         .remove(&PendingWinningsUpdatedAtKey(user.clone()));
@@ -432,6 +426,7 @@ pub fn claim_many(env: Env, users: Vec<Address>) -> Result<Vec<i128>, ContractEr
         // ── Effects ───────────────────────────────────────────────────────
         // 1. Remove the pending-winnings claim slot first (prevent double-claim).
         env.storage().persistent().remove(&key);
+        risk::remove_pending(&env, user.clone(), pending)?;
         env.storage()
             .persistent()
             .remove(&PendingWinningsUpdatedAtKey(user.clone()));

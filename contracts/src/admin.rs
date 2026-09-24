@@ -6,6 +6,7 @@ use crate::common::{
     MIN_TWAP_WINDOW_SAMPLES, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
 use crate::errors::ContractError;
+use crate::risk;
 use crate::types::{
     AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt,
     DeviationConfig, DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey,
@@ -1270,6 +1271,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
 
     // CEI: remove storage keys before transferring.
     env.storage().persistent().remove(&pending_key);
+    risk::remove_pending(&env, user.clone(), pending)?;
     env.storage().persistent().remove(&updated_key);
 
     // Credit the admin's balance (conservation: funds are not destroyed).

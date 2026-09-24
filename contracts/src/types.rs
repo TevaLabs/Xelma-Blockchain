@@ -202,6 +202,8 @@ pub enum DataKeyScoped {
     SeasonArchive(u32),
     /// Per-user index of archived round IDs (Issue #281).
     UserArchivedRoundIds(Address),
+    /// Outstanding portfolio exposure for a user: total, Up, and Down.
+    PortfolioExposure(Address),
     /// Allowlist marker for participant access control (Issue #274).
     Allowlisted(Address),
     /// Denylist marker for participant access control (Issue #274).

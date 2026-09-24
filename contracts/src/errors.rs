@@ -32,6 +32,8 @@ pub enum ContractError {
     RoundNotCancellable = 27,
     StakeExceedsMax = 28,
     ExposureCapExceeded = 29,
+    /// The user's active and pending-round portfolio exceeds its configured limit.
+    PortfolioExposureCapExceeded = 71,
     PendingWinningsCapExceeded = 30,
     InvalidStartPrice = 31,
     OracleNonceReused = 33,
