@@ -55,3 +55,4 @@ mod precision_scoring;
 mod simulate_tests;
 mod simulate_parity_tests;
 
+mod test_commit_fee;

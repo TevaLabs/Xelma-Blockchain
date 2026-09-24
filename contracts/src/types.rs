@@ -98,6 +98,8 @@ pub enum DataKeyCore {
     RecentArchivedRoundIds,
     /// Marker written by migrate_schema_v2_to_v3 to prove the migration ran.
     MigratedToV3,
+    /// Optional commit fee deducted on Precision commitments.
+    CommitFee,
     /// Optional protocol settlement fee in basis points (1 bp = 0.01%).
     /// `None` (key absent) means fee disabled — no behaviour change.
     /// Hard cap on fee is enforced at the contract layer, not by storage shape.
@@ -258,6 +260,7 @@ pub enum ConfigChangeKind {
     DisputeLedgers = 17,
     FeeModel = 18,
     EarlyCashoutBps = 19,
+    CommitFee = 20,
 }
 
 /// Payload for a scheduled critical config change.
@@ -284,6 +287,7 @@ pub enum ConfigChangePayload {
     DisputeLedgers(u32),
     FeeModel(FeeModel),
     EarlyCashoutBps(Option<u32>),
+    CommitFee(i128),
 }
 
 /// Pending timelocked config change with activation ledger for on-chain observability.
@@ -1068,6 +1072,7 @@ pub enum DataKey {
     UserRoundOutcome(u64, Address),
     MigratedToV3,
     PendingConfigChange(ConfigChangeKind),
+    CommitFee,
     ProtocolFeeBps,
     ProtocolFeeTreasury,
     LedgerMintCounter(u32),
