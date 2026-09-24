@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Val, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -999,7 +999,7 @@ pub enum AmendmentStatus {
 /// Represents a proposed change to a protocol parameter that must pass through a
 /// governance lifecycle: optional veto window, timelock, then activation.
 #[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Amendment {
     pub id: u64,
     pub proposer: Address,
