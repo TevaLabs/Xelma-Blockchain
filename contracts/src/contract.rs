@@ -748,6 +748,18 @@ impl VirtualTokenContract {
         config::get_min_bet(env)
     }
 
+    pub fn set_commit_fee(env: Env, fee: i128) -> Result<(), ContractError> {
+        config::set_commit_fee(env, fee)
+    }
+
+    pub fn schedule_commit_fee(env: Env, fee: i128) -> Result<(), ContractError> {
+        config::schedule_commit_fee(env, fee)
+    }
+
+    pub fn get_commit_fee(env: Env) -> i128 {
+        config::get_commit_fee(env)
+    }
+
     pub fn set_max_user_exposure(
         env: Env,
         max_exposure: Option<i128>,
