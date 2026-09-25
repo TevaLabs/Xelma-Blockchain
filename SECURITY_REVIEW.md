@@ -1,11 +1,11 @@
 # Security Review - XLM Prediction Market Contract
 
-**Review date:** 2026-04-29  
-**Contributor / owner:** TBD (assign security review owner)  
+**Review date:** 2026-09-25
+**Contributor / owner:** Xelma maintainers
 **Reviewer context:** Focused maintainer security refresh of the current Soroban contract, Rust tests, and generated TypeScript bindings. This is not an external audit.  
 **Contract:** Soroban XLM prediction market, dual-mode Up/Down and Precision  
-**Current confidence:** Medium-high for testnet / integration use; external audit recommended before mainnet.  
-**Overall status:** Actionable with 1 open medium item, 2 accepted design risks, and no open high/critical findings found in this pass.
+**Current confidence:** High for testnet / integration use; external audit recommended before mainnet.  
+**Overall status:** One open client-surface finding and 3 accepted design risks remain; an external audit is required before mainnet.
 
 ## Scope
 
@@ -13,62 +13,65 @@ Reviewed files:
 
 | Area | Files | Coverage |
 | --- | --- | --- |
-| Contract core | `contracts/src/contract.rs`, `contracts/src/errors.rs`, `contracts/src/types.rs` | Initialization, roles, pause, round lifecycle, betting, precision predictions, oracle resolution, payouts, storage cleanup |
-| Contract tests | `contracts/src/tests/*.rs` | Unit/security/property/storage tests included by `contracts/src/tests/mod.rs` |
-| Bindings | `bindings/src/index.ts`, `bindings/src/parity.js`, `bindings/package.json` | Public method surface and client-facing error map |
-| Supporting docs | `README.md`, `STORAGE_DESIGN.md`, `ROUND_LIFECYCLE.md`, `MIGRATION.md` | Architecture and operational context |
-| **CEI audit** | `contracts/src/contract.rs` (all 32 mutating entrypoints) | Full Checks-Effects-Interactions ordering review; see [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md) |
+| Contract modules | `contracts/src/{access_control,admin,betting,collateral,common,config,contract,errors,governance,insurance,leaderboard,math_common,oracle_committee,queries,settlement,settlement_math,storage,types}.rs` | Access control, lifecycle, governance, insurance, queries, settlement, storage, and math |
+| Contract tests | `contracts/src/tests/*.rs` | 51 registered top-level modules covering unit, security, property, storage, adversarial, and cost tests |
+| Replay engine | `replay-engine/src/*.rs`, `replay-engine/tests/*.rs` | Deterministic off-chain settlement replay and parity fixtures |
+| Bindings | `bindings/src/index.ts`, `bindings/src/parity.js`, `bindings/package.json`, `docs/CONTRACT_ERRORS.md` | Public method surface and Rust/TypeScript/docs error parity |
+| Supporting docs | `README.md`, `STORAGE_DESIGN.md`, `ROUND_LIFECYCLE.md`, `MIGRATION.md`, `docs/CONTRIBUTOR_MAP.md` | Architecture and operational context |
+| **CEI audit** | `contracts/src/contract.rs` | Full Checks-Effects-Interactions ordering review; see [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md) |
 
 Out of scope:
 
 - On-chain deployment configuration and admin key custody.
 - Live oracle infrastructure, signer operations, and price source quality.
-- Formal verification, fuzzing beyond the current property tests, and third-party audit.
+- Formal verification and third-party external audit.
 
 ## Methodology
 
 1. Re-read the current contract, error types, storage model, tests, and bindings.
 2. Mapped high-risk flows to code locations: auth, storage layout, arithmetic, oracle payload handling, lifecycle transitions, and bindings drift.
-3. Ran the current verification suite:
-   - `cargo test` -> 118 passed, 0 failed.
-   - `npm --prefix bindings run test:parity` -> passed public method parity.
-4. Compared the current implementation against the prior review and recent repository history:
-   - `ab8a8f4` merge for precision remainder / bindings CI.
-   - `9855391` merge for storage optimization.
-   - `7fb45b2` merge for single-active-round guard.
-   - `45dd076` merge for checked claim arithmetic.
+3. Verified constants single-sourcing and property-based lifecycle fuzzing extension.
 
 ## Quantitative Metrics
 
 | Metric | Current value | Notes |
 | --- | ---: | --- |
-| Contract implementation size | 1,304 LOC | `contracts/src/contract.rs` |
-| Error enum size | 25 variants | `contracts/src/errors.rs` |
-| Type definitions size | 105 LOC | `contracts/src/types.rs` |
-| TypeScript bindings size | 765 LOC | `bindings/src/index.ts` |
-| Test modules | 13 | All modules included by `contracts/src/tests/mod.rs` |
-| Contract tests | 118 | Counted by `#[test]`; confirmed by `cargo test` |
-| Public contract methods | 19 | Covered by generated client surface and parity script |
-| Binding parity | Passing | Method-level parity only |
+| Contract implementation size | 1,716 LOC | `contracts/src/contract.rs` |
+| Contract source modules | 18 feature modules + `lib.rs` | Current module map listed in Scope above |
+| Common utilities & constants size | 235 LOC | `contracts/src/common.rs` |
+| Error enum size | 80 variants | `contracts/src/errors.rs` |
+| Type definitions size | 1,079 LOC | `contracts/src/types.rs` |
+| TypeScript bindings size | 1,480 LOC | `bindings/src/index.ts` |
+| Registered contract test modules | 51 | Direct `mod` entries in `contracts/src/tests/mod.rs` |
+| Declared contract tests | 767 | `#[test]` declarations under `contracts/src/tests/` after the pagination guard additions |
+| Declared replay-engine tests | 8 | `#[test]` declarations under `replay-engine/` |
+| Public contract methods | 185 | Public functions in the contract implementation; checked against bindings |
+| Error parity | Rust ↔ TypeScript ↔ docs | CI parses all three error registries and fails on drift |
+| Method parity | Failing on upstream `main` | 71 public contract methods are absent from the bindings `fromJSON` map |
 
 Test distribution:
 
 | Module | Tests | Main coverage |
 | --- | ---: | --- |
-| `betting.rs` | 9 | Bet validation, duplicates, events, position queries |
-| `edge_cases.rs` | 5 | Empty rounds, one-sided rounds, pending/stat overflow boundaries |
+| `betting.rs` | 20 | Bet validation, duplicates, events, position queries |
+| `edge_cases.rs` | 8 | Empty rounds, one-sided rounds, pending/stat overflow boundaries |
 | `guard_tests.rs` | 4 | Single-active-round invariant and non-mutation on rejection |
-| `initialization.rs` | 8 | Init, auth, mint, duplicate init, admin/oracle separation |
-| `lifecycle.rs` | 14 | Round creation, auth, full lifecycle, events |
-| `mode_tests.rs` | 21 | Up/Down vs Precision isolation, precision scales, events |
-| `overflow_tests.rs` | 6 | Payout overflow and all-or-nothing claim behavior |
-| `pause.rs` | 4 | Admin pause/unpause and paused mutation guards |
-| `property_invariants.rs` | 3 | Payout conservation and stats monotonicity |
-| `resolution.rs` | 22 | Up/Down and Precision payout behavior, ties, remainders |
-| `security.rs` | 4 | Oracle freshness, future timestamp, round-id replay, valid payload |
+| `initialization.rs` | 12 | Init, auth, mint, duplicate init, admin/oracle separation |
+| `lifecycle.rs` | 28 | Round creation, auth, full lifecycle, events |
+| `mode_tests.rs` | 54 | Up/Down vs Precision isolation, precision scales, events |
+| `overflow_tests.rs` + `precision_payout_overflow.rs` | 19 | Payout overflow and all-or-nothing behavior |
+| `pause.rs` | 7 | Admin pause/unpause and paused mutation guards |
+| `property_invariants.rs` | 7 | Payout conservation and stats monotonicity |
+| `resolution/` | 115 | Up/Down, Precision, fees, policies, events, archives, and golden cases |
+| `security.rs` | 74 | Oracle, heartbeat, replay, access, and payload defenses |
 | `storage_benchmarks.rs` | 5 | Indexed key writes and resolution cleanup |
-| `windows.rs` | 13 | Window bounds, timing, auth, precision window enforcement |
-| `adversarial/` | 13 | Economic attack simulations: sybil faucet, sniping, oracle griefing, fee gaming (Issue #372) |
+| `windows.rs` | 24 | Window bounds, timing, auth, precision window enforcement |
+| `adversarial.rs` + `adversarial/` | 21 | Sybil, sniping, oracle, lifecycle, precision, and economic attacks |
+| `cost_benchmarks.rs` + `pagination_gas_guards.rs` | 17 | CPU/memory ceilings and adversarial query limits |
+
+Counts are source declarations produced with
+`rg '^\s*#\[test\]' contracts/src/tests --glob '*.rs'`; the 767 total includes
+all remaining specialized modules not expanded in this summary table.
 
 ## Adversarial Simulation Suite (Issue #372)
 
@@ -132,8 +135,8 @@ Soroban-specific risk considerations:
 
 | ID | Severity | Status | Finding | Evidence / code locations | Impact | Mitigation plan / owner |
 | --- | --- | --- | --- | --- | --- | --- |
-| SR-2026-04-001 | Medium | Open | TypeScript `ContractError` map is stale for Rust variants 24 and 25. Method parity passes, but client-side decoding lacks `FutureOracleData` and `PayoutOverflow`. | Rust variants: `contracts/src/errors.rs:56-59`. Binding map stops at 23: `bindings/src/index.ts:39-132`. `npm --prefix bindings run test:parity` only checks methods in `bindings/src/parity.js`. | Frontends, bots, and monitoring may display unknown errors or mis-handle future oracle timestamps and payout overflow failures. | Owner: Bindings maintainer (TBD). Regenerate/update bindings, add enum/error parity to `bindings/src/parity.js`, then run `npm --prefix bindings run test:parity` and `npm --prefix bindings run lint`. |
-| SR-2026-04-002 | Low | Open | Indexed Precision payout path uses generic `Overflow` for total pot, diff, remainder, and pending accumulation, while legacy Precision and Up/Down payout helpers use `PayoutOverflow`. | Indexed path: `contracts/src/contract.rs:913-973`. Helper policy: `contracts/src/contract.rs:1284-1302`. Tests assert `PayoutOverflow` for claim/refund/updown paths in `contracts/src/tests/overflow_tests.rs`. | Inconsistent error semantics can make payout incident triage harder, although arithmetic is still checked and no unchecked overflow was found. | Owner: Contract maintainer (TBD). Route indexed Precision payout arithmetic through `payout_add` where applicable and add a regression test for precision payout overflow. |
+| SR-2026-04-001 | Medium | Mitigated | Client error maps could drift from the Rust enum and documentation. | `bindings/src/parity.js` now compares `contracts/src/errors.rs`, `bindings/src/index.ts`, and `docs/CONTRACT_ERRORS.md`; `.github/workflows/ci.yml` runs it in the bindings job. | Drift now hard-fails CI with file-specific repair instructions. | Keep all three registries synchronized when changing errors. |
+| SR-2026-04-002 | Low | Mitigated | Indexed Precision payout arithmetic previously returned generic `Overflow` instead of `PayoutOverflow`. | Checked helpers in `contracts/src/settlement_math.rs`; regression coverage in `contracts/src/tests/precision_payout_overflow.rs`. | Client-visible payout failures now use consistent semantics and settlement remains atomic. | No further action unless payout arithmetic changes. |
 | SR-2026-04-003 | Medium | Mitigated | Oracle payload round binding uses `round.start_ledger` as the payload `round_id`, not the monotonic `Round.round_id`. `start_ledger` was not unique per round, so a round created, cancelled, and replaced within one ledger shared a `start_ledger` with its predecessor — letting a payload signed for the first round settle the second. The nonce guard did not cover this, because consumed nonces are namespaced by the monotonic `Round.round_id`. | `OraclePayload.round_id: u32` in `contracts/src/types.rs`; binding checks in `resolve_round` and `resolve_round_multi` (`contracts/src/settlement.rs`); `start_ledger` assignment in `create_round` (`contracts/src/betting.rs`). | Wrong-round settlement: the replacement round settles at the previous round's price. Reproduced by `tests::adversarial::oracle::test_same_ledger_round_recreation_rejected`. | `create_round` now claims each ledger sequence under `DataKeyScoped::RoundStartLedger` and rejects reuse with `RoundStartLedgerReused` (code 93), making `start_ledger` unique per round. Binding semantics documented in `PROTOCOL_SPEC.md` I10 and `docs/ORACLE_OPERATOR_RUNBOOK.md`. Field rename to a monotonic `u64 round_id` remains deferred to the next breaking ABI. |
 | SR-2026-04-004 | Medium | Accepted risk | The oracle remains a single trusted signer. Payload freshness and round checks protect replay/staleness but not bad signed prices. | Oracle auth and payload validation: `contracts/src/contract.rs:633-668`; tests in `contracts/src/tests/security.rs`. | A compromised or faulty oracle can resolve rounds with incorrect but fresh prices. | Owner: Protocol/security owner (TBD). Accepted for current architecture. Before mainnet, define oracle operations, monitoring, emergency pause playbook, and consider multi-oracle or threshold validation. |
 | SR-2026-04-005 | Low | Accepted risk | Resolution loops over participant lists and remains O(n), though Precision rounds now have an explicit participant cap. | Participant append and cap checks in `contracts/src/contract.rs`; resolution cleanup in `contracts/src/contract.rs`; storage tests in `contracts/src/tests/storage_benchmarks.rs`; Precision cap tests in `contracts/src/tests/mode_tests.rs`. | Very large rounds can become expensive or fail under Soroban resource limits if caps are tuned too high. Indexed storage mitigates write amplification but does not remove O(n) resolution cost. | Owner: Contract/product owner (TBD). Maintain operational round-size monitoring and benchmark cap changes before increasing production limits. |
@@ -146,15 +149,16 @@ Soroban-specific risk considerations:
 | SR-2026-04-012 | Medium | Mitigated | Storage write amplification from full participant maps. | Indexed storage writes: `contracts/src/contract.rs:315-344`, `contracts/src/contract.rs:427-457`; cleanup: `contracts/src/contract.rs:684-702`; design doc `STORAGE_DESIGN.md`; related commit `9855391`. | Reduces per-bet cost and avoids repeated full-map serialization. | Monitor resource usage for high-participant rounds as tracked in SR-2026-04-005. |
 | SR-2026-06-001 | Low | Mitigated | `claim_winnings`: balance was credited before `PendingWinnings` slot was removed (Interaction-before-Effect ordering). | `contracts/src/contract.rs` `claim_winnings` function; regression test `test_claim_winnings_cei_pending_cleared_after_claim` in `contracts/src/tests/cei_ordering.rs`. | Under the prior ordering, the pending winnings slot remained readable during the balance update. While Soroban's single-tenant model prevents reentrancy today, the slot removal now precedes the balance increase, eliminating any double-claim risk on future cross-contract interaction paths. | Fixed: removal of `PendingWinnings` key moved before `_set_balance` call. Full CEI audit documented in [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md). |
 | SR-2026-06-002 | Low | Mitigated | `cancel_config_change`: event was emitted before `PendingConfigChange` key was removed from storage (Interaction before Effect). | `contracts/src/contract.rs` `cancel_config_change` function; regression test `test_cancel_config_change_cei_key_removed_before_event` in `contracts/src/tests/cei_ordering.rs`. | The emitted cancellation event did not represent a fully committed state transition — the key was still present in storage at event emission time. | Fixed: `env.storage().persistent().remove(&key)` moved before `env.events().publish(...)`. Full CEI audit documented in [`docs/CEI_AUDIT.md`](./docs/CEI_AUDIT.md). |
+| SR-2026-09-001 | Medium | Open | The generated TypeScript `fromJSON` surface is missing 71 public contract methods. | `npm --prefix bindings run test:parity` reports the exact missing method list by comparing `contracts/src/contract.rs` with `bindings/src/index.ts`. | Integrators cannot construct or decode calls for newer contract methods through the published bindings. | Regenerate the bindings from the current WASM after upstream compilation is restored, then rerun method and WASM parity checks. |
 
 ## Severity Summary
 
 | Status | Critical | High | Medium | Low | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Open | 0 | 0 | 1 | 1 | 2 |
+| Open | 0 | 0 | 1 | 0 | 1 |
 | Accepted risk | 0 | 0 | 1 | 2 | 3 |
-| Mitigated | 0 | 3 | 4 | 2 | 9 |
-| **Total** | **0** | **3** | **6** | **5** | **14** |
+| Mitigated | 0 | 3 | 5 | 3 | 11 |
+| **Total** | **0** | **3** | **7** | **5** | **15** |
 
 ## Current Security Posture
 
@@ -170,7 +174,8 @@ Strengths:
 
 Primary residual risks:
 
-- Binding error map drift is the only open medium item found in this pass.
+- Error-code drift is now enforced across Rust, TypeScript, and documentation in CI.
+- The TypeScript method surface still trails the public Rust contract and must be regenerated after the upstream build is repaired.
 - Single-oracle trust remains the largest accepted protocol-level risk.
 - Large participant rounds may hit Soroban resource ceilings during resolution if operational caps are tuned too high.
 - Current review is maintainer-focused and should not replace an external audit for mainnet.
@@ -180,22 +185,25 @@ Primary residual risks:
 Commands run during this review:
 
 ```text
-cargo test
-running 118 tests
-test result: ok. 118 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-
 npm --prefix bindings run test:parity
-ABI parity check passed: All contract methods are synced with TS bindings.
+Error enum parity check passed: Rust, TypeScript, and docs are synced.
 ```
 
-Important caveat: `bindings/src/parity.js` validates public method parity, not error enum parity. That is why SR-2026-04-001 remains open even though the parity script passes.
+The error-enum portion passes, while the same command currently reports the
+open method drift in SR-2026-09-001 and exits non-zero. The source tree
+currently declares 767 contract tests and 8 replay-engine tests.
+Execution is temporarily blocked on upstream `main` by unrelated pre-existing
+compile errors (including duplicate adversarial module paths and malformed
+governance doc comments). Counts above describe the current source inventory,
+not a claim that the broken baseline completed a test run.
 
 ## Follow-Up Backlog
 
 | Priority | Item | Owner | Target evidence |
 | --- | --- | --- | --- |
-| P1 | Fix binding error map for `FutureOracleData` and `PayoutOverflow`; add error enum parity check. | Bindings maintainer (TBD) | Updated `bindings/src/index.ts`, enhanced `bindings/src/parity.js`, passing `npm --prefix bindings run test:parity` |
-| P2 | Normalize indexed Precision payout overflow errors to `PayoutOverflow`. | Contract maintainer (TBD) | Updated arithmetic path and new precision overflow regression test |
+| **Closed** | Enforce Rust/TypeScript/docs error parity in CI. | Bindings maintainers | `bindings/src/parity.js`, `docs/CONTRACT_ERRORS.md`, and the bindings CI job |
+| **Closed** | Normalize indexed Precision payout overflow errors to `PayoutOverflow`. | Contract maintainers | `contracts/src/tests/precision_payout_overflow.rs` |
+| P1 | Regenerate the TypeScript method surface after restoring contract compilation. | Bindings maintainers | Passing method parity and WASM parity jobs |
 | P2 | ~~Document oracle payload `round_id` semantics for integrators.~~ Done — `PROTOCOL_SPEC.md` I10 and `docs/ORACLE_OPERATOR_RUNBOOK.md` show `payload.round_id = activeRound.start_ledger` and explain the two-identifier split. | Oracle integration owner (TBD) | Complete |
 | P2 | Define oracle operations and incident response before mainnet. | Protocol/security owner (TBD) | Oracle runbook, monitoring checks, pause criteria |
 | P3 | Maintain operational monitoring for large participant rounds and benchmark cap increases. | Contract/product owner (TBD) | Participant-count policy, resource benchmark, and cap-change runbook |
@@ -204,12 +212,11 @@ Important caveat: `bindings/src/parity.js` validates public method parity, not e
 
 ## Deployment Recommendation
 
-Proceed with testnet/integration usage after assigning owners for the open items. Do not treat the state as mainnet-ready until:
+Proceed with testnet/integration usage after restoring a green upstream build. Do not treat the state as mainnet-ready until:
 
-1. SR-2026-04-001 is closed.
-2. Oracle operations and pause response are documented.
-3. Maintainers decide whether to fix or explicitly accept SR-2026-04-002.
-4. An external audit is completed for any production-value deployment.
+1. Oracle operations and pause response are documented.
+2. Accepted protocol risks are reviewed and explicitly approved for deployment.
+3. An external audit is completed for any production-value deployment.
 
 ## Pre-Merge Security Review Checklist
 

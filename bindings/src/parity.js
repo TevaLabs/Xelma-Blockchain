@@ -8,15 +8,17 @@ const __dirname = path.dirname(__filename);
 const contractPath = path.resolve(__dirname, '../../contracts/src/contract.rs');
 const errorsContractPath = path.resolve(__dirname, '../../contracts/src/errors.rs');
 const bindingsPath = path.resolve(__dirname, './index.ts');
+const errorDocsPath = path.resolve(__dirname, '../../docs/CONTRACT_ERRORS.md');
 
-if (!fs.existsSync(contractPath) || !fs.existsSync(errorsContractPath) || !fs.existsSync(bindingsPath)) {
-    console.error(`Could not find required files.\nContract: ${contractPath}\nErrors: ${errorsContractPath}\nBindings: ${bindingsPath}`);
+if (!fs.existsSync(contractPath) || !fs.existsSync(errorsContractPath) || !fs.existsSync(bindingsPath) || !fs.existsSync(errorDocsPath)) {
+    console.error(`Could not find required files.\nContract: ${contractPath}\nErrors: ${errorsContractPath}\nBindings: ${bindingsPath}\nError docs: ${errorDocsPath}`);
     process.exit(1);
 }
 
 const contractCode = fs.readFileSync(contractPath, 'utf8');
 const errorsContractCode = fs.readFileSync(errorsContractPath, 'utf8');
 const bindingsCode = fs.readFileSync(bindingsPath, 'utf8');
+const errorDocsCode = fs.readFileSync(errorDocsPath, 'utf8');
 
 // Parse contract exports inside `impl VirtualTokenContract`
 const contractFns = [];
@@ -113,6 +115,33 @@ for (const [name, val] of Object.entries(errorVariants)) {
         errorsDrift.push(`Error variant '${name}' has value ${val} in contract but value ${bindingsErrors[name]} in bindings.`);
     }
 }
+
+// Parse the canonical documentation table: `| 94 | PageSizeExceeded |`.
+const documentedErrors = {};
+for (const line of errorDocsCode.split('\n')) {
+    const match = line.match(/^\|\s*([0-9]+)\s*\|\s*`?([a-zA-Z0-9_]+)`?\s*\|/);
+    if (match) {
+        documentedErrors[match[2]] = parseInt(match[1], 10);
+    }
+}
+
+if (Object.keys(documentedErrors).length === 0) {
+    console.error("Failed to parse documented errors from:", errorDocsPath);
+    process.exit(1);
+}
+
+for (const [name, val] of Object.entries(errorVariants)) {
+    if (documentedErrors[name] === undefined) {
+        errorsDrift.push(`Error variant '${name}' (value ${val}) exists in contract but is missing from docs.`);
+    } else if (documentedErrors[name] !== val) {
+        errorsDrift.push(`Error variant '${name}' has value ${val} in contract but value ${documentedErrors[name]} in docs.`);
+    }
+}
+for (const [name, val] of Object.entries(documentedErrors)) {
+    if (errorVariants[name] === undefined) {
+        errorsDrift.push(`Error variant '${name}' (value ${val}) exists in docs but is missing from contract.`);
+    }
+}
 for (const [name, val] of Object.entries(bindingsErrors)) {
     if (errorVariants[name] === undefined) {
         errorsDrift.push(`Error variant '${name}' (value ${val}) exists in bindings error map but is missing from contract.`);
@@ -143,14 +172,14 @@ if (errorsDrift.length > 0) {
     failed = true;
     errorsDrift.forEach(err => console.error(`  - ${err}`));
 } else {
-    console.log("✅ Error enum parity check passed: All contract error variants are synced with TS bindings.");
+    console.log("✅ Error enum parity check passed: Rust, TypeScript, and docs are synced.");
 }
 
 if (failed) {
     console.error("\n💡 To resolve parity drift:");
-    console.error("  1. Update bindings/src/index.ts and bindings/src/helpers.ts to include missing methods and error codes.");
-    console.error("  2. Run `npm run test:parity` to verify alignment.");
-    console.error("  3. Consult CONTRIBUTING.md for contract and SDK binding release guidelines.");
+    console.error("  1. For method drift, regenerate/update the fromJSON map in bindings/src/index.ts.");
+    console.error("  2. For error drift, update bindings/src/index.ts and docs/CONTRACT_ERRORS.md to match contracts/src/errors.rs.");
+    console.error("  3. Run `npm run test:parity` and consult CONTRIBUTING.md before committing.");
     process.exit(1);
 } else {
     process.exit(0);

@@ -84,6 +84,19 @@ The protocol's incident behavior is validated deterministically in `contracts/sr
    - Escalation to `FullyPaused` mode locking all contract interactions.
    - Successful recovery via `unpause_contract()`, restoring minting, market creation, and trading.
 
+4. **`test_chaos_recovery_migrate_active_round_pause_resume`** (Issue #417):
+   Chaos recovery drill walking `create round → pause → migration dry-run → claims-only → resolve → claim`:
+   - Migration dry-run with an active round is refused (`MigrationActiveRound`) with no storage or fund movement.
+   - `pause_contract()` locks trading/claiming, and a migration dry-run while paused is refused (`ContractPaused`).
+   - Transition to `ClaimsOnly` blocks new bets while still allowing the in-flight round to be resolved and claimed.
+   - **No-funds-stuck invariant**: the sum of all pending winnings equals the total staked, and after claiming, every balance reconciles exactly to the initial mints.
+
+5. **`test_chaos_recovery_migrate_active_round_pause_cancel`** (Issue #417):
+   Same chaos sequence ending in the **cancel** path instead of resolution:
+   - After `pause → claims-only`, `cancel_round` refunds every stake in full during `ClaimsOnly` mode.
+   - **No-funds-stuck invariant**: refunds equal the total staked and balances reconcile exactly after claims.
+   - Recovery to `Normal` restores round creation and trading.
+
 ### Executing the Emergency Drill
 
 Run the drill suite using cargo test:

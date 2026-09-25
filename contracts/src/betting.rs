@@ -56,6 +56,58 @@ fn salt_has_minimum_entropy(salt: &BytesN<32>) -> bool {
     saw_nonzero && saw_different
 }
 
+fn _user_round_exposure(env: &Env, round_id: u64, user: &Address) -> i128 {
+    let mut exposure = 0_i128;
+
+    if let Some(position) = env
+        .storage()
+        .persistent()
+        .get::<_, UserPosition>(&DataKeyScoped::Position(round_id, user.clone()))
+    {
+        exposure = exposure.saturating_add(position.amount);
+    }
+
+    if let Some(prediction) = env
+        .storage()
+        .persistent()
+        .get::<_, PrecisionPrediction>(&DataKeyScoped::PrecisionPosition(round_id, user.clone()))
+    {
+        exposure = exposure.saturating_add(prediction.amount);
+    }
+
+    if let Some(commitment) = env
+        .storage()
+        .persistent()
+        .get::<_, PrecisionCommitment>(&DataKeyScoped::PrecisionCommitment(round_id, user.clone()))
+    {
+        exposure = exposure.saturating_add(commitment.amount);
+    }
+
+    exposure
+}
+
+fn _enforce_user_round_exposure(
+    env: &Env,
+    round_id: u64,
+    user: &Address,
+    additional_amount: i128,
+) -> Result<(), ContractError> {
+    if let Some(max_exposure) = env
+        .storage()
+        .persistent()
+        .get::<_, i128>(&DataKeyCore::MaxUserRoundExposure)
+    {
+        let current_exposure = _user_round_exposure(env, round_id, user);
+        let next_exposure = current_exposure
+            .checked_add(additional_amount)
+            .ok_or(ContractError::Overflow)?;
+        if next_exposure > max_exposure {
+            return Err(ContractError::ExposureCapExceeded);
+        }
+    }
+    Ok(())
+}
+
 /// Creates a new prediction round (admin only)
 pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
@@ -279,16 +331,7 @@ pub fn place_bet(
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    // Enforce per-user round exposure cap
-    if let Some(max_exposure) = env
-        .storage()
-        .persistent()
-        .get::<_, i128>(&DataKeyCore::MaxUserRoundExposure)
-    {
-        if amount > max_exposure {
-            return Err(ContractError::ExposureCapExceeded);
-        }
-    }
+    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
 
     // Verify round is in Up/Down mode
     if round.mode != RoundMode::UpDown {
@@ -415,16 +458,7 @@ pub fn place_precision_prediction(
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    // Enforce per-user round exposure cap
-    if let Some(max_exposure) = env
-        .storage()
-        .persistent()
-        .get::<_, i128>(&DataKeyCore::MaxUserRoundExposure)
-    {
-        if amount > max_exposure {
-            return Err(ContractError::ExposureCapExceeded);
-        }
-    }
+    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
 
     // Verify round is in Precision mode
     if round.mode != RoundMode::Precision {
@@ -544,16 +578,7 @@ pub fn commit_prediction(
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    // Enforce per-user round exposure cap
-    if let Some(max_exposure) = env
-        .storage()
-        .persistent()
-        .get::<_, i128>(&DataKeyCore::MaxUserRoundExposure)
-    {
-        if amount > max_exposure {
-            return Err(ContractError::ExposureCapExceeded);
-        }
-    }
+    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
 
     // Verify round is in Precision mode
     if round.mode != RoundMode::Precision {

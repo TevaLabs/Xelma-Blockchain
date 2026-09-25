@@ -16,7 +16,7 @@ FUZZ_MODE=fast cargo test --package xelma-contract --lib tests::fuzz_lifecycle
 ```
 
 ### 2. Extended Mode (Nightly & Local Stress Testing)
-Runs extended randomized action sequences (longer trace depth, higher case count) for deep state exploration.
+Runs extended randomized action sequences (longer trace depth, higher case count) for deep state exploration. This mode runs automatically every night via [.github/workflows/nightly-fuzz-extended.yml](file:///C:/Users/SOSA/Downloads/od/Xelma-Blockchain/.github/workflows/nightly-fuzz-extended.yml) or on manual `workflow_dispatch`.
 
 ```bash
 FUZZ_MODE=extended cargo test --package xelma-contract --lib tests::fuzz_lifecycle

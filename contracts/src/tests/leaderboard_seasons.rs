@@ -175,7 +175,7 @@ fn test_reset_season_archives_scopes_queries_and_preserves_lifetime_history() {
 
     // Lifetime history is never wiped by the reset: it reflects every win
     // across both seasons combined (Bob=5, Alice=3+1=4).
-    let (items, _cursor) = client.get_leaderboard_by_wins(&None, &10);
+    let (items, _cursor) = client.get_leaderboard_by_wins(&None, &10).unwrap();
     assert_eq!(items.len(), 2);
     assert_eq!(items.get(0).unwrap().user, bob);
     assert_eq!(items.get(0).unwrap().stats.total_wins, 5);

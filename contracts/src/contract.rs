@@ -8,6 +8,7 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Ma
 use crate::access_control;
 use crate::errors::ContractError;
 use crate::governance;
+use crate::insurance;
 use crate::types::{
     ArchivedRoundSummary, AccessState, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
     DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy,
@@ -19,21 +20,15 @@ use crate::types::{
     UserRoundOutcome, UserStats, FeeModel, GovAction, GovProposal,
 };
 
-// ─── Economic control limits ─────────────────────────────────────────────────
-/// Minimum allowed value when setting an economic cap to prevent zero-value lockouts.
-const MIN_CAP_VALUE: i128 = 1;
-/// Upper bound on the minimum-participants config to prevent unbounded gas in resolution.
-const MAX_MIN_PARTICIPANTS: u32 = 10_000;
-const DEFAULT_MAX_PRECISION_PARTICIPANTS: u32 = 1_000;
-const MAX_PRECISION_PARTICIPANTS_LIMIT: u32 = 10_000;
-/// Maximum number of entries returned per page by paginated query methods,
-/// regardless of the caller-requested `limit` (Issue #139).
-const MAX_PAGE_SIZE: u32 = 100;
-
-// ─── Oracle heartbeat limits ──────────────────────────────────────────────────
-const DEFAULT_ORACLE_STALE_THRESHOLD: u64 = 3_600; // 1 hour
-const MIN_ORACLE_STALE_THRESHOLD: u64 = 60; // 1 minute
-const MAX_ORACLE_STALE_THRESHOLD: u64 = 86_400; // 24 hours
+use crate::common::{
+    CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
+    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
+    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_MIN_PARTICIPANTS,
+    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
+    MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
+    MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
+    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD, BPS_DENOMINATOR,
+};
 
 // ─── Oracle rotation expiry ───────────────────────────────────────────────────
 const MIN_ROTATION_EXPIRY_SECONDS: u64 = 60; // 1 minute minimum
@@ -42,53 +37,11 @@ const MIN_ROTATION_EXPIRY_SECONDS: u64 = 60; // 1 minute minimum
 /// gives operators and monitoring dashboards time to react.
 const MIN_ROTATION_DELAY_SECONDS: u64 = 3_600; // 1 hour
 
-const DEFAULT_BET_WINDOW_LEDGERS: u32 = 6;
-const DEFAULT_RUN_WINDOW_LEDGERS: u32 = 12;
-const MAX_BET_WINDOW_LEDGERS: u32 = 1_440;
-const MAX_RUN_WINDOW_LEDGERS: u32 = 2_880;
-
 const ROUND_MODE_UPDOWN: u32 = 0;
 const ROUND_MODE_PRECISION: u32 = 1;
 const PAYOUT_OUTCOME_LOSS: u32 = 0;
 const PAYOUT_OUTCOME_WIN: u32 = 1;
 const PAYOUT_OUTCOME_REFUND: u32 = 2;
-// ─── Oracle deviation guardrails ─────────────────────────────────────────────
-/// Maximum allowed basis points for oracle deviation is bounded to avoid absurd configs.
-/// 100_000 bp = 1000% deviation (effectively "off", but still explicit).
-const MAX_ORACLE_DEVIATION_BPS: u32 = 100_000;
-
-// ─── Protocol fee (Issue #162) ────────────────────────────────────────────────
-/// Hard cap on the optional protocol settlement fee, in basis points
-/// (1 bp = 0.01%). 1_000 bp = 10% of the round's total pot — the maximum an
-/// admin may ever schedule via timelock. Larger values would risk turning
-/// the protocol into a de-facto extraction mechanism and are explicitly
-/// disallowed to preserve user trust and the conservation invariant.
-const MAX_PROTOCOL_FEE_BPS: u32 = 1_000;
-/// Denominator for bps math: `fee = total_pot * bps / BPS_DENOMINATOR`.
-/// Pinned to 10_000 to match the universal "1 bp = 0.01%" convention.
-const BPS_DENOMINATOR: i128 = 10_000;
-
-// ─── Storage schema versioning ───────────────────────────────────────────────
-const CURRENT_SCHEMA_VERSION: u32 = 3;
-// ─── Start-price bounds (Issue #119) ─────────────────────────────────────────
-/// Minimum start price in protocol units — prevents zero-value and dust rounds.
-const MIN_START_PRICE: u128 = 1;
-/// Maximum start price in protocol units — guards against overflow in payout math.
-const MAX_START_PRICE: u128 = 1_000_000_000_000_000_000;
-// ─── Storage TTL Lifecycle Limits (Issue #142) ──────────────────────────────
-/// Minimum remaining ledgers before a persistent entry is extended.
-const TTL_BUMP_THRESHOLD: u32 = 17_280; // ~1 day at 5-second ledgers
-/// Amount of ledgers to extend a persistent entry to when below threshold.
-const TTL_BUMP_AMOUNT: u32 = 518_400; // ~30 days at 5-second ledgers
-
-/// Default archived round summaries retained on-chain (FIFO pruning).
-const DEFAULT_ARCHIVE_RETENTION: u32 = 128;
-/// Minimum archive retention limit — prevents accidental pruning of all history.
-const MIN_ARCHIVE_RETENTION: u32 = 1;
-/// Maximum archive retention limit — prevents unbounded storage growth.
-const MAX_ARCHIVE_RETENTION: u32 = 10_000;
-/// Ledgers to wait before a scheduled critical config change may be applied (~2 hours).
-const CONFIG_TIMELOCK_LEDGERS: u32 = 1440;
 
 use crate::admin;
 use crate::betting;
@@ -173,12 +126,13 @@ impl VirtualTokenContract {
     }
 
     /// Returns paginated archived participation history for a user (newest first).
+    /// Rejects if `limit` exceeds `MAX_PAGE_SIZE` (100).
     pub fn get_user_archive_history(
         env: Env,
         user: Address,
         offset: u32,
         limit: u32,
-    ) -> Vec<ArchivedRoundSummary> {
+    ) -> Result<Vec<ArchivedRoundSummary>, ContractError> {
         queries::get_user_archive_history(env, user, offset, limit)
     }
 
@@ -746,6 +700,48 @@ impl VirtualTokenContract {
     /// Queries details for a governance proposal.
     pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
         governance::get_gov_proposal(env, proposal_id)
+    }
+
+    // ─── On-Chain Constitution Framework (Issue #363) ──────────────────────────
+
+    /// Establishes the on-chain constitution with governance rules (admin only).
+    pub fn establish_constitution(
+        env: Env,
+        veto_window_ledgers: u32,
+        timelock_ledgers: u32,
+        dual_approval_required: bool,
+    ) -> Result<(), ContractError> {
+        governance::establish_constitution(env, veto_window_ledgers, timelock_ledgers, dual_approval_required)
+    }
+
+    /// Returns the on-chain constitution metadata, if established.
+    pub fn get_constitution(env: Env) -> Option<crate::types::ConstitutionMetadata> {
+        governance::get_constitution(env)
+    }
+
+    /// Proposes a parameter amendment with timelock and optional veto window.
+    pub fn propose_amendment(
+        env: Env,
+        proposer: Address,
+        parameter_name: Symbol,
+        new_value: Val,
+    ) -> Result<u64, ContractError> {
+        governance::propose_amendment(env, proposer, parameter_name, new_value)
+    }
+
+    /// Vetoes a pending amendment before its veto window expires.
+    pub fn veto_amendment(env: Env, vetoer: Address, amendment_id: u64) -> Result<(), ContractError> {
+        governance::veto_amendment(env, vetoer, amendment_id)
+    }
+
+    /// Activates an amendment after timelock expires.
+    pub fn activate_amendment(env: Env, activator: Address, amendment_id: u64) -> Result<(), ContractError> {
+        governance::activate_amendment(env, activator, amendment_id)
+    }
+
+    /// Retrieves an amendment proposal record by ID.
+    pub fn get_amendment(env: Env, amendment_id: u64) -> Option<crate::types::Amendment> {
+        governance::get_amendment(env, amendment_id)
     }
 
     /// Schedules a timelocked windows update (alias for [`Self::schedule_windows`]).
@@ -1333,23 +1329,78 @@ impl VirtualTokenContract {
         config::get_fee_model(env)
     }
 
+    // ─── Insurance / backstop fund (Issue #367) ────────────────────────────
+
+    /// Sets the insurance accrual split: how many basis points of each
+    /// protocol fee are directed to the insurance fund (admin only).
+    pub fn set_insurance_split_bps(env: Env, bps: u32) -> Result<(), ContractError> {
+        insurance::set_insurance_split_bps(env, bps)
+    }
+
+    /// Returns the configured insurance split in basis points.
+    pub fn get_insurance_split_bps(env: Env) -> u32 {
+        insurance::get_insurance_split_bps(&env)
+    }
+
+    /// Sets the insurance coverage payout rate in basis points (admin only).
+    pub fn set_insurance_coverage_bps(env: Env, bps: u32) -> Result<(), ContractError> {
+        insurance::set_insurance_coverage_bps(env, bps)
+    }
+
+    /// Returns the configured insurance coverage payout rate.
+    pub fn get_insurance_coverage_bps(env: Env) -> u32 {
+        insurance::get_insurance_coverage_bps(&env)
+    }
+
+    /// Sets the whitelist of eligible insurance event types (admin only).
+    pub fn set_insurance_eligible_events(env: Env, events: Vec<u32>) -> Result<(), ContractError> {
+        insurance::set_insurance_eligible_events(env, events)
+    }
+
+    /// Returns the list of eligible insurance event type discriminants.
+    pub fn get_insurance_eligible_events(env: Env) -> Vec<u32> {
+        insurance::get_insurance_eligible_events(&env)
+    }
+
+    /// Returns the current insurance fund balance.
+    pub fn get_insurance_fund_balance(env: Env) -> i128 {
+        insurance::get_insurance_fund_balance(&env)
+    }
+
+    /// Top-ups the insurance fund from the caller's vXLM balance (admin only).
+    pub fn top_up_insurance_fund(env: Env, amount: i128) -> Result<(), ContractError> {
+        insurance::top_up_insurance_fund(env, amount)
+    }
+
+    /// Withdraws from the insurance fund to a recipient (admin only,
+    /// requires governance dual-control when approver is set).
+    pub fn withdraw_insurance_fund(
+        env: Env,
+        recipient: Address,
+        amount: i128,
+    ) -> Result<i128, ContractError> {
+        insurance::withdraw_insurance_fund(env, recipient, amount)
+    }
+
     // ─── Leaderboards (lifetime + seasons) ──────────────────────────────────
 
     /// Cursor-based page of the global leaderboard ordered by total wins descending.
+    /// Rejects if `limit` exceeds `MAX_PAGE_SIZE` (100).
     pub fn get_leaderboard_by_wins(
         env: Env,
         cursor: Option<Address>,
         limit: u32,
-    ) -> (Vec<LeaderboardEntry>, Option<Address>) {
+    ) -> Result<(Vec<LeaderboardEntry>, Option<Address>), ContractError> {
         queries::get_leaderboard_by_wins(env, cursor, limit)
     }
 
     /// Cursor-based page of the global leaderboard ordered by best streak descending.
+    /// Rejects if `limit` exceeds `MAX_PAGE_SIZE` (100).
     pub fn get_leaderboard_by_streak(
         env: Env,
         cursor: Option<Address>,
         limit: u32,
-    ) -> (Vec<LeaderboardEntry>, Option<Address>) {
+    ) -> Result<(Vec<LeaderboardEntry>, Option<Address>), ContractError> {
         queries::get_leaderboard_by_streak(env, cursor, limit)
     }
     // ─── Leaderboards (lifetime + seasons) ──────────────────────────────────
