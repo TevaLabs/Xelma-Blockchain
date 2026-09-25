@@ -51,9 +51,9 @@ pub fn clear_user_positions(env: &Env, round_id: u64, user: &Address) {
 /// Shared keys removed:
 /// - `RoundParticipants(round_id)`
 /// - `ActiveRound`
-/// - `Positions` (legacy)
-/// - `UpDownPositions` (legacy)
-/// - `PrecisionPositions` (legacy)
+//! Legacy bulk-map keys are intentionally not written or removed here. They
+//! are outside the canonical schema and are handled only by an explicit
+//! migration, so cleanup cannot create dual-write ambiguity.
 pub fn clear_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>) {
     // Clear per-user position keys (both modes — no stale data)
     for i in 0..participants.len() {
@@ -68,12 +68,4 @@ pub fn clear_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>
         .remove(&DataKeyScoped::RoundParticipants(round_id));
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
 
-    // Legacy keys — safe no-op when absent
-    env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage()
-        .persistent()
-        .remove(&DataKeyCore::UpDownPositions);
-    env.storage()
-        .persistent()
-        .remove(&DataKeyCore::PrecisionPositions);
 }

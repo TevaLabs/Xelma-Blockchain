@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use crate::admin::{_ensure_normal_mode, _ensure_not_paused, _require_supported_schema};
 use crate::common::{
-    _emit_action_rejected, _emit_config_updated, _extend_persistent_ttl, _extend_ttl_symbol,
+    _emit_action_rejected, _emit_config_updated, _extend_persistent_ttl,
     _set_balance, balance, payout_add, BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS,
     DEFAULT_ARCHIVE_RETENTION, DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_CLOSE_BUFFER_LEDGERS,
     DEFAULT_DISPUTE_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
@@ -15,10 +15,10 @@ use crate::common::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ConfigChangeKind, ConfigChangePayload, DataKey, DataKeyCore, DataKeyScoped, FeeModel,
-    PendingConfigChange, PrecisionPayoutPolicy, RoundTemplate, PENDING_WINNINGS_EXPIRY_KEY,
+    ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, FeeModel,
+    PendingConfigChange, PrecisionPayoutPolicy, RoundTemplate,
 };
-use soroban_sdk::{symbol_short, Address, Env, Symbol};
+use soroban_sdk::{symbol_short, Address, Env};
 
 pub fn set_windows(env: Env, bet_ledgers: u32, run_ledgers: u32) -> Result<(), ContractError> {
     schedule_windows(env, bet_ledgers, run_ledgers)
@@ -150,7 +150,7 @@ pub fn schedule_oracle_timestamp_skew(env: Env, seconds: u64) -> Result<(), Cont
 pub fn get_oracle_timestamp_skew(env: Env) -> u64 {
     env.storage()
         .instance()
-        .get(&symbol_short!("otskew"))
+        .get(&DataKeyCore::OracleTimestampSkew)
         .unwrap_or(DEFAULT_ORACLE_TIMESTAMP_SKEW)
 }
 
@@ -586,8 +586,6 @@ pub fn get_mint_limit(env: Env) -> u32 {
         .unwrap_or(0)
 }
 
-const EPOCH_MINT_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
-
 pub fn set_epoch_mint_budget(env: Env, budget: i128) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env
@@ -613,11 +611,11 @@ pub fn set_epoch_mint_budget(env: Env, budget: i128) -> Result<(), ContractError
     let old_budget: i128 = env
         .storage()
         .instance()
-        .get(&EPOCH_MINT_BUDGET_KEY)
+        .get(&DataKeyCore::EpochMintBudget)
         .unwrap_or(0);
     env.storage()
         .instance()
-        .set(&EPOCH_MINT_BUDGET_KEY, &budget);
+        .set(&DataKeyCore::EpochMintBudget, &budget);
     _emit_config_updated(
         &env,
         ConfigChangeKind::EpochMintBudget,
@@ -630,7 +628,7 @@ pub fn set_epoch_mint_budget(env: Env, budget: i128) -> Result<(), ContractError
 pub fn get_epoch_mint_budget(env: Env) -> i128 {
     env.storage()
         .instance()
-        .get(&EPOCH_MINT_BUDGET_KEY)
+        .get(&DataKeyCore::EpochMintBudget)
         .unwrap_or(0)
 }
 
@@ -771,10 +769,6 @@ pub fn get_round_template(env: Env) -> Option<RoundTemplate> {
 
 // ─── Dispute window (Issue #276) ──────────────────────────────────────────────
 
-fn _dispute_ledgers_key(env: &Env) -> Symbol {
-    Symbol::new(env, "DisputeLedgers")
-}
-
 /// Sets the dispute window length in ledgers (admin only, immediate).
 /// `0` preserves current behaviour — no dispute window, immediate settlement.
 pub fn set_dispute_ledgers(env: Env, ledgers: u32) -> Result<(), ContractError> {
@@ -799,14 +793,14 @@ pub fn set_dispute_ledgers(env: Env, ledgers: u32) -> Result<(), ContractError> 
         return Err(ContractError::WindowOutOfRange);
     }
 
-    let key = _dispute_ledgers_key(&env);
+    let key = DataKeyCore::DisputeLedgers;
     let old: u32 = env
         .storage()
         .persistent()
         .get(&key)
         .unwrap_or(DEFAULT_DISPUTE_LEDGERS);
     env.storage().persistent().set(&key, &ledgers);
-    _extend_ttl_symbol(&env, &key);
+    _extend_persistent_ttl(&env, &key);
 
     _emit_config_updated(
         &env,
@@ -818,14 +812,14 @@ pub fn set_dispute_ledgers(env: Env, ledgers: u32) -> Result<(), ContractError> 
 }
 
 pub fn get_dispute_ledgers(env: &Env) -> u32 {
-    let key = _dispute_ledgers_key(env);
+    let key = DataKeyCore::DisputeLedgers;
     let v: u32 = env
         .storage()
         .persistent()
         .get(&key)
         .unwrap_or(DEFAULT_DISPUTE_LEDGERS);
     if v > 0 {
-        _extend_ttl_symbol(env, &key);
+        _extend_persistent_ttl(env, &key);
     }
     v
 }
@@ -906,10 +900,10 @@ pub fn set_pending_winnings_expiry(env: Env, ledgers: u32) -> Result<(), Contrac
 }
 
 pub fn get_pending_winnings_expiry(env: Env) -> u32 {
-    _extend_persistent_ttl(&env, &PENDING_WINNINGS_EXPIRY_KEY);
+    _extend_persistent_ttl(&env, &DataKeyCore::PendingWinningsExpiry);
     env.storage()
         .persistent()
-        .get(&PENDING_WINNINGS_EXPIRY_KEY)
+        .get(&DataKeyCore::PendingWinningsExpiry)
         .unwrap_or(DEFAULT_PENDING_WINNINGS_EXPIRY)
 }
 
@@ -1262,13 +1256,13 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
         ConfigChangeKind::OracleTimestampSkew => ConfigChangePayload::OracleTimestampSkew(
             env.storage()
                 .instance()
-                .get(&symbol_short!("otskew"))
+                .get(&DataKeyCore::OracleTimestampSkew)
                 .unwrap_or(DEFAULT_ORACLE_TIMESTAMP_SKEW),
         ),
         ConfigChangeKind::PendingWinningsExpiry => ConfigChangePayload::PendingWinningsExpiry(
             env.storage()
                 .persistent()
-                .get(&PENDING_WINNINGS_EXPIRY_KEY)
+                .get(&DataKeyCore::PendingWinningsExpiry)
                 .unwrap_or(DEFAULT_PENDING_WINNINGS_EXPIRY),
         ),
         ConfigChangeKind::MinBet => {
@@ -1277,7 +1271,7 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
         ConfigChangeKind::EpochMintBudget => ConfigChangePayload::EpochMintBudget(
             env.storage()
                 .instance()
-                .get(&EPOCH_MINT_BUDGET_KEY)
+                .get(&DataKeyCore::EpochMintBudget)
                 .unwrap_or(0),
         ),
         ConfigChangeKind::PrecisionPayoutPolicy => ConfigChangePayload::PrecisionPayoutPolicy(
@@ -1289,7 +1283,7 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
         ConfigChangeKind::DisputeLedgers => ConfigChangePayload::DisputeLedgers(
             env.storage()
                 .persistent()
-                .get(&_dispute_ledgers_key(env))
+                .get(&DataKeyCore::DisputeLedgers)
                 .unwrap_or(DEFAULT_DISPUTE_LEDGERS),
         ),
         ConfigChangeKind::FeeModel => ConfigChangePayload::FeeModel(_read_fee_model(env)),
@@ -1436,15 +1430,19 @@ pub fn _apply_config_payload(
             ConfigChangePayload::OracleTimestampSkew(seconds),
         ) => {
             _validate_oracle_timestamp_skew(*seconds)?;
-            env.storage().instance().set(&symbol_short!("otskew"), seconds);
+                env.storage()
+                    .instance()
+                    .set(&DataKeyCore::OracleTimestampSkew, seconds);
         }
         (
             ConfigChangeKind::PendingWinningsExpiry,
             ConfigChangePayload::PendingWinningsExpiry(ledgers),
         ) => {
             _validate_pending_winnings_expiry(*ledgers)?;
-            env.storage().persistent().set(&PENDING_WINNINGS_EXPIRY_KEY, ledgers);
-            _extend_persistent_ttl(env, &PENDING_WINNINGS_EXPIRY_KEY);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::PendingWinningsExpiry, ledgers);
+            _extend_persistent_ttl(env, &DataKeyCore::PendingWinningsExpiry);
             #[allow(deprecated)]
             env.events().publish(
                 (symbol_short!("pending"), symbol_short!("expiry")),
@@ -1491,9 +1489,9 @@ pub fn _apply_config_payload(
             if *ledgers > MAX_DISPUTE_LEDGERS {
                 return Err(ContractError::WindowOutOfRange);
             }
-            let key = _dispute_ledgers_key(env);
+            let key = DataKeyCore::DisputeLedgers;
             env.storage().persistent().set(&key, ledgers);
-            _extend_ttl_symbol(env, &key);
+            _extend_persistent_ttl(env, &key);
         }
         (ConfigChangeKind::FeeModel, ConfigChangePayload::FeeModel(model)) => {
             let key = DataKeyCore::FeeModel;
@@ -1506,7 +1504,7 @@ pub fn _apply_config_payload(
             }
             env.storage()
                 .instance()
-                .set(&EPOCH_MINT_BUDGET_KEY, budget);
+                .set(&DataKeyCore::EpochMintBudget, budget);
         }
         (ConfigChangeKind::MintLimit, ConfigChangePayload::MintLimit(limit)) => {
             env.storage()
