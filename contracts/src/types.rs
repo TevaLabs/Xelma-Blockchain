@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Val, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -579,6 +579,7 @@ pub enum RoundArchiveStatus {
 /// | 3    | ROUND_STALE     | warning  | Round is past its end ledger but unresolved|
 /// | 4    | NO_ACTIVE_ROUND | info     | No round currently active (idle protocol) |
 /// | 5    | MULTIPLE_ISSUES | critical | Two or more issues detected simultaneously|
+/// | 6    | CLAIMS_ONLY     | warning  | Protocol in ClaimsOnly mode               |
 ///
 /// ## Phase codes (`active_round_phase`)
 ///
@@ -597,6 +598,19 @@ pub enum RoundArchiveStatus {
 /// | 1    | Degraded (heartbeat marked degraded)   |
 /// | 2    | Offline (heartbeat marked offline)     |
 /// | 3    | Unknown (no heartbeat record stored)   |
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ProtocolHealthStatusCode {
+    Healthy = 0,
+    Paused = 1,
+    OracleStale = 2,
+    RoundStale = 3,
+    NoActiveRound = 4,
+    MultipleIssues = 5,
+    ClaimsOnly = 6,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProtocolHealthStatus {
@@ -999,7 +1013,7 @@ pub enum AmendmentStatus {
 /// Represents a proposed change to a protocol parameter that must pass through a
 /// governance lifecycle: optional veto window, timelock, then activation.
 #[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Amendment {
     pub id: u64,
     pub proposer: Address,

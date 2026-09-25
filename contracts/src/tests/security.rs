@@ -1614,6 +1614,60 @@ fn test_protocol_health_round_running_phase() {
     assert_eq!(health.active_round_phase, 2); // running
     assert_eq!(health.status_code, 0); // HEALTHY
 }
+
+#[test]
+fn test_protocol_health_claims_only() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+
+    // Keep oracle alive
+    env.ledger().with_mut(|li| {
+        li.timestamp = 100;
+    });
+    client.update_oracle_heartbeat(&0u32);
+
+    // Set runtime mode to ClaimsOnly (1)
+    client.set_runtime_mode(&1u32);
+
+    let health = client.get_protocol_health();
+    assert_eq!(health.status_code, 6); // CLAIMS_ONLY
+}
+
+#[test]
+fn test_protocol_health_paused() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.mint_initial(&user);
+
+    // Keep oracle alive
+    env.ledger().with_mut(|li| {
+        li.timestamp = 100;
+    });
+    client.update_oracle_heartbeat(&0u32);
+
+    // Emergency pause (FullyPaused = 2)
+    client.set_runtime_mode(&2u32);
+
+    let health = client.get_protocol_health();
+    assert!(health.paused);
+    assert_eq!(health.status_code, 1); // PAUSED
+}
+
 // ── Oracle confidence score tests ────────────────────────────────────────────
 
 #[test]

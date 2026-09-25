@@ -109,6 +109,16 @@ export enum ProtocolStatus {
   ClaimsOnly = 2,
 }
 
+export enum ProtocolHealthStatusCode {
+  Healthy = 0,
+  Paused = 1,
+  OracleStale = 2,
+  RoundStale = 3,
+  NoActiveRound = 4,
+  MultipleIssues = 5,
+  ClaimsOnly = 6,
+}
+
 export enum RoundStatus {
   Unknown = 0,
   Betting = 1,
