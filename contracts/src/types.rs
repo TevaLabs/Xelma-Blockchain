@@ -128,6 +128,8 @@ pub enum DataKeyCore {
     EpochMintBudget,
     /// Early cash-out penalty in basis points. Unset = early cash-out disabled.
     EarlyCashoutBps,
+    /// Enables commit-reveal Up/Down batch betting; absent means legacy mode.
+    SealedBatchAuction,
     /// Fee incidence model: FeeOnPot (default) or FeeOnWinnings.
     FeeModel,
     /// Dispute window length in ledgers. 0 = no dispute window.
@@ -177,6 +179,10 @@ pub enum DataKeyScoped {
     PrecisionPosition(u64, Address),
     /// Per-user Precision commitment: (round_id, address) → PrecisionCommitment
     PrecisionCommitment(u64, Address),
+    /// Private sealed Up/Down order, materialized only at finalization.
+    SealedOrder(u64, Address),
+    /// Users with escrowed sealed orders for a round.
+    SealedOrderParticipants(u64),
     /// Ordered participant list for a round: round_id → Vec<Address>
     RoundParticipants(u64),
     /// Marker for a cancelled round: round_id → true
@@ -399,6 +405,17 @@ pub struct PrecisionCommitment {
     pub hash: BytesN<32>,
     pub amount: i128,
     pub revealed: bool,
+}
+
+/// Escrowed Up/Down order for the optional sealed batch auction.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct SealedOrder {
+    pub hash: BytesN<32>,
+    pub amount: i128,
+    pub revealed: bool,
+    pub side: BetSide,
+    pub price_guess: u128,
 }
 
 #[contracttype]

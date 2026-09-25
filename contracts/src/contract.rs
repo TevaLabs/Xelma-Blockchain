@@ -277,13 +277,28 @@ impl VirtualTokenContract {
         admin::set_hb_strict_mode(env, enabled)
     }
 
+    /// Deprecated alias for the heartbeat strict-mode setter.
+    pub fn set_oracle_heartbeat_strict_mode(env: Env, enabled: bool) -> Result<(), ContractError> {
+        admin::set_hb_strict_mode(env, enabled)
+    }
+
     /// Returns whether oracle heartbeat strict mode is enabled (Issue #264).
     pub fn get_hb_strict_mode(env: Env) -> bool {
         admin::get_hb_strict_mode(env)
     }
 
+    /// Deprecated alias for the heartbeat strict-mode getter.
+    pub fn get_oracle_heartbeat_strict_mode(env: Env) -> bool {
+        admin::get_hb_strict_mode(env)
+    }
+
     /// Arms a one-shot override to bypass the heartbeat health gate for the next settlement (admin only, Issue #264).
     pub fn arm_hb_override(env: Env) -> Result<(), ContractError> {
+        admin::arm_hb_override(env)
+    }
+
+    /// Deprecated alias for the heartbeat override arm method.
+    pub fn arm_oracle_heartbeat_override(env: Env) -> Result<(), ContractError> {
         admin::arm_hb_override(env)
     }
 
@@ -299,6 +314,16 @@ impl VirtualTokenContract {
 
     /// Returns the configured heartbeat grace period in seconds (default 0, Issue #264).
     pub fn get_hb_grace_seconds(env: Env) -> u64 {
+        admin::get_hb_grace_seconds(env)
+    }
+
+    /// Compatibility alias for the heartbeat grace-period setter.
+    pub fn set_oracle_heartbeat_grace(env: Env, seconds: u64) -> Result<(), ContractError> {
+        admin::set_hb_grace_seconds(env, seconds)
+    }
+
+    /// Compatibility alias for the heartbeat grace-period getter.
+    pub fn get_oracle_heartbeat_grace(env: Env) -> u64 {
         admin::get_hb_grace_seconds(env)
     }
 
@@ -951,6 +976,14 @@ impl VirtualTokenContract {
         config::get_close_buffer_ledgers(env)
     }
 
+    pub fn set_sealed_batch_auction(env: Env, enabled: bool) -> Result<(), ContractError> {
+        config::set_sealed_batch_auction(env, enabled)
+    }
+
+    pub fn get_sealed_batch_auction(env: Env) -> bool {
+        config::get_sealed_batch_auction(env)
+    }
+
     /// Returns the configured betting-window length in ledgers.
     pub fn get_bet_window_ledgers(env: Env) -> u32 {
         config::get_bet_window_ledgers(env)
@@ -1051,6 +1084,58 @@ impl VirtualTokenContract {
         salt: BytesN<32>,
     ) -> Result<(), ContractError> {
         betting::reveal_prediction(env, user, predicted_price, salt)
+    }
+
+    pub fn commit_order(
+        env: Env,
+        user: Address,
+        amount: i128,
+        side: BetSide,
+        price_guess: u128,
+        hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        betting::commit_order(env, user, amount, side, price_guess, hash)
+    }
+
+    pub fn reveal_order(
+        env: Env,
+        user: Address,
+        amount: i128,
+        side: BetSide,
+        price_guess: u128,
+        salt: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        betting::reveal_order(env, user, amount, side, price_guess, salt)
+    }
+
+    pub fn commit_bet(
+        env: Env,
+        user: Address,
+        amount: i128,
+        side: BetSide,
+        price_guess: u128,
+        hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        betting::commit_order(env, user, amount, side, price_guess, hash)
+    }
+
+    pub fn reveal_bet(
+        env: Env,
+        user: Address,
+        amount: i128,
+        side: BetSide,
+        price_guess: u128,
+        salt: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        betting::reveal_order(env, user, amount, side, price_guess, salt)
+    }
+
+    pub fn finalize_sealed_batch(env: Env) -> Result<(), ContractError> {
+        betting::finalize_sealed_batch(env)
+    }
+
+    pub fn finalize_sealed_orders(env: Env) -> Result<(), ContractError> {
+        betting::finalize_sealed_batch(env)
     }
 
     /// Mints 1000 vXLM for new users (one-time only)

@@ -386,6 +386,29 @@ pub fn get_close_buffer_ledgers(env: Env) -> u32 {
         .unwrap_or(DEFAULT_CLOSE_BUFFER_LEDGERS)
 }
 
+/// Enables or disables sealed Up/Down batch betting. The absent/default value
+/// preserves the legacy immediate-bet path.
+pub fn set_sealed_batch_auction(env: Env, enabled: bool) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env)?;
+    let key = DataKeyCore::SealedBatchAuction;
+    env.storage().persistent().set(&key, &enabled);
+    _extend_persistent_ttl(&env, &key);
+    Ok(())
+}
+
+pub fn get_sealed_batch_auction(env: Env) -> bool {
+    let key = DataKeyCore::SealedBatchAuction;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key).unwrap_or(false)
+}
+
 /// Returns the configured betting-window length in ledgers (Issue #280).
 pub fn get_bet_window_ledgers(env: Env) -> u32 {
     let key = DataKeyCore::BetWindowLedgers;

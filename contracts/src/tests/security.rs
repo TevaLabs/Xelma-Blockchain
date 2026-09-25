@@ -901,7 +901,7 @@ fn test_heartbeat_override_cleared_after_use() {
     });
 
     // Verify override is consumed (one-shot)
-    let armed = client.is_oracle_heartbeat_override_armed();
+    let armed = client.get_hb_override_armed();
     assert!(!armed, "override must be cleared after first use");
 
     // Create a new round WITHOUT re-arming and WITHOUT a heartbeat — should fail
@@ -959,7 +959,7 @@ fn test_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_override"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hoverride"))
     });
     assert!(
         hb_override_event.is_some(),
@@ -1009,7 +1009,7 @@ fn test_heartbeat_strict_mode_config() {
     assert!(!client.get_oracle_heartbeat_strict_mode());
 }
 
-/// Arming override emits hb_arm_ovr event.
+/// Arming override emits the heartbeat override event.
 #[test]
 fn test_arm_heartbeat_override_emits_event() {
     let env = Env::default();
@@ -1027,9 +1027,9 @@ fn test_arm_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_arm_ovr"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("arm_hovr"))
     });
-    assert!(arm_event.is_some(), "hb_arm_ovr event must be emitted on arm");
+    assert!(arm_event.is_some(), "arm_hovr event must be emitted on arm");
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────

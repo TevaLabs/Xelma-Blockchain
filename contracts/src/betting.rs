@@ -13,7 +13,7 @@ use crate::errors::ContractError;
 use crate::settlement::_persist_user_outcome;
 use crate::types::{
     BetSide, DataKeyCore, DataKeyScoped, PrecisionCommitment, PrecisionPrediction, Round,
-    RoundMode, RoundTemplate, UserOutcomeType, UserPosition,
+    RoundMode, RoundTemplate, SealedOrder, UserOutcomeType, UserPosition,
 };
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{symbol_short, Address, Bytes, BytesN, Env, Symbol, Vec};
@@ -251,6 +251,10 @@ pub fn place_bet(
     user.require_auth();
     _ensure_normal_mode(&env)?;
     _enforce_access_control(&env, &user)?;
+
+    if crate::config::get_sealed_batch_auction(env.clone()) {
+        return Err(ContractError::InvalidMode);
+    }
 
     if amount <= 0 {
         return Err(ContractError::InvalidBetAmount);
@@ -691,6 +695,299 @@ pub fn reveal_prediction(
     env.events().publish(
         (symbol_short!("reveal"), symbol_short!("predict")),
         (user, round.round_id, predicted_price, commitment.amount),
+    );
+
+    Ok(())
+}
+
+/// Commits a sealed Up/Down order in the optional batch-auction mode.
+pub fn commit_order(
+    env: Env,
+    user: Address,
+    amount: i128,
+    side: BetSide,
+    price_guess: u128,
+    hash: BytesN<32>,
+) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    user.require_auth();
+    _ensure_normal_mode(&env)?;
+    _enforce_access_control(&env, &user)?;
+
+    if !crate::config::get_sealed_batch_auction(env.clone()) {
+        return Err(ContractError::InvalidMode);
+    }
+    if amount <= 0 {
+        return Err(ContractError::InvalidBetAmount);
+    }
+    _enforce_min_bet(&env, amount)?;
+
+    if let Some(max_stake) = env
+        .storage()
+        .persistent()
+        .get::<_, i128>(&DataKeyCore::MaxStake)
+    {
+        if amount > max_stake {
+            return Err(ContractError::StakeExceedsMax);
+        }
+    }
+
+    let round: Round = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::ActiveRound)
+        .ok_or(ContractError::NoActiveRound)?;
+
+    if round.mode != RoundMode::UpDown {
+        return Err(ContractError::WrongModeForPrediction);
+    }
+
+    let current_ledger = env.ledger().sequence();
+    let close_buffer_ledgers = env
+        .storage()
+        .persistent()
+        .get::<_, u32>(&DataKeyCore::CloseBufferLedgers)
+        .unwrap_or(0);
+    let close_ledger = round.bet_end_ledger.saturating_sub(close_buffer_ledgers);
+    if current_ledger >= round.bet_end_ledger {
+        return Err(ContractError::RoundEnded);
+    }
+    if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
+        return Err(ContractError::RoundEnded);
+    }
+
+    if let Some(max_exposure) = env
+        .storage()
+        .persistent()
+        .get::<_, i128>(&DataKeyCore::MaxUserRoundExposure)
+    {
+        if amount > max_exposure {
+            return Err(ContractError::ExposureCapExceeded);
+        }
+    }
+
+    let user_balance = balance(env.clone(), user.clone());
+    if user_balance < amount {
+        return Err(ContractError::InsufficientBalance);
+    }
+
+    let sealed_key = DataKeyScoped::SealedOrder(round.round_id, user.clone());
+    let position_key = DataKeyScoped::Position(round.round_id, user.clone());
+    if env.storage().persistent().has(&sealed_key) || env.storage().persistent().has(&position_key) {
+        return Err(ContractError::AlreadyBet);
+    }
+
+    let new_balance = user_balance
+        .checked_sub(amount)
+        .ok_or(ContractError::Overflow)?;
+    _set_balance(&env, user.clone(), new_balance);
+
+    let sealed_order = SealedOrder {
+        hash: hash.clone(),
+        amount,
+        revealed: false,
+        side: side.clone(),
+        price_guess,
+    };
+    env.storage().persistent().set(&sealed_key, &sealed_order);
+
+    let participants_key = DataKeyScoped::SealedOrderParticipants(round.round_id);
+    let mut participants: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&participants_key)
+        .unwrap_or(Vec::new(&env));
+    participants.push_back(user.clone());
+    env.storage()
+        .persistent()
+        .set(&participants_key, &participants);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("commit"), symbol_short!("order")),
+        (user, round.round_id, side, amount, price_guess, hash),
+    );
+
+    Ok(())
+}
+
+/// Reveals a previously committed sealed Up/Down order after the betting close.
+pub fn reveal_order(
+    env: Env,
+    user: Address,
+    amount: i128,
+    side: BetSide,
+    price_guess: u128,
+    salt: BytesN<32>,
+) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    user.require_auth();
+    _ensure_normal_mode(&env)?;
+    _enforce_access_control(&env, &user)?;
+
+    if !crate::config::get_sealed_batch_auction(env.clone()) {
+        return Err(ContractError::InvalidMode);
+    }
+
+    if !salt_has_minimum_entropy(&salt) {
+        return Err(ContractError::InvalidSalt);
+    }
+
+    let round: Round = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::ActiveRound)
+        .ok_or(ContractError::NoActiveRound)?;
+
+    if round.mode != RoundMode::UpDown {
+        return Err(ContractError::WrongModeForPrediction);
+    }
+
+    let current_ledger = env.ledger().sequence();
+    if current_ledger < round.bet_end_ledger || current_ledger >= round.end_ledger {
+        return Err(ContractError::InvalidRevealWindow);
+    }
+
+    let sealed_key = DataKeyScoped::SealedOrder(round.round_id, user.clone());
+    let mut sealed_order: SealedOrder = env
+        .storage()
+        .persistent()
+        .get(&sealed_key)
+        .ok_or(ContractError::CommitmentNotFound)?;
+
+    if sealed_order.revealed {
+        return Err(ContractError::AlreadyRevealed);
+    }
+    if sealed_order.amount != amount || sealed_order.side != side || sealed_order.price_guess != price_guess {
+        return Err(ContractError::HashMismatch);
+    }
+
+    let mut preimage = Bytes::new(&env);
+    preimage.append(&side.clone().to_xdr(&env));
+    preimage.append(&amount.to_xdr(&env));
+    preimage.append(&price_guess.to_xdr(&env));
+    preimage.append(&salt.to_xdr(&env));
+    let computed_hash = env.crypto().sha256(&preimage);
+    let computed_hash_bytes: BytesN<32> = computed_hash.into();
+    if computed_hash_bytes != sealed_order.hash {
+        return Err(ContractError::HashMismatch);
+    }
+
+    sealed_order.revealed = true;
+    env.storage().persistent().set(&sealed_key, &sealed_order);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("reveal"), symbol_short!("order")),
+        (user, round.round_id, side, amount, price_guess),
+    );
+
+    Ok(())
+}
+
+/// Finalizes all committed sealed orders in the active round.
+///
+/// Accepted reveals are materialized into active UpDown positions and pool totals;
+/// unrevealed commitments are refunded conservatively. This keeps the sealed
+/// phase private until the end of the freeze window while preserving the
+/// round's conservation invariant.
+pub fn finalize_sealed_batch(env: Env) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _ensure_normal_mode(&env)?;
+
+    if !crate::config::get_sealed_batch_auction(env.clone()) {
+        return Err(ContractError::InvalidMode);
+    }
+
+    let mut round: Round = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::ActiveRound)
+        .ok_or(ContractError::NoActiveRound)?;
+
+    if round.mode != RoundMode::UpDown {
+        return Err(ContractError::WrongModeForPrediction);
+    }
+
+    let current_ledger = env.ledger().sequence();
+    if current_ledger < round.bet_end_ledger {
+        return Err(ContractError::InvalidRevealWindow);
+    }
+
+    let sealed_participants_key = DataKeyScoped::SealedOrderParticipants(round.round_id);
+    let participants: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&sealed_participants_key)
+        .unwrap_or(Vec::new(&env));
+
+    let round_participants_key = DataKeyScoped::RoundParticipants(round.round_id);
+    let mut round_participants: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&round_participants_key)
+        .unwrap_or(Vec::new(&env));
+
+    for idx in 0..participants.len() {
+        let user = participants.get(idx).ok_or(ContractError::Overflow)?;
+        let sealed_key = DataKeyScoped::SealedOrder(round.round_id, user.clone());
+        match env.storage().persistent().get::<_, SealedOrder>(&sealed_key) {
+            Some(sealed_order) => {
+                if sealed_order.revealed {
+                    let pos_key = DataKeyScoped::Position(round.round_id, user.clone());
+                    let position = UserPosition {
+                        amount: sealed_order.amount,
+                        side: sealed_order.side.clone(),
+                    };
+                    env.storage().persistent().set(&pos_key, &position);
+
+                    let mut already_present = false;
+                    for j in 0..round_participants.len() {
+                        if round_participants.get(j).unwrap_or_else(|| panic!()) == user {
+                            already_present = true;
+                            break;
+                        }
+                    }
+                    if !already_present {
+                        round_participants.push_back(user.clone());
+                    }
+
+                    match sealed_order.side {
+                        BetSide::Up => {
+                            round.pool_up = round
+                                .pool_up
+                                .checked_add(sealed_order.amount)
+                                .ok_or(ContractError::Overflow)?;
+                        }
+                        BetSide::Down => {
+                            round.pool_down = round
+                                .pool_down
+                                .checked_add(sealed_order.amount)
+                                .ok_or(ContractError::Overflow)?;
+                        }
+                    }
+                } else {
+                    let user_balance = balance(env.clone(), user.clone());
+                    _set_balance(&env, user.clone(), user_balance + sealed_order.amount);
+                }
+                env.storage().persistent().remove(&sealed_key);
+            }
+            None => {}
+        }
+    }
+
+    env.storage()
+        .persistent()
+        .set(&round_participants_key, &round_participants);
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::ActiveRound, &round);
+    env.storage().persistent().remove(&sealed_participants_key);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("batch"), symbol_short!("finalized")),
+        (round.round_id, round.pool_up, round.pool_down, participants.len() as u32),
     );
 
     Ok(())

@@ -43,6 +43,7 @@ mod reference_model;
 mod resolution;
 mod rotation;
 mod security;
+mod sealed_batch_auction;
 mod settlement_math_vectors;
 mod status;
 mod storage_benchmarks;
