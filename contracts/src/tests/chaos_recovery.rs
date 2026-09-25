@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 //! Chaos and recovery tests for interrupted lifecycle actions (Issue #122).
 //!
 //! Each scenario models a failure-like condition or unusual execution sequence and
@@ -8,13 +8,13 @@
 //!   - Safe / retriable calls are idempotent.
 //!
 //! ## Modeled failure assumptions
-//! - "Oracle unavailable" → admin must cancel; full refunds issued.
-//! - "Double-resolve" → second call finds no active round (NoActiveRound).
-//! - "Bet after round expired" → RoundEnded; user balance unchanged.
-//! - "Pause during active round" → bets rejected; unpause restores normal flow.
-//! - "Round with no participants resolved" → clean state, no errors.
-//! - "Double-cancel" → second cancel finds no active round (RoundNotCancellable).
-//! - "Claim with zero pending" → returns 0, balance unchanged (idempotent).
+//! - "Oracle unavailable" â†’ admin must cancel; full refunds issued.
+//! - "Double-resolve" â†’ second call finds no active round (NoActiveRound).
+//! - "Bet after round expired" â†’ RoundEnded; user balance unchanged.
+//! - "Pause during active round" â†’ bets rejected; unpause restores normal flow.
+//! - "Round with no participants resolved" â†’ clean state, no errors.
+//! - "Double-cancel" â†’ second cancel finds no active round (RoundNotCancellable).
+//! - "Claim with zero pending" â†’ returns 0, balance unchanged (idempotent).
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
@@ -24,7 +24,7 @@ use soroban_sdk::{
     Address, Env,
 };
 
-// ─── helper ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn setup_contract() -> (
     Env,
@@ -40,11 +40,10 @@ fn setup_contract() -> (
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
     (env, contract_id, admin, oracle, client)
 }
 
-// ─── Scenario 1: Oracle unavailable — admin cancels, full refunds ─────────────
+// â”€â”€â”€ Scenario 1: Oracle unavailable â€” admin cancels, full refunds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn test_chaos_oracle_unavailable_cancel_and_refund() {
@@ -61,7 +60,7 @@ fn test_chaos_oracle_unavailable_cancel_and_refund() {
 
     let total_staked = 200_0000000i128 + 300_0000000i128;
 
-    // Simulate: oracle service is down → admin cancels to protect users
+    // Simulate: oracle service is down â†’ admin cancels to protect users
     client.cancel_round(&1u32); // reason=1: "oracle_unavailable"
 
     // Invariant: sum of refunds == total_staked
@@ -81,7 +80,7 @@ fn test_chaos_oracle_unavailable_cancel_and_refund() {
     assert_eq!(client.balance(&bob), 1000_0000000);
 }
 
-// ─── Scenario 2: Double-resolve attempt ──────────────────────────────────────
+// â”€â”€â”€ Scenario 2: Double-resolve attempt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn test_chaos_double_resolve_returns_no_active_round() {
@@ -101,19 +100,18 @@ fn test_chaos_double_resolve_returns_no_active_round() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,    };
+    };
 
     // First resolve succeeds
     client.resolve_round(&payload);
     assert_eq!(client.get_active_round(), None);
 
-    // Second resolve attempt — no active round
+    // Second resolve attempt â€” no active round
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
 }
 
-// ─── Scenario 3: Bet placed after betting window closes ──────────────────────
+// â”€â”€â”€ Scenario 3: Bet placed after betting window closes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn test_chaos_bet_after_window_balance_unchanged() {
@@ -132,11 +130,11 @@ fn test_chaos_bet_after_window_balance_unchanged() {
     let result = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
     assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
 
-    // Invariant: user balance is unchanged — no funds locked
+    // Invariant: user balance is unchanged â€” no funds locked
     assert_eq!(client.balance(&user), balance_before);
 }
 
-// ─── Scenario 4: Pause during active round, unpause, then resolve ─────────────
+// â”€â”€â”€ Scenario 4: Pause during active round, unpause, then resolve â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn test_chaos_pause_mid_round_then_unpause_resolve() {
@@ -171,8 +169,7 @@ fn test_chaos_pause_mid_round_then_unpause_resolve() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,    });
+    });
 
     // Invariant: alice gets her stake back (only winner, no losers)
     assert_eq!(client.get_pending_winnings(&alice), 100_0000000);
@@ -180,7 +177,7 @@ fn test_chaos_pause_mid_round_then_unpause_resolve() {
     assert_eq!(client.balance(&user2), 1000_0000000);
 }
 
-// ─── Scenario 5: Round with no participants resolved cleanly ──────────────────
+// â”€â”€â”€ Scenario 5: Round with no participants resolved cleanly â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn test_chaos_resolve_empty_round_clean_state() {
@@ -193,7 +190,7 @@ fn test_chaos_resolve_empty_round_clean_state() {
     });
 
     let round = client.get_active_round().unwrap();
-    // No participants — resolution should succeed with no-op payout
+    // No participants â€” resolution should succeed with no-op payout
     client.resolve_round(&OraclePayload {
         price: 1_5000000,
         timestamp: env.ledger().timestamp(),
@@ -201,14 +198,13 @@ fn test_chaos_resolve_empty_round_clean_state() {
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,    });
+    });
 
     // Invariant: clean state
     assert_eq!(client.get_active_round(), None);
 }
 
-// ─── Scenario 6: Double cancel — second attempt fails gracefully ──────────────
+// â”€â”€â”€ Scenario 6: Double cancel â€” second attempt fails gracefully â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn test_chaos_double_cancel_returns_not_cancellable() {
@@ -217,12 +213,12 @@ fn test_chaos_double_cancel_returns_not_cancellable() {
     client.create_round(&1_0000000, &None);
     client.cancel_round(&0u32);
 
-    // Second cancel — no active round
+    // Second cancel â€” no active round
     let result = client.try_cancel_round(&0u32);
     assert_eq!(result, Err(Ok(ContractError::RoundNotCancellable)));
 }
 
-// ─── Scenario 7: Claim winnings with zero pending is idempotent ───────────────
+// â”€â”€â”€ Scenario 7: Claim winnings with zero pending is idempotent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn test_chaos_claim_zero_pending_is_idempotent() {
@@ -232,7 +228,7 @@ fn test_chaos_claim_zero_pending_is_idempotent() {
 
     let balance_before = client.balance(&user);
 
-    // No pending winnings — claim returns 0 without error
+    // No pending winnings â€” claim returns 0 without error
     let claimed = client.claim_winnings(&user);
     assert_eq!(claimed, 0);
 
@@ -242,7 +238,7 @@ fn test_chaos_claim_zero_pending_is_idempotent() {
     assert_eq!(claimed2, 0);
 }
 
-// ─── Scenario 8: Cancel then create new round — fresh state ──────────────────
+// â”€â”€â”€ Scenario 8: Cancel then create new round â€” fresh state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[test]
 fn test_chaos_cancel_and_restart_round_no_state_bleed() {
@@ -258,12 +254,6 @@ fn test_chaos_cancel_and_restart_round_no_state_bleed() {
     client.create_round(&1_0000000, &None);
     client.place_bet(&alice, &100_0000000, &BetSide::Up);
     client.cancel_round(&0u32);
-
-    // A ledger sequence backs at most one round (oracle payloads bind to
-    // `Round.start_ledger`), so advance before creating the replacement.
-    env.ledger().with_mut(|li| {
-        li.sequence_number += 1;
-    });
 
     // Round 2: started fresh; bob bets, alice does NOT carry over her round-1 position
     client.create_round(&1_2000000, &None);
