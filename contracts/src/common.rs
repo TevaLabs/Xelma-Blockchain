@@ -10,8 +10,7 @@ pub const MIN_PENDING_WINNINGS_EXPIRY: u32 = 128;   // ~10 min at 5s ledgers
 pub const MAX_PENDING_WINNINGS_EXPIRY: u32 = 1_000_000; // ~58 days
 pub const DEFAULT_GOV_PROPOSAL_TTL_LEDGERS: u32 = 100;
 
-// ─── DataKey overflow workaround (DataKey has 51 variants, XDR limit is 50) ──
-// Moved out of DataKey to get under the limit.
+// ─── DataKey overflow workaround (the split key types stay under XDR's 50-case limit) ──
 
 pub fn _migrated_key(env: &Env) -> Symbol {
     Symbol::new(env, "MigratedV3")

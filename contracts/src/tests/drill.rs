@@ -3,7 +3,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKey, OraclePayload, ProtocolStatus};
+use crate::types::{BetSide, DataKeyCore, OraclePayload, ProtocolStatus};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, Env, BytesN,
@@ -59,7 +59,7 @@ fn test_claims_only_matrix_verification() {
 
     // Seed protocol fee treasury for test fee withdrawal validation
     env.as_contract(&contract_id, || {
-        env.storage().persistent().set(&DataKey::ProtocolFeeTreasury, &5000_0000000i128);
+        env.storage().persistent().set(&DataKeyCore::ProtocolFeeTreasury, &5000_0000000i128);
     });
 
     // ─── ENTER CLAIMS-ONLY MODE ────────────────────────────────────────────────
