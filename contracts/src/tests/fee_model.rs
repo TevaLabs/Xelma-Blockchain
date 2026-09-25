@@ -63,7 +63,7 @@ fn resolve_at(
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 }
 
@@ -462,8 +462,12 @@ fn fee_never_charged_on_tie_regardless_of_model() {
 
         assert_eq!(client.get_pending_winnings(&alice), 7);
         assert_eq!(client.get_pending_winnings(&bob), 13);
-        assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0,
-            "Fee was charged on tie with model {:?}", model);
+        assert_eq!(
+            client.get_protocol_fee_treasury() - treasury_before,
+            0,
+            "Fee was charged on tie with model {:?}",
+            model
+        );
     }
 }
 

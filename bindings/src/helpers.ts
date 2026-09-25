@@ -81,6 +81,28 @@ export class AccessDeniedError extends XelmaError {
   }
 }
 
+export class UserDenylistedError extends XelmaError {
+  constructor() {
+    super(
+      "Participant is explicitly blocked by the active denylist policy",
+      89,
+      "UserDenylisted",
+    );
+    this.name = "UserDenylistedError";
+  }
+}
+
+export class UserNotAllowlistedError extends XelmaError {
+  constructor() {
+    super(
+      "Participant is not on the active allowlist",
+      90,
+      "UserNotAllowlisted",
+    );
+    this.name = "UserNotAllowlistedError";
+  }
+}
+
 // ─── Error Mapping ─────────────────────────────────────────────
 
 const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
@@ -92,6 +114,8 @@ const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
   29: ExposureCapExceededError,
   65: NoRoundTemplateError,
   79: AccessDeniedError,
+  89: UserDenylistedError,
+  90: UserNotAllowlistedError,
 };
 
 /**

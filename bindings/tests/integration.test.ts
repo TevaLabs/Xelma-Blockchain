@@ -13,6 +13,8 @@ import {
   ExposureCapExceededError,
   NoRoundTemplateError,
   AccessDeniedError,
+  UserDenylistedError,
+  UserNotAllowlistedError,
   wrapContractError,
   type MintResult,
   type ClaimResult,
@@ -217,6 +219,18 @@ describe("wrapContractError", () => {
     const err = wrapContractError({ code: 79 });
     expect(err).toBeInstanceOf(AccessDeniedError);
     expect((err as AccessDeniedError).variant).toBe("AccessDenied");
+  });
+
+  it("maps denylist rejection code 89 to UserDenylistedError", () => {
+    const err = wrapContractError({ code: 89 });
+    expect(err).toBeInstanceOf(UserDenylistedError);
+    expect((err as UserDenylistedError).variant).toBe("UserDenylisted");
+  });
+
+  it("maps allowlist rejection code 90 to UserNotAllowlistedError", () => {
+    const err = wrapContractError({ code: 90 });
+    expect(err).toBeInstanceOf(UserNotAllowlistedError);
+    expect((err as UserNotAllowlistedError).variant).toBe("UserNotAllowlisted");
   });
 });
 

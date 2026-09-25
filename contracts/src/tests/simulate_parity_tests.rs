@@ -73,15 +73,24 @@ fn test_simulate_payout_updown_with_fees_matches_resolve() {
     });
 
     // Payouts must match exactly
-    assert_eq!(client.get_pending_winnings(&alice), sim_alice.payout,
-        "Winner's pending winnings must match simulation");
-    assert_eq!(client.get_pending_winnings(&bob), sim_bob.payout,
-        "Loser's pending winnings must match simulation");
+    assert_eq!(
+        client.get_pending_winnings(&alice),
+        sim_alice.payout,
+        "Winner's pending winnings must match simulation"
+    );
+    assert_eq!(
+        client.get_pending_winnings(&bob),
+        sim_bob.payout,
+        "Loser's pending winnings must match simulation"
+    );
 
     // Conservation: payout + fee should equal total pot
     let total_payout = sim_alice.payout + sim_bob.payout;
-    assert_eq!(total_payout + sim.fee_amount, 800i128,
-        "Payouts and fees must conserve total pot value");
+    assert_eq!(
+        total_payout + sim.fee_amount,
+        800i128,
+        "Payouts and fees must conserve total pot value"
+    );
 }
 
 /// Parity test for UpDown mode with one-sided pool: `simulate_payout` must predict
@@ -118,10 +127,15 @@ fn test_simulate_payout_updown_one_sided_matches_resolve() {
     assert_eq!(sim.outcomes.len(), 3);
     for i in 0..sim.outcomes.len() {
         let outcome = sim.outcomes.get(i).unwrap();
-        assert_eq!(outcome.outcome, UserOutcomeType::Refund,
-            "One-sided round must refund all stakes");
-        assert_eq!(outcome.payout, outcome.stake,
-            "Refund payout must equal original stake");
+        assert_eq!(
+            outcome.outcome,
+            UserOutcomeType::Refund,
+            "One-sided round must refund all stakes"
+        );
+        assert_eq!(
+            outcome.payout, outcome.stake,
+            "Refund payout must equal original stake"
+        );
     }
 
     // Now resolve and verify parity
@@ -264,11 +278,14 @@ fn test_simulate_payout_precision_equal_policy_matches_resolve() {
     assert_eq!(sim_alice.outcome, UserOutcomeType::Win);
     assert_eq!(sim_bob.outcome, UserOutcomeType::Win);
     assert_eq!(sim_charlie.outcome, UserOutcomeType::Loss);
-    
+
     // Both winners should get equal payouts (600 / 2 = 300)
     assert_eq!(sim_alice.payout, 300i128, "Alice should get equal share");
     assert_eq!(sim_bob.payout, 300i128, "Bob should get equal share");
-    assert_eq!(sim_charlie.payout, 0i128, "Charlie (loser) should get nothing");
+    assert_eq!(
+        sim_charlie.payout, 0i128,
+        "Charlie (loser) should get nothing"
+    );
 
     // Verify parity with live settlement
     env.ledger().with_mut(|li| {

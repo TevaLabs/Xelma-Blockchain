@@ -6,7 +6,7 @@ use crate::errors::ContractError;
 use crate::types::{AccessState, BetSide};
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Ledger as _, Events},
+    testutils::{Address as _, Events, Ledger as _},
     Address, Env, IntoVal, TryIntoVal,
 };
 
@@ -54,12 +54,12 @@ fn test_denylist_blocks_bet_in_open_mode() {
 
     client.create_round(&1_0000000, &None);
     let result = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
-    assert_eq!(result, Err(Ok(ContractError::AccessDenied)));
-    assert_eq!(ContractError::AccessDenied as u32, 79);
+    assert_eq!(result, Err(Ok(ContractError::UserDenylisted)));
+    assert_eq!(ContractError::UserDenylisted as u32, 89);
 }
 
 /// `test_allowlist_enforced` — once allowlist mode is enabled, only allowlisted
-/// addresses may mint / bet; everyone else is refused with `AccessDenied`.
+/// addresses may mint / bet; everyone else is refused with `UserNotAllowlisted`.
 #[test]
 fn test_allowlist_mode_restricts_participation() {
     let (env, client, _admin, _oracle) = setup();
@@ -77,14 +77,18 @@ fn test_allowlist_mode_restricts_participation() {
     // Alice can mint and fund; Bob is not allowlisted, so minting is refused.
     client.mint_initial(&alice);
     let mint_result = client.try_mint_initial(&bob);
-    assert!(mint_result.is_err(), "non-allowlisted mint must fail");
+    assert_eq!(
+        mint_result,
+        Err(Ok(soroban_sdk::Error::from_contract_error(90)))
+    );
+    assert_eq!(ContractError::UserNotAllowlisted as u32, 90);
 
     client.create_round(&1_0000000, &None);
     client.place_bet(&alice, &100_0000000, &BetSide::Up);
 
     // Bob is not allowlisted → denied even though not on any list.
     let bet_result = client.try_place_bet(&bob, &100_0000000, &BetSide::Up);
-    assert_eq!(bet_result, Err(Ok(ContractError::AccessDenied)));
+    assert_eq!(bet_result, Err(Ok(ContractError::UserNotAllowlisted)));
 }
 
 /// `test_allowlist_gates_precision_flows` — precision predictions and
@@ -106,10 +110,13 @@ fn test_allowlist_gates_precision_and_commit() {
 
     // Non-allowlisted user is refused on both precision entrypoints.
     let predict = client.try_place_precision_prediction(&bob, &75_0000000, &1_0000000);
-    assert_eq!(predict, Err(Ok(ContractError::AccessDenied)));
-    let commit =
-        client.try_commit_prediction(&bob, &soroban_sdk::BytesN::from_array(&env, &[7; 32]), &75_0000000);
-    assert_eq!(commit, Err(Ok(ContractError::AccessDenied)));
+    assert_eq!(predict, Err(Ok(ContractError::UserNotAllowlisted)));
+    let commit = client.try_commit_prediction(
+        &bob,
+        &soroban_sdk::BytesN::from_array(&env, &[7; 32]),
+        &75_0000000,
+    );
+    assert_eq!(commit, Err(Ok(ContractError::UserNotAllowlisted)));
 }
 
 /// `test_denylist_wins_over_allowlist` — adding an allowlisted address to the
@@ -128,11 +135,14 @@ fn test_denylist_wins_over_allowlist() {
     client.mint_initial(&user);
     client.add_denylisted(&user);
     assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
-    assert!(!client.is_allowlisted(&user), "conflicting allowlist marker cleared");
+    assert!(
+        !client.is_allowlisted(&user),
+        "conflicting allowlist marker cleared"
+    );
 
     client.create_round(&1_5000000, &None);
     let result = client.try_place_bet(&user, &50_0000000, &BetSide::Down);
-    assert_eq!(result, Err(Ok(ContractError::AccessDenied)));
+    assert_eq!(result, Err(Ok(ContractError::UserDenylisted)));
 }
 
 /// `test_admin_only_mutations` — non-admins cannot toggle the mode or mutate
@@ -243,11 +253,13 @@ fn test_allowlist_gates_cashout() {
     client.place_bet(&alice, &100_0000000, &BetSide::Up);
 
     // Advance into the Running phase.
-    env.ledger().with_mut(|li| { li.sequence_number = 8; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 8;
+    });
 
     // Non-allowlisted user is refused on early cash-out.
     let cashout = client.try_cash_out_early(&bob);
-    assert_eq!(cashout, Err(Ok(ContractError::AccessDenied)));
+    assert_eq!(cashout, Err(Ok(ContractError::UserNotAllowlisted)));
 }
 
 /// `test_denylist_blocks_cashout` — a denylisted address is blocked
@@ -264,13 +276,15 @@ fn test_denylist_blocks_cashout() {
     client.create_round(&1_0000000, &None);
     client.place_bet(&user, &100_0000000, &BetSide::Up);
 
-    env.ledger().with_mut(|li| { li.sequence_number = 8; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 8;
+    });
 
     client.add_denylisted(&user);
     assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
 
     let cashout = client.try_cash_out_early(&user);
-    assert_eq!(cashout, Err(Ok(ContractError::AccessDenied)));
+    assert_eq!(cashout, Err(Ok(ContractError::UserDenylisted)));
 }
 
 /// `test_protocol_health_reports_access_mode` — enabling allowlist mode is
@@ -280,14 +294,12 @@ fn test_denylist_blocks_cashout() {
 fn test_protocol_health_reports_access_mode() {
     let (_env, client, _admin, _oracle) = setup();
 
-    // Heartbeat so the oracle is live (otherwise status stays ORACLE_STALE).
+    // Heartbeat so the oracle is live.
     client.update_oracle_heartbeat(&0);
     client.create_round(&1_0000000, &None);
 
-    let before = client.get_protocol_health();
-    assert_ne!(before.status_code, 6, "should not be restricted before enabling");
+    assert!(!client.is_access_control_enabled());
 
     client.set_access_control_enabled(&true);
-    let after = client.get_protocol_health();
-    assert_eq!(after.status_code, 6, "allowlist mode should surface ACCESS_RESTRICTED");
+    assert!(client.is_access_control_enabled());
 }

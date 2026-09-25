@@ -55,10 +55,8 @@ pub fn set_access_control_enabled(env: Env, enabled: bool) -> Result<(), Contrac
     }
 
     #[allow(deprecated)]
-    env.events().publish(
-        (symbol_short!("access"), symbol_short!("mode")),
-        (enabled,),
-    );
+    env.events()
+        .publish((symbol_short!("access"), symbol_short!("mode")), (enabled,));
 
     Ok(())
 }
@@ -201,9 +199,17 @@ pub fn is_denylisted(env: Env, user: Address) -> bool {
 /// Denylist takes precedence over allowlist. An address that is neither marked
 /// resolves to `Open`, regardless of whether allowlist mode is enabled.
 pub fn get_access_state(env: Env, user: Address) -> AccessState {
-    if env.storage().persistent().has(&DataKeyScoped::Denylisted(user.clone())) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKeyScoped::Denylisted(user.clone()))
+    {
         AccessState::Denylisted
-    } else if env.storage().persistent().has(&DataKeyScoped::Allowlisted(user)) {
+    } else if env
+        .storage()
+        .persistent()
+        .has(&DataKeyScoped::Allowlisted(user))
+    {
         AccessState::Allowlisted
     } else {
         AccessState::Open
@@ -224,15 +230,16 @@ pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
 /// 2. If allowlist mode is enabled, an `user` that is not allowlisted is rejected.
 /// 3. Otherwise, the call proceeds (default open).
 ///
-/// Both rejection paths return the stable, dedicated
-/// [`ContractError::AccessDenied`] error (code `79`).
+/// Rejection paths return dedicated documented errors:
+/// [`ContractError::UserDenylisted`] (code `89`) when denylisted, or
+/// [`ContractError::UserNotAllowlisted`] (code `90`) when allowlist mode is active and user is not allowlisted.
 pub fn _enforce_access_control(env: &Env, user: &Address) -> Result<(), ContractError> {
     if env
         .storage()
         .persistent()
         .has(&DataKeyScoped::Denylisted(user.clone()))
     {
-        return Err(ContractError::AccessDenied);
+        return Err(ContractError::UserDenylisted);
     }
     let enabled: bool = env
         .storage()
@@ -245,7 +252,7 @@ pub fn _enforce_access_control(env: &Env, user: &Address) -> Result<(), Contract
             .persistent()
             .has(&DataKeyScoped::Allowlisted(user.clone()))
     {
-        return Err(ContractError::AccessDenied);
+        return Err(ContractError::UserNotAllowlisted);
     }
     Ok(())
 }

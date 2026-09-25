@@ -18,8 +18,11 @@
 //! mock auths, round creation at ledger 0, bet window = [0, 6),
 //! reveal window = [6, 12), resolve at ≥ 12.
 
-use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env, TryFromVal};
 use soroban_sdk::xdr::ToXdr;
+use soroban_sdk::{
+    testutils::{Address as _, Ledger as _},
+    Address, Bytes, BytesN, Env,
+};
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
@@ -130,10 +133,7 @@ fn test_adversarial_salt_grinding_defense() {
     assert_eq!(prediction.unwrap().predicted_price, price);
 
     // Balance unchanged (commit already deducted)
-    assert_eq!(
-        client.balance(&attacker),
-        INITIAL_BALANCE - 100_0000000
-    );
+    assert_eq!(client.balance(&attacker), INITIAL_BALANCE - 100_0000000);
 }
 
 // ─── Scenario 2: Commit-and-grief via non-reveal ────────────────────────────
@@ -371,11 +371,7 @@ fn test_adversarial_double_commit_rejected() {
     assert_eq!(prediction.amount, 100_0000000);
 
     // ── Attempt to also use the direct prediction path (bypass) ──
-    let result2 = client.try_place_precision_prediction(
-        &attacker,
-        &50_0000000,
-        &2500u128,
-    );
+    let result2 = client.try_place_precision_prediction(&attacker, &50_0000000, &2500u128);
     assert_eq!(
         result2,
         Err(Ok(ContractError::AlreadyBet)),

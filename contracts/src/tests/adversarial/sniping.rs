@@ -5,7 +5,10 @@ use super::super::config_helpers::apply_windows;
 use super::{emit_result, setup_contract};
 use crate::errors::ContractError;
 use crate::types::BetSide;
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
 
 /// Attacker snipes at the close-buffer edge in UpDown mode.
 /// Defense: close buffer rejects bets before `bet_end_ledger`; balance unchanged.

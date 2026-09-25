@@ -23,7 +23,9 @@ fn test_schema_version_and_admin_ttl_extended_on_interaction() {
     // SchemaVersion and Admin are long-lived keys.
     // Verify they are extended to BUMP_AMOUNT (518_400 ledgers)
     let schema_ttl = env.as_contract(&contract_id, || {
-        env.storage().persistent().get_ttl(&DataKeyCore::SchemaVersion)
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKeyCore::SchemaVersion)
     });
     assert!(schema_ttl >= 518_400);
 
@@ -146,9 +148,7 @@ fn test_batch_touch_ttl_touches_allowlisted_keys() {
 
     // Verify each key now has a fresh TTL
     for key in keys.iter() {
-        let ttl = env.as_contract(&contract_id, || {
-            env.storage().persistent().get_ttl(&key)
-        });
+        let ttl = env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
         assert!(
             ttl >= 518_400,
             "TTL for key should be bumped to at least BUMP_AMOUNT"
@@ -174,7 +174,7 @@ fn test_batch_touch_ttl_skips_absent_keys() {
         [
             DataKeyCore::Admin,
             DataKeyCore::CloseBufferLedgers, // not set during init
-            DataKeyCore::MaxStake,            // not set during init
+            DataKeyCore::MaxStake,           // not set during init
         ],
     );
 
@@ -198,10 +198,7 @@ fn test_batch_touch_ttl_rejects_non_allowlisted_key() {
     let keys: Vec<DataKeyCore> = Vec::from_array(&env, [DataKeyCore::ActiveRound]);
 
     let result = client.try_batch_touch_ttl(&keys);
-    assert!(
-        result.is_err(),
-        "non-allowlisted key should be rejected"
-    );
+    assert!(result.is_err(), "non-allowlisted key should be rejected");
 }
 
 #[test]
