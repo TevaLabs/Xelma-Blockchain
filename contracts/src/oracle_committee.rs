@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: MIT
 //! Stake-Weighted Oracle Committee Module
 //!
 //! Provides cryptoeconomic security for price oracle feeds: feeder registration,
 //! stake-weighted quorum checking, stake-weighted median aggregation, and slashing hooks for equivocation.
 
-use soroban_sdk::{contracttype, Address, Env, Vec};
 use crate::errors::ContractError;
+use soroban_sdk::{contracttype, Address, Env, Vec};
 
 /// Member registration record for an oracle feeder
 #[contracttype]

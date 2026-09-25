@@ -21,13 +21,13 @@ use crate::types::{
 };
 
 use crate::common::{
-    CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
+    BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
     DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
-    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_MIN_PARTICIPANTS,
-    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
+    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS,
+    MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
     MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
     MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
-    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD, BPS_DENOMINATOR,
+    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
 
 // ─── Oracle rotation expiry ───────────────────────────────────────────────────
@@ -133,7 +133,7 @@ impl VirtualTokenContract {
         offset: u32,
         limit: u32,
     ) -> Result<Vec<ArchivedRoundSummary>, ContractError> {
-        queries::get_user_archive_history(env, user, offset, limit)
+        Ok(queries::get_user_archive_history(env, user, offset, limit))
     }
 
     /// Returns whether `action` is currently permitted under the PolicyGate
@@ -696,48 +696,6 @@ impl VirtualTokenContract {
     /// Queries details for a governance proposal.
     pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
         governance::get_gov_proposal(env, proposal_id)
-    }
-
-    // ─── On-Chain Constitution Framework (Issue #363) ──────────────────────────
-
-    /// Establishes the on-chain constitution with governance rules (admin only).
-    pub fn establish_constitution(
-        env: Env,
-        veto_window_ledgers: u32,
-        timelock_ledgers: u32,
-        dual_approval_required: bool,
-    ) -> Result<(), ContractError> {
-        governance::establish_constitution(env, veto_window_ledgers, timelock_ledgers, dual_approval_required)
-    }
-
-    /// Returns the on-chain constitution metadata, if established.
-    pub fn get_constitution(env: Env) -> Option<crate::types::ConstitutionMetadata> {
-        governance::get_constitution(env)
-    }
-
-    /// Proposes a parameter amendment with timelock and optional veto window.
-    pub fn propose_amendment(
-        env: Env,
-        proposer: Address,
-        parameter_name: Symbol,
-        new_value: Val,
-    ) -> Result<u64, ContractError> {
-        governance::propose_amendment(env, proposer, parameter_name, new_value)
-    }
-
-    /// Vetoes a pending amendment before its veto window expires.
-    pub fn veto_amendment(env: Env, vetoer: Address, amendment_id: u64) -> Result<(), ContractError> {
-        governance::veto_amendment(env, vetoer, amendment_id)
-    }
-
-    /// Activates an amendment after timelock expires.
-    pub fn activate_amendment(env: Env, activator: Address, amendment_id: u64) -> Result<(), ContractError> {
-        governance::activate_amendment(env, activator, amendment_id)
-    }
-
-    /// Retrieves an amendment proposal record by ID.
-    pub fn get_amendment(env: Env, amendment_id: u64) -> Option<crate::types::Amendment> {
-        governance::get_amendment(env, amendment_id)
     }
 
     /// Schedules a timelocked windows update (alias for [`Self::schedule_windows`]).
@@ -1380,7 +1338,7 @@ impl VirtualTokenContract {
         cursor: Option<Address>,
         limit: u32,
     ) -> Result<(Vec<LeaderboardEntry>, Option<Address>), ContractError> {
-        queries::get_leaderboard_by_wins(env, cursor, limit)
+        Ok(queries::get_leaderboard_by_wins(env, cursor, limit))
     }
 
     /// Cursor-based page of the global leaderboard ordered by best streak descending.
@@ -1390,7 +1348,7 @@ impl VirtualTokenContract {
         cursor: Option<Address>,
         limit: u32,
     ) -> Result<(Vec<LeaderboardEntry>, Option<Address>), ContractError> {
-        queries::get_leaderboard_by_streak(env, cursor, limit)
+        Ok(queries::get_leaderboard_by_streak(env, cursor, limit))
     }
     // ─── Leaderboards (lifetime + seasons) ──────────────────────────────────
 

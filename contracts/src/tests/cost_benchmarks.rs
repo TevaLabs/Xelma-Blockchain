@@ -372,10 +372,7 @@ fn bench_cost_resolve_precision_round_max_cap() {
 /// Populates the lifetime leaderboard to `LEADERBOARD_LIMIT` by calling
 /// `_update_stats_win` for that many unique users. Returns the generated
 /// addresses.
-fn populate_leaderboard(
-    env: &Env,
-    contract_id: &Address,
-) -> soroban_sdk::Vec<Address> {
+fn populate_leaderboard(env: &Env, contract_id: &Address) -> soroban_sdk::Vec<Address> {
     let mut addrs = soroban_sdk::Vec::new(env);
     for _ in 0..LEADERBOARD_LIMIT {
         let user = Address::generate(env);

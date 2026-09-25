@@ -939,9 +939,10 @@ fn test_updown_bet_counts_precision_commitment_toward_exposure_cap() {
         revealed: false,
     };
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::PrecisionCommitment(round.round_id, user.clone()), &commitment);
+        env.storage().persistent().set(
+            &DataKeyScoped::PrecisionCommitment(round.round_id, user.clone()),
+            &commitment,
+        );
     });
 
     let result = client.try_place_bet(&user, &30_0000000, &BetSide::Up);
@@ -971,9 +972,10 @@ fn test_precision_prediction_counts_updown_position_toward_exposure_cap() {
         side: BetSide::Up,
     };
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::Position(round.round_id, user.clone()), &position);
+        env.storage().persistent().set(
+            &DataKeyScoped::Position(round.round_id, user.clone()),
+            &position,
+        );
     });
 
     let result = client.try_place_precision_prediction(&user, &30_0000000, &2297u128);
@@ -1004,16 +1006,14 @@ fn test_commit_prediction_counts_precision_prediction_toward_exposure_cap() {
         amount: 75_0000000,
     };
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::PrecisionPosition(round.round_id, user.clone()), &prediction);
+        env.storage().persistent().set(
+            &DataKeyScoped::PrecisionPosition(round.round_id, user.clone()),
+            &prediction,
+        );
     });
 
-    let result = client.try_commit_prediction(
-        &user,
-        &BytesN::from_array(&env, &[11u8; 32]),
-        &30_0000000,
-    );
+    let result =
+        client.try_commit_prediction(&user, &BytesN::from_array(&env, &[11u8; 32]), &30_0000000);
     assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
 }
 

@@ -12,6 +12,21 @@ pub enum RoundMode {
     Precision = 1, // Exact price predictions (Legends mode)
 }
 
+/// Insurance coverage trigger categories.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum InsuranceEvent {
+    OracleOutage = 0,
+    OracleDeviation = 1,
+    FallbackRefund = 2,
+}
+
+pub const CANCEL_REASON_GENERIC: u32 = 0;
+pub const CANCEL_REASON_ORACLE_OUTAGE: u32 = 1;
+pub const CANCEL_REASON_ORACLE_DEVIATION: u32 = 2;
+pub const CANCEL_REASON_FALLBACK_REFUND: u32 = 3;
+
 /// Runtime mode for the contract lifecycle
 #[contracttype]
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -19,13 +19,16 @@ extern crate std;
 mod access_control;
 mod admin;
 mod betting;
+pub mod collateral;
 pub mod common;
 mod config;
 mod contract;
 mod errors;
 mod governance;
+mod insurance;
 mod leaderboard;
 mod math_common;
+pub mod oracle_committee;
 mod queries;
 mod settlement;
 mod settlement_math;
@@ -39,7 +42,7 @@ pub use contract::VirtualTokenContract;
 pub use errors::ContractError;
 pub use types::{
     ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, LeaderboardEntry, OracleRotationProposal, PendingConfigChange,
+    DataKeyScoped, InsuranceEvent, LeaderboardEntry, OracleRotationProposal, PendingConfigChange,
     PrecisionCommitment, PrecisionPrediction, ProtocolHealthStatus, Round, RoundArchiveStatus,
     RoundTemplate, SeasonArchive, SeasonLeaderboardEntry, UserPosition, UserStats,
 };

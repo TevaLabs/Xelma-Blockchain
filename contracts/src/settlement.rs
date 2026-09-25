@@ -208,7 +208,9 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
                     }
 
                     participant_stakes.push_back(refund_amount);
-                    total_stake = total_stake.checked_add(refund_amount).unwrap_or(total_stake);
+                    total_stake = total_stake
+                        .checked_add(refund_amount)
+                        .unwrap_or(total_stake);
 
                     if refund_amount > 0 {
                         _accumulate_pending(&env, user.clone(), refund_amount)?;
@@ -242,7 +244,8 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
             }
         }
         if total_coverage > 0 {
-            let distributed = crate::insurance::deduct_insurance_coverage(&env, round_id, total_coverage)?;
+            let distributed =
+                crate::insurance::deduct_insurance_coverage(&env, round_id, total_coverage)?;
             // Distribute coverage proportionally to participants
             if distributed > 0 && total_stake > 0 {
                 for i in 0..participants.len() {
@@ -2840,67 +2843,4 @@ pub fn _update_stats_loss(env: &Env, user: Address) -> Result<(), ContractError>
     crate::leaderboard::_update_leaderboards(env, user.clone());
     crate::leaderboard::_update_season_stats_loss(env, user)?;
     Ok(())
-
-fn _read_resolved_at(env: &Env, round_id: u64) -> Option<u32> {
-    env.storage()
-        .persistent()
-        .get::<_, Map<u64, u32>>(&_resolved_at_map_key())
-        .and_then(|m| m.get(round_id))
-}
-
-fn _remove_resolved_at(env: &Env, round_id: u64) {
-    let key = _resolved_at_map_key();
-    let mut m: Map<u64, u32> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Map::new(env));
-    m.remove(round_id);
-    if m.len() == 0 {
-        env.storage().persistent().remove(&key);
-    } else {
-        env.storage().persistent().set(&key, &m);
-        _extend_ttl_symbol(env, &key);
-    }
-}
-
-fn _read_settlement(env: &Env, round_id: u64) -> Option<RoundSettlement> {
-    env.storage()
-        .persistent()
-        .get::<_, Map<u64, RoundSettlement>>(&_settlement_map_key())
-        .and_then(|m| m.get(round_id))
-}
-
-fn _remove_settlement(env: &Env, round_id: u64) {
-    let key = _settlement_map_key();
-    let mut m: Map<u64, RoundSettlement> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Map::new(env));
-    m.remove(round_id);
-    if m.len() == 0 {
-        env.storage().persistent().remove(&key);
-    } else {
-        env.storage().persistent().set(&key, &m);
-        _extend_ttl_symbol(env, &key);
-    }
-}
-
-fn _round_from_settlement(stl: &RoundSettlement) -> Round {
-    Round {
-        round_id: stl.round_id,
-        price_start: stl.price_start,
-        start_ledger: 0,
-        start_timestamp: 0,
-        bet_end_ledger: 0,
-        end_ledger: 0,
-        pool_up: stl.pool_up,
-        pool_down: stl.pool_down,
-        mode: if stl.mode == 0 {
-            RoundMode::UpDown
-        } else {
-            RoundMode::Precision
-        },
-    }
 }

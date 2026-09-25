@@ -2,6 +2,7 @@
 //! Test modules for the XLM Price Prediction Market contract.
 
 mod access_control;
+#[path = "adversarial/mod.rs"]
 mod adversarial;
 mod archive_retention;
 mod attestation;

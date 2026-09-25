@@ -84,4 +84,8 @@ pub enum ContractError {
     DisputeWindowExpired = 93,
     ClaimLocked = 94,
     RoundStartLedgerReused = 95,
+    InvalidAmount = 96,
+    InsuranceInvalidSplit = 97,
+    InsuranceInsufficientFund = 98,
+    InsuranceEventNotEligible = 99,
 }
