@@ -10,7 +10,7 @@ use crate::config::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
+    ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, LeaderboardEntry,
     MarketSnapshot, PrecisionCommitment, PrecisionPayoutPolicy, PrecisionPrediction,
     PendingWinningsUpdatedAtKey, Round, RoundMode, RoundPhase, RoundPoolStats, RoundTemplate,
     SeasonArchive, SimulationResult, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
