@@ -562,7 +562,6 @@ export const ContractError = {
   /**
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
-  61: {message:"PendingWinningsNotExpired"},
   63: {message:"InvalidCommitment"},
   64: {message:"InvalidSalt"},
   /**
@@ -618,7 +617,37 @@ export const ContractError = {
   /** Oracle heartbeat failed the configured health policy. */
   85: {message:"OracleHeartbeatUnhealthy"},
   /** Pending winnings have not reached their expiry threshold. */
-  86: {message:"PendingWinningsNotExpired"}
+  86: {message:"PendingWinningsNotExpired"},
+  /** claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE */
+  87: {message:"ClaimBatchTooLarge"},
+  /** claim_many batch contains the same address more than once */
+  88: {message:"DuplicateClaimAddress"},
+  /** Participant is explicitly blocked by the active denylist policy. */
+  89: {message:"UserDenylisted"},
+  /** Participant is not on the active allowlist when allowlist mode is enabled. */
+  90: {message:"UserNotAllowlisted"},
+  /** Dispute window for void_round has expired or is not configured. */
+  91: {message:"DisputeWindowExpired"},
+  /** finalize_round was called before the dispute window elapsed. */
+  92: {message:"ClaimLocked"},
+  /** Round start ledger sequence was reused. */
+  93: {message:"RoundStartLedgerReused"},
+  /** Pagination limit exceeds MAX_PAGE_SIZE. */
+  94: {message:"PageSizeExceeded"},
+  /** Early cash-out feature is disabled or not configured. */
+  95: {message:"EarlyCashoutDisabled"},
+  /** User does not have an active position to cash out. */
+  96: {message:"PositionNotFound"},
+  /** Early cash-out attempted outside the valid running phase. */
+  97: {message:"InvalidPhaseForCashout"},
+  /** Early cash-out is only supported for UpDown rounds. */
+  98: {message:"WrongModeForCashout"},
+  /** Insurance payout split does not sum to the covered balance. */
+  99: {message:"InsuranceInvalidSplit"},
+  /** Insurance backstop fund has insufficient balance. */
+  100: {message:"InsuranceInsufficientFund"},
+  /** Token amount is invalid for the requested operation. */
+  101: {message:"InvalidAmount"}
 }
 
 /**

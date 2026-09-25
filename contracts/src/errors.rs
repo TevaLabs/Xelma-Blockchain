@@ -107,6 +107,10 @@ pub enum ContractError {
     ClaimBatchTooLarge = 87,
     /// claim_many batch contains the same address more than once (Issue #277)
     DuplicateClaimAddress = 88,
+    /// Participant is explicitly blocked by the active denylist policy.
+    UserDenylisted = 89,
+    /// Participant is not on the active allowlist when allowlist mode is enabled.
+    UserNotAllowlisted = 90,
     /// Early cash-out feature is disabled or not configured
     EarlyCashoutDisabled = 95,
     /// User does not have an active position to cash out

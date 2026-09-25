@@ -91,7 +91,10 @@ fn test_simulate_payout_does_not_mutate_state() {
     client.simulate_payout(&10000);
 
     let round_after = client.get_active_round().unwrap();
-    assert_eq!(round_before, round_after, "simulate_payout must not mutate the active round");
+    assert_eq!(
+        round_before, round_after,
+        "simulate_payout must not mutate the active round"
+    );
     assert_eq!(client.get_pending_winnings(&p1), 0);
     assert_eq!(client.get_pending_winnings(&p2), 0);
 }

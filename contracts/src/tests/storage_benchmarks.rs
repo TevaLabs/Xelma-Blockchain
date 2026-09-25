@@ -75,8 +75,10 @@ fn bench_place_bet_writes_single_user_key() {
         assert_eq!(bob_pos.side, BetSide::Down);
 
         // The legacy bulk-map key is NOT written under the new layout
-        let legacy: Option<soroban_sdk::Map<Address, UserPosition>> =
-            env.storage().persistent().get(&DataKeyCore::UpDownPositions);
+        let legacy: Option<soroban_sdk::Map<Address, UserPosition>> = env
+            .storage()
+            .persistent()
+            .get(&DataKeyCore::UpDownPositions);
         assert!(
             legacy.is_none(),
             "legacy DataKeyCore::UpDownPositions must not be written by place_bet"
@@ -174,7 +176,8 @@ fn bench_resolve_cleans_indexed_keys() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     env.as_contract(&contract_id, || {
         // Participant list removed
@@ -244,7 +247,8 @@ fn bench_large_round_resolves_correctly() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Each UP winner should have pending = bet + (bet/winning_pool) * losing_pool
     //   = 10_0000000 + (10_0000000 / (30 * 10_0000000)) * (30 * 10_0000000)
@@ -315,7 +319,10 @@ fn bench_precision_mode_indexed_keys() {
             let pred: crate::types::PrecisionPrediction = env
                 .storage()
                 .persistent()
-                .get(&DataKeyScoped::PrecisionPosition(round.round_id, (*u).clone()))
+                .get(&DataKeyScoped::PrecisionPosition(
+                    round.round_id,
+                    (*u).clone(),
+                ))
                 .expect("each precision prediction stored at indexed key");
             assert_eq!(pred.amount, 10_0000000);
         }
@@ -338,7 +345,8 @@ fn bench_precision_mode_indexed_keys() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Bob wins entire pot (3 * 10_0000000)
     assert_eq!(client.get_pending_winnings(&bob), 30_0000000);
