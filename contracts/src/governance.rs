@@ -427,10 +427,10 @@ pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
 }
 
 // ─── On-Chain Constitution Framework (Issue #363) ─────────────────────────────
-//!
-//! This module implements the on-chain constitution system for parameter governance,
-//! introducing immutable, timelocked, and dual-approval parameters with optional
-//! veto and guardian windows before activation.
+//
+// This module implements the on-chain constitution system for parameter governance,
+// introducing immutable, timelocked, and dual-approval parameters with optional
+// veto and guardian windows before activation.
 
 /// Establishes the on-chain constitution with initial governance parameters (admin only).
 ///
