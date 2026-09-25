@@ -619,7 +619,7 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
     let skew: u64 = env
         .storage()
         .instance()
-        .get(&symbol_short!("otskew"))
+        .get(&DataKeyCore::OracleTimestampSkew)
         .unwrap_or(DEFAULT_ORACLE_TIMESTAMP_SKEW);
 
     let round_start = round.start_timestamp;
@@ -933,7 +933,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
     let skew: u64 = env
         .storage()
         .instance()
-        .get(&symbol_short!("otskew"))
+        .get(&DataKeyCore::OracleTimestampSkew)
         .unwrap_or(DEFAULT_ORACLE_TIMESTAMP_SKEW);
 
     let round_start = round.start_timestamp;

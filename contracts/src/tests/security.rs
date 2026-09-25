@@ -2456,7 +2456,9 @@ fn test_resolve_round_timestamp_before_round_window() {
     // Default skew 300 -> window: [100-300, 160+300] = [0, 460] (lower saturates at 0)
     // Set a short skew of 30 via instance storage to make lower bound = 100-30 = 70
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&DataKeyCore::OracleTimestampSkew, &30u64);
     });
     // With skew=30: window = [70, 190]
     // Payload ts=10 is before the lower bound
@@ -2500,7 +2502,9 @@ fn test_resolve_round_timestamp_boundary_lower() {
 
     // Skew=30 -> window: [70, 190]
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&DataKeyCore::OracleTimestampSkew, &30u64);
     });
 
     // Payload at exactly the lower bound (70) must be accepted

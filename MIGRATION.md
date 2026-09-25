@@ -1,5 +1,30 @@
 # Migration Notes
 
+## Typed storage key split (Schema v4)
+
+The contract now uses the `DataKeyCore` / `DataKeyScoped` / `DataKeyExt`
+taxonomy exclusively. The following state paths changed from ad-hoc or legacy
+keys to typed keys:
+
+| Previous path | Canonical path | Notes |
+|---|---|---|
+| instance `otskew` symbol | `DataKeyCore::OracleTimestampSkew` | oracle timestamp skew |
+| instance `EpMintBgt` symbol | `DataKeyCore::EpochMintBudget` | epoch mint budget |
+| persistent `DisputeLedgers` symbol | `DataKeyCore::DisputeLedgers` | dispute window |
+| persistent `PendingWinningsExpiryKey(())` | `DataKeyCore::PendingWinningsExpiry` | pending-winnings expiry |
+| `DataKey::PendingWinnings(Address)` | `DataKeyScoped::PendingWinnings(Address)` | user pending winnings |
+
+This release does not dual-write old and new paths. Operators upgrading an
+existing deployment must run an explicit migration that reads each old path,
+writes the corresponding typed path, verifies the value, and only then removes
+the old path. The migration must be gated by the schema version and blocked
+while a round is active. Deployments with no value at an old optional path can
+accept the documented default without creating a compatibility key.
+
+The legacy bulk-map position keys remain migration-only compatibility paths;
+normal betting and cleanup use only `DataKeyScoped::Position`,
+`PrecisionPosition`, `PrecisionCommitment`, and `RoundParticipants`.
+
 ## Dry-run mode (Schema v3+)
 
 **Introduced in:** `feat/292-upgradeability-migration-dry-run-next-schema-template`

@@ -10,6 +10,28 @@ the whole map. The new design stores each user's record under a composite
 
 ## Key Layout
 
+## Typed key taxonomy
+
+All contract storage keys use one of the following `DataKeyCore` variants. The
+taxonomy is part of the XDR contract schema and must be updated before adding a
+new storage slot:
+
+| Type | Scope | Examples | Storage class |
+|---|---|---|---|
+| `DataKeyCore` | singleton protocol, configuration, and schema state | `Admin`, `ActiveRound`, `OracleTimestampSkew`, `EpochMintBudget` | persistent or instance, as documented by the call site |
+| `DataKeyScoped` | keys carrying an address, round, ledger, or other runtime scope | `Balance(Address)`, `PendingWinnings(Address)`, `Position(round_id, user)` | persistent or temporary, as documented by the call site |
+| `DataKeyCore::Ext(DataKeyExt)` | overflow bucket for additional singleton or compound keys | leaderboard and governance metadata | persistent |
+
+`DataKey` is not a supported storage key. New code must not introduce raw
+`Symbol` keys or another monolithic enum. Event topics and temporary internal
+counters may use symbols only when they are not contract state addresses.
+
+The canonical position layout is indexed per user and round. The legacy bulk
+map keys (`Positions`, `UpDownPositions`, and `PrecisionPositions`) are not
+written by normal operations and are not removed as part of round cleanup;
+schema migrations own any legacy reads or deletes. This prevents a caller from
+observing two competing sources of truth.
+
 | Key | Value | Purpose |
 |---|---|---|---|
 | `Balance(Address)` | `i128` | per-user balance (unchanged) |

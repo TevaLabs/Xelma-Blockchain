@@ -939,11 +939,10 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
     let initial_amount: i128 = 1000_0000000;
 
     // ─── Epoch budget check ──────────────────────────────────────────────
-    const EP_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
     let epoch_budget: i128 = env
         .storage()
         .instance()
-        .get(&EP_BUDGET_KEY)
+        .get(&DataKeyCore::EpochMintBudget)
         .unwrap_or(0);
     if epoch_budget > 0 {
         let current_epoch = _current_epoch_id(&env);

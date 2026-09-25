@@ -134,6 +134,10 @@ pub enum DataKeyCore {
     DisputeLedgers,
     /// Payout policy for Precision mode rounds.
     PrecisionPayoutPolicy,
+    /// Round-relative oracle timestamp tolerance in seconds.
+    OracleTimestampSkew,
+    /// Pending-winnings expiry threshold in ledgers; zero disables expiry.
+    PendingWinningsExpiry,
     /// When true, only allowlisted addresses may participate (Issue #274).
     AccessControlEnabled,
     /// Secondary governance approver (Issue #272).
@@ -208,6 +212,8 @@ pub enum DataKeyScoped {
     SeasonArchive(u32),
     /// Per-user index of archived round IDs (Issue #281).
     UserArchivedRoundIds(Address),
+    /// User pending winnings accumulator.
+    PendingWinnings(Address),
     /// Allowlist marker for participant access control (Issue #274).
     Allowlisted(Address),
     /// Denylist marker for participant access control (Issue #274).
@@ -931,12 +937,6 @@ pub enum HbGateKey {
     Config,
 }
 
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct PendingWinningsExpiryKey(pub ());
-
-pub const PENDING_WINNINGS_EXPIRY_KEY: PendingWinningsExpiryKey = PendingWinningsExpiryKey(());
-
 /// Eligible failure events for insurance coverage (Issue #367).
 ///
 /// Each variant maps to a cancel-round reason code used by the
@@ -1035,55 +1035,4 @@ pub struct ConstitutionMetadata {
     pub dual_approval_required: bool,
     /// Ledger at which the constitution was established
     pub established_at_ledger: u32,
-}
-
-/// Legacy monolithic storage key — retained for a few migration/read paths.
-#[contracttype]
-#[derive(Clone)]
-pub enum DataKey {
-    Balance(Address),
-    Admin,
-    Oracle,
-    SchemaVersion,
-    ActiveRound,
-    Positions,
-    UpDownPositions,
-    PrecisionPositions,
-    PendingWinnings(Address),
-    UserStats(Address),
-    Paused,
-    BetWindowLedgers,
-    RunWindowLedgers,
-    CloseBufferLedgers,
-    LastRoundId,
-    Position(u64, Address),
-    PrecisionPosition(u64, Address),
-    PrecisionCommitment(u64, Address),
-    RoundParticipants(u64),
-    MaxStake,
-    MaxUserRoundExposure,
-    MaxPendingWinnings,
-    CancelledRound(u64),
-    ConsumedOracleNonce(u64, u64),
-    MinParticipants,
-    OracleHeartbeat,
-    OracleStaleThreshold,
-    MaxPrecisionParticipants,
-    OracleMaxDeviationBps,
-    OracleDeviationOverrideArmed,
-    OracleMinConfidenceBps,
-    OracleStrictMode,
-    ArchivedRound(u64),
-    RecentArchivedRoundIds,
-    UserRoundOutcome(u64, Address),
-    MigratedToV3,
-    PendingConfigChange(ConfigChangeKind),
-    ProtocolFeeBps,
-    ProtocolFeeTreasury,
-    LedgerMintCounter(u32),
-    MintLimitConfig,
-    OracleRotationProposal,
-    ArchiveRetention,
-    RoundTemplate,
-    Ext(DataKeyExt),
 }
