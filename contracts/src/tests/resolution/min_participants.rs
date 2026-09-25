@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 
 #[test]
@@ -36,7 +37,8 @@ fn test_min_participants_blocks_settlement_updown() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Stake refunded to pending winnings, not claimed yet
     assert_eq!(client.get_pending_winnings(&user1), 100_0000000);
@@ -82,7 +84,8 @@ fn test_min_participants_allows_settlement_at_threshold() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_pending_winnings(&user1), 200_0000000);
     assert_eq!(client.get_pending_winnings(&user2), 0);
@@ -123,7 +126,8 @@ fn test_min_participants_fallback_refunds_precision_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Precision bet refunded
     assert_eq!(client.get_pending_winnings(&user1), 100_0000000);
@@ -163,7 +167,8 @@ fn test_min_participants_fallback_event_emitted() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let events = env.events().all();
     let fallback_event = events.iter().find(|e| {
@@ -242,7 +247,8 @@ fn test_no_min_participants_threshold_resolves_normally() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Price went up but winning_pool (Up) = 100, losing_pool (Down) = 0 → payout = 100 + 0 = 100
     assert_eq!(client.get_pending_winnings(&user1), 100_0000000);

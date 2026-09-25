@@ -49,90 +49,43 @@ pub enum ContractError {
     InvalidProtocolFeeBps = 51,
     MintLimitExceeded = 53,
     NoPendingRotation = 54,
-    /// Oracle rotation delay has not elapsed yet (must wait MIN_ROTATION_DELAY_SECONDS)
     RotationDelayNotElapsed = 55,
-    /// Invalid archive retention limit
     InvalidArchiveRetention = 62,
     InvalidCommitment = 63,
     InvalidSalt = 64,
     NoRoundTemplate = 65,
-    /// Oracle payload timestamp is outside the round-relative economic window
     OracleTimestampOutsideWindow = 66,
-    /// Pending winnings entry exists but has not yet reached the configured
-    /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 86,
-    /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
-    /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
     OracleNotLive = 68,
-    /// Invalid precision payout policy
     InvalidPayoutPolicy = 69,
-    /// Stake amount is below the configured minimum bet (dust protection, Issue #269)
     BelowMinBet = 70,
-    /// Multi-feed resolution: fewer observations survived outlier rejection
-    /// than the configured quorum threshold.
     InsufficientOracleQuorum = 71,
-    /// Multi-feed resolution: payload contains fewer observations than the
-    /// configured minimum.
     TooFewObservations = 72,
-    /// Multi-feed resolution: outlier observations would dominate the result
-    /// (too many rejected, cannot form quorum).
     OracleOutlierRejected = 73,
-    /// Multi-feed payload contains duplicate source identifiers.
     DuplicateOracleSource = 74,
-    /// Multi-feed payload has observations that are not sorted or sources
-    /// are out of expected range.
     InvalidObservationOrder = 75,
-    /// The requested data key is not allowed for batch TTL touch operations.
     UnsupportedDataKeyForTtlTouch = 76,
-    /// Pending winnings entry does not exist or expiry is not configured.
     PendingWinningsNotFound = 77,
-    /// Pending winnings expiry is not configured (value is 0).
     ExpiryNotConfigured = 78,
-    /// Participant is blocked by the active allowlist or denylist policy.
     AccessDenied = 79,
-    /// Governance proposal does not exist.
     ProposalNotFound = 80,
-    /// Governance proposal is past its execution deadline.
     ProposalExpired = 81,
-    /// Governance proposal cannot transition from its current state.
     GovInvalidState = 82,
-    /// Caller is not authorized by the configured governance policy.
     GovUnauthorized = 83,
-    /// Requested action is not valid in the round's current lifecycle phase.
     IllegalPhaseTransition = 84,
-    /// Oracle heartbeat failed the configured freshness or health policy.
     OracleHeartbeatUnhealthy = 85,
-    /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
-    ClaimBatchTooLarge = 87,
-    /// claim_many batch contains the same address more than once (Issue #277)
-    DuplicateClaimAddress = 88,
-    /// Early cash-out feature is disabled or not configured
-    EarlyCashoutDisabled = 95,
-    /// User does not have an active position to cash out
-    PositionNotFound = 96,
-    /// Early cash-out attempted outside the valid running phase
-    InvalidPhaseForCashout = 97,
-    /// Early cash-out is only supported for UpDown rounds
-    WrongModeForCashout = 98,
-    /// A proposed insurance payout split does not sum to the covered balance.
-    InsuranceInvalidSplit = 99,
-    /// The insurance backstop fund has insufficient balance to cover the claim.
-    InsuranceInsufficientFund = 100,
-    /// The supplied token amount is invalid for the requested operation.
-    InvalidAmount = 101,
-    /// The dispute window for `void_round` has expired, or dispute windows
-    /// are not configured (`dispute_ledgers == 0`).
-    DisputeWindowExpired = 91,
-    /// `finalize_round` was called before the dispute window elapsed.
-    ClaimLocked = 92,
-    /// A round cannot be created because the current ledger sequence has
-    /// already backed another round's `start_ledger`.
-    ///
-    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
-    /// sequence would make a payload signed for the earlier round valid for
-    /// the later one. Retry once the ledger has advanced.
-    RoundStartLedgerReused = 93,
-    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
-    PageSizeExceeded = 94,
+    PendingWinningsNotExpired = 86,
+    EarlyCashoutDisabled = 87,
+    PositionNotFound = 88,
+    InvalidPhaseForCashout = 89,
+    WrongModeForCashout = 90,
+    ClaimBatchTooLarge = 91,
+    DuplicateClaimAddress = 92,
+    DisputeWindowExpired = 93,
+    ClaimLocked = 94,
+    RoundStartLedgerReused = 95,
+    InvalidAmount = 96,
+    InsuranceInvalidSplit = 97,
+    InsuranceInsufficientFund = 98,
+    InsuranceEventNotEligible = 99,
 }

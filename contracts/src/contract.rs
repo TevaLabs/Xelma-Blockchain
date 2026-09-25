@@ -10,24 +10,24 @@ use crate::errors::ContractError;
 use crate::governance;
 use crate::insurance;
 use crate::types::{
-    ArchivedRoundSummary, AccessState, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy,
-    MarketSnapshot, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, OracleRotationProposal, PendingConfigChange,
-    PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
+    DataKeyScoped, DeviationReferenceMode, FeeModel, GovAction, GovProposal, LeaderboardEntry,
+    MarketSnapshot, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload,
+    OracleQuorumConfig, OracleRotationProposal, PendingConfigChange, PolicyAction,
+    PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
     RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
-    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
-    UserRoundOutcome, UserStats, FeeModel, GovAction, GovProposal,
+    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition, UserRoundOutcome,
+    UserStats,
 };
 
 use crate::common::{
-    CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
+    BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
     DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
-    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_MIN_PARTICIPANTS,
-    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
+    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS,
+    MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
     MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
     MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
-    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD, BPS_DENOMINATOR,
+    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
 
 // ─── Oracle rotation expiry ───────────────────────────────────────────────────
@@ -133,7 +133,7 @@ impl VirtualTokenContract {
         offset: u32,
         limit: u32,
     ) -> Result<Vec<ArchivedRoundSummary>, ContractError> {
-        queries::get_user_archive_history(env, user, offset, limit)
+        Ok(queries::get_user_archive_history(env, user, offset, limit))
     }
 
     /// Returns whether `action` is currently permitted under the PolicyGate
@@ -231,13 +231,28 @@ impl VirtualTokenContract {
         admin::set_hb_strict_mode(env, enabled)
     }
 
+    /// Deprecated alias for the heartbeat strict-mode setter.
+    pub fn set_oracle_heartbeat_strict_mode(env: Env, enabled: bool) -> Result<(), ContractError> {
+        admin::set_hb_strict_mode(env, enabled)
+    }
+
     /// Returns whether oracle heartbeat strict mode is enabled (Issue #264).
     pub fn get_hb_strict_mode(env: Env) -> bool {
         admin::get_hb_strict_mode(env)
     }
 
+    /// Deprecated alias for the heartbeat strict-mode getter.
+    pub fn get_oracle_heartbeat_strict_mode(env: Env) -> bool {
+        admin::get_hb_strict_mode(env)
+    }
+
     /// Arms a one-shot override to bypass the heartbeat health gate for the next settlement (admin only, Issue #264).
     pub fn arm_hb_override(env: Env) -> Result<(), ContractError> {
+        admin::arm_hb_override(env)
+    }
+
+    /// Deprecated alias for the heartbeat override arm method.
+    pub fn arm_oracle_heartbeat_override(env: Env) -> Result<(), ContractError> {
         admin::arm_hb_override(env)
     }
 
@@ -253,6 +268,16 @@ impl VirtualTokenContract {
 
     /// Returns the configured heartbeat grace period in seconds (default 0, Issue #264).
     pub fn get_hb_grace_seconds(env: Env) -> u64 {
+        admin::get_hb_grace_seconds(env)
+    }
+
+    /// Compatibility alias for the heartbeat grace-period setter.
+    pub fn set_oracle_heartbeat_grace(env: Env, seconds: u64) -> Result<(), ContractError> {
+        admin::set_hb_grace_seconds(env, seconds)
+    }
+
+    /// Compatibility alias for the heartbeat grace-period getter.
+    pub fn get_oracle_heartbeat_grace(env: Env) -> u64 {
         admin::get_hb_grace_seconds(env)
     }
 
@@ -476,11 +501,7 @@ impl VirtualTokenContract {
             #[allow(deprecated)]
             env.events().publish(
                 (symbol_short!("oracle"), symbol_short!("early")),
-                (
-                    proposal.new_oracle.clone(),
-                    current_ts,
-                    earliest_accept,
-                ),
+                (proposal.new_oracle.clone(), current_ts, earliest_accept),
             );
             return Err(ContractError::RotationDelayNotElapsed);
         }
@@ -677,48 +698,6 @@ impl VirtualTokenContract {
         governance::get_gov_proposal(env, proposal_id)
     }
 
-    // ─── On-Chain Constitution Framework (Issue #363) ──────────────────────────
-
-    /// Establishes the on-chain constitution with governance rules (admin only).
-    pub fn establish_constitution(
-        env: Env,
-        veto_window_ledgers: u32,
-        timelock_ledgers: u32,
-        dual_approval_required: bool,
-    ) -> Result<(), ContractError> {
-        governance::establish_constitution(env, veto_window_ledgers, timelock_ledgers, dual_approval_required)
-    }
-
-    /// Returns the on-chain constitution metadata, if established.
-    pub fn get_constitution(env: Env) -> Option<crate::types::ConstitutionMetadata> {
-        governance::get_constitution(env)
-    }
-
-    /// Proposes a parameter amendment with timelock and optional veto window.
-    pub fn propose_amendment(
-        env: Env,
-        proposer: Address,
-        parameter_name: Symbol,
-        new_value: Val,
-    ) -> Result<u64, ContractError> {
-        governance::propose_amendment(env, proposer, parameter_name, new_value)
-    }
-
-    /// Vetoes a pending amendment before its veto window expires.
-    pub fn veto_amendment(env: Env, vetoer: Address, amendment_id: u64) -> Result<(), ContractError> {
-        governance::veto_amendment(env, vetoer, amendment_id)
-    }
-
-    /// Activates an amendment after timelock expires.
-    pub fn activate_amendment(env: Env, activator: Address, amendment_id: u64) -> Result<(), ContractError> {
-        governance::activate_amendment(env, activator, amendment_id)
-    }
-
-    /// Retrieves an amendment proposal record by ID.
-    pub fn get_amendment(env: Env, amendment_id: u64) -> Option<crate::types::Amendment> {
-        governance::get_amendment(env, amendment_id)
-    }
-
     /// Schedules a timelocked windows update (alias for [`Self::schedule_windows`]).
     /// bet_ledgers: Number of ledgers users can place bets
     /// run_ledgers: Total number of ledgers before round can be resolved
@@ -801,10 +780,7 @@ impl VirtualTokenContract {
     }
 
     /// Schedules a timelocked update to the oracle timestamp skew (admin only).
-    pub fn schedule_oracle_timestamp_skew(
-        env: Env,
-        seconds: u64,
-    ) -> Result<(), ContractError> {
+    pub fn schedule_oracle_timestamp_skew(env: Env, seconds: u64) -> Result<(), ContractError> {
         config::schedule_oracle_timestamp_skew(env, seconds)
     }
 
@@ -947,6 +923,14 @@ impl VirtualTokenContract {
         config::get_close_buffer_ledgers(env)
     }
 
+    pub fn set_sealed_batch_auction(env: Env, enabled: bool) -> Result<(), ContractError> {
+        config::set_sealed_batch_auction(env, enabled)
+    }
+
+    pub fn get_sealed_batch_auction(env: Env) -> bool {
+        config::get_sealed_batch_auction(env)
+    }
+
     /// Returns the configured betting-window length in ledgers.
     pub fn get_bet_window_ledgers(env: Env) -> u32 {
         config::get_bet_window_ledgers(env)
@@ -1049,6 +1033,58 @@ impl VirtualTokenContract {
         betting::reveal_prediction(env, user, predicted_price, salt)
     }
 
+    pub fn commit_order(
+        env: Env,
+        user: Address,
+        amount: i128,
+        side: BetSide,
+        price_guess: u128,
+        hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        betting::commit_order(env, user, amount, side, price_guess, hash)
+    }
+
+    pub fn reveal_order(
+        env: Env,
+        user: Address,
+        amount: i128,
+        side: BetSide,
+        price_guess: u128,
+        salt: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        betting::reveal_order(env, user, amount, side, price_guess, salt)
+    }
+
+    pub fn commit_bet(
+        env: Env,
+        user: Address,
+        amount: i128,
+        side: BetSide,
+        price_guess: u128,
+        hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        betting::commit_order(env, user, amount, side, price_guess, hash)
+    }
+
+    pub fn reveal_bet(
+        env: Env,
+        user: Address,
+        amount: i128,
+        side: BetSide,
+        price_guess: u128,
+        salt: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        betting::reveal_order(env, user, amount, side, price_guess, salt)
+    }
+
+    pub fn finalize_sealed_batch(env: Env) -> Result<(), ContractError> {
+        betting::finalize_sealed_batch(env)
+    }
+
+    pub fn finalize_sealed_orders(env: Env) -> Result<(), ContractError> {
+        betting::finalize_sealed_batch(env)
+    }
+
     /// Mints 1000 vXLM for new users (one-time only)
     pub fn mint_initial(env: Env, user: Address) -> i128 {
         betting::mint_initial(env, user)
@@ -1064,10 +1100,7 @@ impl VirtualTokenContract {
     /// Requires `OracleQuorumConfig` to be configured by the admin before
     /// this path is available. The legacy single-oracle `resolve_round`
     /// remains available independently.
-    pub fn resolve_round_multi(
-        env: Env,
-        payload: MultiFeedPayload,
-    ) -> Result<(), ContractError> {
+    pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), ContractError> {
         settlement::resolve_round_multi(env, payload)
     }
 
@@ -1215,7 +1248,6 @@ impl VirtualTokenContract {
         limit: u32,
     ) -> Vec<(Address, UserPosition)> {
         queries::get_updown_positions_page(env, offset, limit)
-
     }
 
     /// Returns user's vXLM balance
@@ -1306,7 +1338,7 @@ impl VirtualTokenContract {
         cursor: Option<Address>,
         limit: u32,
     ) -> Result<(Vec<LeaderboardEntry>, Option<Address>), ContractError> {
-        queries::get_leaderboard_by_wins(env, cursor, limit)
+        Ok(queries::get_leaderboard_by_wins(env, cursor, limit))
     }
 
     /// Cursor-based page of the global leaderboard ordered by best streak descending.
@@ -1316,7 +1348,7 @@ impl VirtualTokenContract {
         cursor: Option<Address>,
         limit: u32,
     ) -> Result<(Vec<LeaderboardEntry>, Option<Address>), ContractError> {
-        queries::get_leaderboard_by_streak(env, cursor, limit)
+        Ok(queries::get_leaderboard_by_streak(env, cursor, limit))
     }
     // ─── Leaderboards (lifetime + seasons) ──────────────────────────────────
 
@@ -1696,7 +1728,10 @@ impl VirtualTokenContract {
         config::_apply_config_payload(env, kind, payload)
     }
 
-    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(env: &Env, key: &T) {
+    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(
+        env: &Env,
+        key: &T,
+    ) {
         if env.storage().persistent().has(key) {
             env.storage()
                 .persistent()
