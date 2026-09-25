@@ -733,6 +733,7 @@ Safety guarantees:
 We welcome contributions from the community! Start with the maintainer workflow docs:
 
 - **[CONTRIBUTOR_MAP.md](./docs/CONTRIBUTOR_MAP.md)** — Module → test → task map (start here!)
+- [Architecture](./docs/architecture.md) - Entrypoints, layers, storage, runtime modes
 - [CONTRIBUTING.md](./CONTRIBUTING.md)
 - [GOVERNANCE.md](./GOVERNANCE.md)
 - [SUPPORT.md](./SUPPORT.md)
@@ -845,6 +846,7 @@ Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Bloc
 - **[Contributor Map](./docs/CONTRIBUTOR_MAP.md)** — Module → test → task map (new contributors start here!)
 - **[Contributor Task Matrix](./docs/CONTRIBUTOR_TASK_MATRIX.md)** — PR evidence requirements for every task type
 - **[Smart Contract](./contracts/src/)** - Modular Rust code (contract, types, errors)
+- **[Architecture](./docs/architecture.md)** - Entrypoints, layers, storage, runtime modes
 - **[Protocol Spec](./PROTOCOL_SPEC.md)** - Formal invariants, threat model, and test traceability
 - **[Security Review](./SECURITY_REVIEW.md)** - Security analysis and best practices
 - **[Event Schema](./docs/EVENT_SCHEMA.md)** — Canonical on-chain event schema for indexers

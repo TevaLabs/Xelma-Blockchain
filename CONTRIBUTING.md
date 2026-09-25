@@ -72,6 +72,8 @@ sent back for detail before they are picked up.
 
 Before opening a PR, consult [`docs/CONTRIBUTOR_TASK_MATRIX.md`](./docs/CONTRIBUTOR_TASK_MATRIX.md) for task-type-specific test and evidence requirements.
 
+New here? Start with the [architecture overview](./docs/architecture.md), then the contributor map.
+
 ## Optional pre-commit hooks
 
 This repository ships an optional pre-commit hook configuration to catch trivial
