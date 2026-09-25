@@ -103,7 +103,8 @@ fn test_protocol_status_claims_only_after_resolve() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
     client.resolve_round(&payload);
 
     assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);
@@ -187,7 +188,8 @@ fn test_round_status_full_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
     client.resolve_round(&payload);
 
     assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);
@@ -265,7 +267,8 @@ fn test_round_status_fallback_refund() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
     client.resolve_round(&payload);
 
     assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);

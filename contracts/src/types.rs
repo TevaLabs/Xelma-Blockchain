@@ -158,12 +158,6 @@ pub enum DataKeyExt {
     SeasonLeaderboardWins,
     SeasonLeaderboardStreak,
     SeasonArchive(u32),
-    /// On-chain constitution metadata defining parameter governance rules (Issue #363).
-    ConstitutionMetadata,
-    /// Pending amendment proposal by ID (Issue #363).
-    Amendment(u64),
-    /// Monotonic counter for amendment IDs (Issue #363).
-    NextAmendmentId,
 }
 
 /// Parameterised and round-scoped storage keys.
@@ -357,12 +351,6 @@ pub enum GovAction {
     SetTreasuryAddress(Address),
     SetAdmin(Address),
     SetOracle(Address),
-    /// Withdraw from the insurance fund (Issue #367).
-    WithdrawInsuranceFund(Address, i128),
-    /// Set the insurance fee split in basis points (Issue #367).
-    SetInsuranceSplitBps(u32),
-    /// Set the insurance coverage payout rate in basis points (Issue #367).
-    SetInsuranceCoverageBps(u32),
 }
 
 /// Stored governance proposal (Issue #272).
@@ -482,15 +470,15 @@ pub struct OracleHeartbeatRecord {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Round {
-    pub round_id: u64,       // Unique monotonically increasing round identifier
-    pub price_start: u128,   // Starting XLM price in stroops
-    pub start_ledger: u32,   // Ledger when round was created
-    pub start_timestamp: u64,  // Ledger timestamp when round was created
-    pub bet_end_ledger: u32, // Ledger when betting closes
-    pub end_ledger: u32,     // Ledger when round ends (~5s per ledger)
-    pub pool_up: i128,       // Total vXLM bet on UP
-    pub pool_down: i128,     // Total vXLM bet on DOWN
-    pub mode: RoundMode,     // Round mode: UpDown (0) or Precision (1)
+    pub round_id: u64,        // Unique monotonically increasing round identifier
+    pub price_start: u128,    // Starting XLM price in stroops
+    pub start_ledger: u32,    // Ledger when round was created
+    pub start_timestamp: u64, // Ledger timestamp when round was created
+    pub bet_end_ledger: u32,  // Ledger when betting closes
+    pub end_ledger: u32,      // Ledger when round ends (~5s per ledger)
+    pub pool_up: i128,        // Total vXLM bet on UP
+    pub pool_down: i128,      // Total vXLM bet on DOWN
+    pub mode: RoundMode,      // Round mode: UpDown (0) or Precision (1)
 }
 
 /// Aggregated active-round pool composition for frontend transparency.
@@ -944,105 +932,9 @@ pub struct PendingWinningsExpiryKey(pub ());
 
 pub const PENDING_WINNINGS_EXPIRY_KEY: PendingWinningsExpiryKey = PendingWinningsExpiryKey(());
 
-/// Eligible failure events for insurance coverage (Issue #367).
-///
-/// Each variant maps to a cancel-round reason code used by the
-/// insurance coverage payout gate. Only events listed in the
-/// admin-configured whitelist trigger coverage.
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u32)]
-pub enum InsuranceEvent {
-    /// Cancel due to oracle heartbeat failure / outage.
-    OracleOutage = 0,
-    /// Cancel due to oracle deviation exceeding the configured threshold.
-    OracleDeviation = 1,
-    /// Fallback refund when insufficient participants joined the round.
-    FallbackRefund = 2,
-}
-
-/// Cancel-round reason codes that map to InsuranceEvent variants.
-///
-/// Passed as the `reason` argument to `cancel_round`. The mapping is:
-/// - 0 → not eligible (generic / admin discretion)
-/// - 1 → OracleOutage
-/// - 2 → OracleDeviation
-/// - 3 → FallbackRefund
-pub const CANCEL_REASON_GENERIC: u32 = 0;
-pub const CANCEL_REASON_ORACLE_OUTAGE: u32 = 1;
-pub const CANCEL_REASON_ORACLE_DEVIATION: u32 = 2;
-pub const CANCEL_REASON_FALLBACK_REFUND: u32 = 3;
-
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingWinningsUpdatedAtKey(pub Address);
-
-/// Parameter classification for the on-chain constitution (Issue #363).
-/// Immutable parameters cannot be changed; timelocked parameters require
-/// a timelock before activation; dual-approval parameters require both
-/// admin and approver sign-off.
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u32)]
-pub enum ParameterClass {
-    /// Cannot be modified after initialization
-    Immutable = 0,
-    /// Requires timelock period before activation
-    Timelocked = 1,
-    /// Requires both admin and approver approval
-    DualApproval = 2,
-    /// May be changed immediately (least restrictive)
-    Normal = 3,
-}
-
-/// Amendment proposal lifecycle status for the constitution (Issue #363).
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u32)]
-pub enum AmendmentStatus {
-    /// Proposal submitted, awaiting veto window expiry or approvals
-    Pending = 0,
-    /// Veto has been exercised, proposal is cancelled
-    Vetoed = 1,
-    /// Timelock period has elapsed, ready for activation
-    ActivationReady = 2,
-    /// Amendment has been activated and parameter changed
-    Activated = 3,
-    /// Amendment expired before activation
-    Expired = 4,
-}
-
-/// Amendment proposal for parameter changes with timelock and veto window (Issue #363).
-/// Represents a proposed change to a protocol parameter that must pass through a
-/// governance lifecycle: optional veto window, timelock, then activation.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct Amendment {
-    pub id: u64,
-    pub proposer: Address,
-    pub parameter_name: Symbol,
-    pub new_value: Val,
-    pub created_at_ledger: u32,
-    pub veto_deadline_ledger: u32,
-    pub activation_deadline_ledger: u32,
-    pub status: AmendmentStatus,
-}
-
-/// On-chain constitution defining parameter governance rules (Issue #363).
-/// Classifies each protocol parameter and defines the amendment lifecycle
-/// (veto window, timelock, dual approval requirements).
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct ConstitutionMetadata {
-    /// Veto window duration in ledgers (0 = no veto window)
-    pub veto_window_ledgers: u32,
-    /// Timelock duration in ledgers before amendments can activate
-    pub timelock_ledgers: u32,
-    /// Whether dual-approval (admin + approver) is required for amendments
-    pub dual_approval_required: bool,
-    /// Ledger at which the constitution was established
-    pub established_at_ledger: u32,
-}
 
 /// Legacy monolithic storage key — retained for a few migration/read paths.
 #[contracttype]

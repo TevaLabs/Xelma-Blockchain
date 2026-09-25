@@ -11,8 +11,8 @@ use crate::config::{
 use crate::errors::ContractError;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
-    MarketSnapshot, PrecisionCommitment, PrecisionPayoutPolicy, PrecisionPrediction,
-    PendingWinningsUpdatedAtKey, Round, RoundMode, RoundPhase, RoundPoolStats, RoundTemplate,
+    MarketSnapshot, PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy,
+    PrecisionPrediction, Round, RoundMode, RoundPhase, RoundPoolStats, RoundTemplate,
     SeasonArchive, SimulationResult, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
 use soroban_sdk::{Address, Env, Map, Vec};
@@ -236,16 +236,16 @@ pub fn get_user_archived_participation(
 }
 
 /// Returns paginated archived participation history for a user (newest first).
-/// Rejects if `limit` exceeds `MAX_PAGE_SIZE` (100).
 pub fn get_user_archive_history(
     env: Env,
     user: Address,
     offset: u32,
     limit: u32,
-) -> Result<Vec<ArchivedRoundSummary>, ContractError> {
+) -> Vec<ArchivedRoundSummary> {
     let env_ref = &env;
-    if limit == 0 || limit > MAX_PAGE_SIZE {
-        return Err(ContractError::PageSizeExceeded);
+    let limit = limit.min(MAX_PAGE_SIZE);
+    if limit == 0 {
+        return Vec::new(env_ref);
     }
 
     let user_rounds: Vec<u64> = env
@@ -256,7 +256,7 @@ pub fn get_user_archive_history(
 
     let total = user_rounds.len();
     if offset >= total {
-        return Ok(Vec::new(env_ref));
+        return Vec::new(env_ref);
     }
 
     let start = total.saturating_sub(offset + 1);
@@ -279,7 +279,7 @@ pub fn get_user_archive_history(
         idx = idx.saturating_sub(1);
     }
 
-    Ok(result)
+    result
 }
 
 /// Returns user statistics (wins, losses, streaks)
@@ -563,16 +563,24 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
                 if price_went_up {
                     winning_side = BetSide::Up;
                     winning_pool = round.pool_up;
-                    let (dw, dl, fee) =
-                        calculate_protocol_fee_updown(bps, fee_model, round.pool_up, round.pool_down)?;
+                    let (dw, dl, fee) = calculate_protocol_fee_updown(
+                        bps,
+                        fee_model,
+                        round.pool_up,
+                        round.pool_down,
+                    )?;
                     dist_winning = dw;
                     dist_losing = dl;
                     total_fee = fee;
                 } else if price_went_down {
                     winning_side = BetSide::Down;
                     winning_pool = round.pool_down;
-                    let (dw, dl, fee) =
-                        calculate_protocol_fee_updown(bps, fee_model, round.pool_down, round.pool_up)?;
+                    let (dw, dl, fee) = calculate_protocol_fee_updown(
+                        bps,
+                        fee_model,
+                        round.pool_down,
+                        round.pool_up,
+                    )?;
                     dist_winning = dw;
                     dist_losing = dl;
                     total_fee = fee;
@@ -583,10 +591,13 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
 
             for i in 0..participants.len() {
                 if let Some(user) = participants.get(i) {
-                    if let Some(pos) = env
-                        .storage()
-                        .persistent()
-                        .get::<_, UserPosition>(&DataKeyScoped::Position(round.round_id, user.clone()))
+                    if let Some(pos) =
+                        env.storage()
+                            .persistent()
+                            .get::<_, UserPosition>(&DataKeyScoped::Position(
+                                round.round_id,
+                                user.clone(),
+                            ))
                     {
                         let prediction_side = match pos.side {
                             BetSide::Up => 0,
@@ -698,9 +709,9 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
             let mut payout_pool: i128 = 0;
             if !winners.is_empty() && total_pot > 0 {
                 // Sum winner stakes for fee-on-winnings model
-                let winner_stakes: i128 = winners.iter().fold(0, |acc, w| {
-                    acc.checked_add(w.amount).unwrap_or(acc)
-                });
+                let winner_stakes: i128 = winners
+                    .iter()
+                    .fold(0, |acc, w| acc.checked_add(w.amount).unwrap_or(acc));
                 let (dist, fee) =
                     calculate_protocol_fee_precision(bps, fee_model, total_pot, winner_stakes)?;
                 total_fee = fee;
@@ -851,7 +862,7 @@ fn _find_cursor_in_leaderboard(sorted: &Vec<LeaderboardEntry>, cursor: &Option<A
 /// Returns a cursor-based page of Precision-mode predictions for the active round.
 ///
 /// `cursor`: The last user address from the previous page, or `None` to start
-/// from the beginning. Returns error if `limit` exceeds `MAX_PAGE_SIZE` (100).
+/// from the beginning.  `limit` is clamped to `MAX_PAGE_SIZE`.
 ///
 /// The returned `next_cursor` is the last address included in this page, or
 /// `None` when the page is empty or the dataset is exhausted.
@@ -859,9 +870,10 @@ pub fn get_precision_predictions_cursor(
     env: Env,
     cursor: Option<Address>,
     limit: u32,
-) -> Result<(Vec<PrecisionPrediction>, Option<Address>), ContractError> {
-    if limit == 0 || limit > MAX_PAGE_SIZE {
-        return Err(ContractError::PageSizeExceeded);
+) -> (Vec<PrecisionPrediction>, Option<Address>) {
+    let limit = limit.min(MAX_PAGE_SIZE);
+    if limit == 0 {
+        return (Vec::new(&env), None);
     }
 
     let round = match env
@@ -870,7 +882,7 @@ pub fn get_precision_predictions_cursor(
         .get::<_, Round>(&DataKeyCore::ActiveRound)
     {
         Some(r) => r,
-        None => return Ok((Vec::new(&env), None)),
+        None => return (Vec::new(&env), None),
     };
 
     let participants: Vec<Address> = env
@@ -883,7 +895,7 @@ pub fn get_precision_predictions_cursor(
     let total = participants.len();
     let start = _find_cursor_position(&participants, &cursor);
     if start >= total {
-        return Ok((Vec::new(&env), None));
+        return (Vec::new(&env), None);
     }
 
     let end = start.saturating_add(limit).min(total);
@@ -900,20 +912,21 @@ pub fn get_precision_predictions_cursor(
         }
     }
 
-    Ok((items, last_addr))
+    (items, last_addr)
 }
 
 /// Returns a cursor-based page of Up/Down positions for the active round.
 ///
 /// Each item is a `(Address, UserPosition)` pair sorted by address ascending.
-/// Returns error if `limit` exceeds `MAX_PAGE_SIZE` (100).
+/// Same cursor semantics as [`get_precision_predictions_cursor`].
 pub fn get_updown_positions_cursor(
     env: Env,
     cursor: Option<Address>,
     limit: u32,
-) -> Result<(Vec<(Address, UserPosition)>, Option<Address>), ContractError> {
-    if limit == 0 || limit > MAX_PAGE_SIZE {
-        return Err(ContractError::PageSizeExceeded);
+) -> (Vec<(Address, UserPosition)>, Option<Address>) {
+    let limit = limit.min(MAX_PAGE_SIZE);
+    if limit == 0 {
+        return (Vec::new(&env), None);
     }
 
     let round = match env
@@ -922,7 +935,7 @@ pub fn get_updown_positions_cursor(
         .get::<_, Round>(&DataKeyCore::ActiveRound)
     {
         Some(r) => r,
-        None => return Ok((Vec::new(&env), None)),
+        None => return (Vec::new(&env), None),
     };
 
     let participants: Vec<Address> = env
@@ -935,7 +948,7 @@ pub fn get_updown_positions_cursor(
     let total = participants.len();
     let start = _find_cursor_position(&participants, &cursor);
     if start >= total {
-        return Ok((Vec::new(&env), None));
+        return (Vec::new(&env), None);
     }
 
     let end = start.saturating_add(limit).min(total);
@@ -952,7 +965,7 @@ pub fn get_updown_positions_cursor(
         }
     }
 
-    Ok((items, last_addr))
+    (items, last_addr)
 }
 
 // ─── Leaderboard queries ─────────────────────────────────────────────────────
@@ -1015,7 +1028,7 @@ fn _collect_leaderboard_entries(env: &Env) -> Vec<LeaderboardEntry> {
 /// descending, with address ascending as tiebreaker.
 ///
 /// `cursor`: The last user address from the previous page, or `None` to start
-/// from the beginning. Returns error if `limit` exceeds `MAX_PAGE_SIZE` (100).
+/// from the beginning.  `limit` is clamped to `MAX_PAGE_SIZE` (100).
 ///
 /// The result is a snapshot built from on-chain `UserStats` collected from
 /// active and recent round participants.
@@ -1023,9 +1036,10 @@ pub fn get_leaderboard_by_wins(
     env: Env,
     cursor: Option<Address>,
     limit: u32,
-) -> Result<(Vec<LeaderboardEntry>, Option<Address>), ContractError> {
-    if limit == 0 || limit > MAX_PAGE_SIZE {
-        return Err(ContractError::PageSizeExceeded);
+) -> (Vec<LeaderboardEntry>, Option<Address>) {
+    let limit = limit.min(MAX_PAGE_SIZE);
+    if limit == 0 {
+        return (Vec::new(&env), None);
     }
 
     let entries = _collect_leaderboard_entries(&env);
@@ -1057,7 +1071,7 @@ pub fn get_leaderboard_by_wins(
     let total = sorted.len();
     let start = _find_cursor_in_leaderboard(&sorted, &cursor);
     if start >= total {
-        return Ok((Vec::new(&env), None));
+        return (Vec::new(&env), None);
     }
 
     let end = start.saturating_add(limit).min(total);
@@ -1070,19 +1084,19 @@ pub fn get_leaderboard_by_wins(
         }
     }
 
-    Ok((items, last_addr))
+    (items, last_addr)
 }
 
 /// Returns a cursor-based page of the global leaderboard ordered by best streak
-/// descending, with address ascending as tiebreaker. Returns error if `limit`
-/// exceeds `MAX_PAGE_SIZE` (100).
+/// descending, with address ascending as tiebreaker.
 pub fn get_leaderboard_by_streak(
     env: Env,
     cursor: Option<Address>,
     limit: u32,
-) -> Result<(Vec<LeaderboardEntry>, Option<Address>), ContractError> {
-    if limit == 0 || limit > MAX_PAGE_SIZE {
-        return Err(ContractError::PageSizeExceeded);
+) -> (Vec<LeaderboardEntry>, Option<Address>) {
+    let limit = limit.min(MAX_PAGE_SIZE);
+    if limit == 0 {
+        return (Vec::new(&env), None);
     }
 
     let entries = _collect_leaderboard_entries(&env);
@@ -1114,7 +1128,7 @@ pub fn get_leaderboard_by_streak(
     let total = sorted.len();
     let start = _find_cursor_in_leaderboard(&sorted, &cursor);
     if start >= total {
-        return Ok((Vec::new(&env), None));
+        return (Vec::new(&env), None);
     }
 
     let end = start.saturating_add(limit).min(total);
@@ -1127,5 +1141,5 @@ pub fn get_leaderboard_by_streak(
         }
     }
 
-    Ok((items, last_addr))
+    (items, last_addr)
 }

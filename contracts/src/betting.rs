@@ -798,7 +798,8 @@ pub fn commit_order(
 
     let sealed_key = DataKeyScoped::SealedOrder(round.round_id, user.clone());
     let position_key = DataKeyScoped::Position(round.round_id, user.clone());
-    if env.storage().persistent().has(&sealed_key) || env.storage().persistent().has(&position_key) {
+    if env.storage().persistent().has(&sealed_key) || env.storage().persistent().has(&position_key)
+    {
         return Err(ContractError::AlreadyBet);
     }
 
@@ -883,7 +884,10 @@ pub fn reveal_order(
     if sealed_order.revealed {
         return Err(ContractError::AlreadyRevealed);
     }
-    if sealed_order.amount != amount || sealed_order.side != side || sealed_order.price_guess != price_guess {
+    if sealed_order.amount != amount
+        || sealed_order.side != side
+        || sealed_order.price_guess != price_guess
+    {
         return Err(ContractError::HashMismatch);
     }
 
@@ -956,7 +960,11 @@ pub fn finalize_sealed_batch(env: Env) -> Result<(), ContractError> {
     for idx in 0..participants.len() {
         let user = participants.get(idx).ok_or(ContractError::Overflow)?;
         let sealed_key = DataKeyScoped::SealedOrder(round.round_id, user.clone());
-        match env.storage().persistent().get::<_, SealedOrder>(&sealed_key) {
+        match env
+            .storage()
+            .persistent()
+            .get::<_, SealedOrder>(&sealed_key)
+        {
             Some(sealed_order) => {
                 if sealed_order.revealed {
                     let pos_key = DataKeyScoped::Position(round.round_id, user.clone());
@@ -1012,7 +1020,12 @@ pub fn finalize_sealed_batch(env: Env) -> Result<(), ContractError> {
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("batch"), symbol_short!("finalized")),
-        (round.round_id, round.pool_up, round.pool_down, participants.len() as u32),
+        (
+            round.round_id,
+            round.pool_up,
+            round.pool_down,
+            participants.len() as u32,
+        ),
     );
 
     Ok(())
@@ -1057,8 +1070,8 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _enforce_access_control(&env, &user)?;
 
     // Check early cash-out is enabled
-    let penalty_bps = get_early_cashout_bps(env.clone())
-        .ok_or(ContractError::EarlyCashoutDisabled)?;
+    let penalty_bps =
+        get_early_cashout_bps(env.clone()).ok_or(ContractError::EarlyCashoutDisabled)?;
 
     if penalty_bps == 0 || penalty_bps > 10_000 {
         return Err(ContractError::EarlyCashoutDisabled);
@@ -1104,9 +1117,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // If forfeit rounds down to zero (very small stake relative to penalty),
     // user gets full refund — still remove position from pool.
-    let cashout = stake
-        .checked_sub(forfeit)
-        .ok_or(ContractError::Overflow)?;
+    let cashout = stake.checked_sub(forfeit).ok_or(ContractError::Overflow)?;
 
     // Deduct full stake from the appropriate pool
     match position.side {
@@ -1237,38 +1248,23 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
 
     // ─── Epoch budget check ──────────────────────────────────────────────
     const EP_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
-    let epoch_budget: i128 = env
-        .storage()
-        .instance()
-        .get(&EP_BUDGET_KEY)
-        .unwrap_or(0);
+    let epoch_budget: i128 = env.storage().instance().get(&EP_BUDGET_KEY).unwrap_or(0);
     if epoch_budget > 0 {
         let current_epoch = _current_epoch_id(&env);
         const EP_CONSUMED_KEY: Symbol = symbol_short!("EpMintCsm");
         const EP_EPOCH_KEY: Symbol = symbol_short!("EpMintEpc");
-        let stored_epoch: u32 = env
-            .storage()
-            .temporary()
-            .get(&EP_EPOCH_KEY)
-            .unwrap_or(0);
+        let stored_epoch: u32 = env.storage().temporary().get(&EP_EPOCH_KEY).unwrap_or(0);
         let consumed: i128 = if stored_epoch == current_epoch {
-            env.storage()
-                .temporary()
-                .get(&EP_CONSUMED_KEY)
-                .unwrap_or(0)
+            env.storage().temporary().get(&EP_CONSUMED_KEY).unwrap_or(0)
         } else {
             0
         };
         let new_consumed = consumed.checked_add(initial_amount);
         match new_consumed {
             Some(val) if val <= epoch_budget => {
-                env.storage()
-                    .temporary()
-                    .set(&EP_CONSUMED_KEY, &val);
+                env.storage().temporary().set(&EP_CONSUMED_KEY, &val);
                 if stored_epoch != current_epoch {
-                    env.storage()
-                        .temporary()
-                        .set(&EP_EPOCH_KEY, &current_epoch);
+                    env.storage().temporary().set(&EP_EPOCH_KEY, &current_epoch);
                 }
             }
             _ => {
