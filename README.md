@@ -53,6 +53,8 @@ Unlike traditional prediction markets, Xelma is:
 
 ### System Architecture
 
+For the repository's Rust module boundaries, storage model, runtime modes, and Soroban ABI boundary, see the [architecture overview](./docs/architecture.md).
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    Users (Bettors)                       │
@@ -217,40 +219,34 @@ Operator guidance:
 Xelma-Blockchain/
 ├── contracts/                 # Main prediction market contract
 │   ├── src/
-│   │   ├── lib.rs            # Crate root and module declarations
-│   │   ├── contract.rs       # Core contract implementation (~820 lines)
-│   │   ├── errors.rs         # Custom error types (20 variants)
-│   │   ├── types.rs          # Contract types and storage keys
-│   │   └── tests/            # Test suite
-│   │       ├── mod.rs
-│   │       ├── betting.rs
-│   │       ├── edge_cases.rs
-│   │       ├── initialization.rs
-│   │       ├── lifecycle.rs
-│   │       ├── mode_tests.rs
-│   │       ├── property_invariants.rs
-│   │       ├── resolution.rs
-│   │       ├── security.rs
-│   │       ├── storage_benchmarks.rs
-│   │       ├── ttl_tests.rs
-│   │       └── windows.rs
-│   │       └── ... (20+ test files total — see docs/CONTRIBUTOR_MAP.md)
-│   ├── Cargo.toml            # Rust dependencies
-│   └── test_snapshots/       # Test execution records
+│   │   ├── lib.rs             # Crate root and module declarations
+│   │   ├── contract.rs        # Soroban ABI facade and entrypoint dispatch
+│   │   ├── betting.rs         # Round creation and participation
+│   │   ├── settlement.rs     # Settlement, refunds, and claims
+│   │   ├── admin.rs           # Roles, migrations, and runtime controls
+│   │   ├── config.rs          # Configuration and timelocks
+│   │   ├── queries.rs         # Read/query entrypoint implementations
+│   │   ├── storage.rs         # Canonical round-position cleanup
+│   │   ├── settlement_math.rs # Deterministic payout calculations
+│   │   ├── types.rs           # Contract types and storage keys
+│   │   ├── errors.rs          # Contract error codes
+│   │   ├── ...                # Access control, governance, insurance, etc.
+│   │   └── tests/             # Soroban in-process test suite
+│   └── Cargo.toml             # xelma-contract crate
 │
-├── bindings/                  # TypeScript bindings (auto-generated)
+├── bindings/                  # TypeScript Soroban client and helpers
 │   ├── src/
-│   │   └── index.ts          # Contract types & client (~640 lines)
-│   ├── dist/                  # Compiled JavaScript
+│   │   ├── index.ts           # Generated contract client and types
+│   │   └── helpers.ts         # Convenience client helpers
 │   ├── package.json           # NPM package config
 │   └── README.md              # Bindings usage guide
 │
-├── target/                    # Build artifacts
-│   └── wasm32v1-none/
-│       └── release/
-│           └── xelma_contract.wasm  # Compiled contract
+├── replay-engine/             # Off-chain deterministic replay and audit crate
+│   ├── src/                   # Replay engine, transcripts, diagnostics
+│   └── tests/                 # Replay parity tests
 │
 ├── docs/
+│   ├── architecture.md        # Contributor architecture overview
 │   ├── CONTRIBUTOR_MAP.md     # Module → test → task map for contributors
 │   ├── CONTRIBUTOR_TASK_MATRIX.md # PR evidence requirements by task type
 │   ├── EVENT_SCHEMA.md        # Canonical on-chain event schema for indexers
