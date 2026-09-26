@@ -135,4 +135,16 @@ pub enum ContractError {
     RoundStartLedgerReused = 93,
     /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
     PageSizeExceeded = 94,
+    /// AMM market feature is not enabled.
+    AmmDisabled = 102,
+    /// AMM pool has insufficient liquidity for this trade.
+    AmmInsufficientLiquidity = 103,
+    /// Slippage tolerance exceeded for AMM share trade.
+    AmmSlippageExceeded = 104,
+    /// Amount passed to AMM operation must be greater than zero.
+    AmmZeroAmount = 105,
+    /// User has no LP shares in the AMM pool.
+    AmmNoLpShares = 106,
+    /// User has no AMM position to operate on.
+    AmmPositionNotFound = 107,
 }

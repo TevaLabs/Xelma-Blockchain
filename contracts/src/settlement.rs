@@ -229,6 +229,57 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
                 }
             }
         }
+        RoundMode::Amm => {
+            let amm_participants: Vec<Address> = env
+                .storage()
+                .persistent()
+                .get(&DataKeyScoped::AmmParticipants(round_id))
+                .unwrap_or(Vec::new(&env));
+            for i in 0..amm_participants.len() {
+                if let Some(user) = amm_participants.get(i) {
+                    let pos_key = DataKeyScoped::AmmPosition(round_id, user.clone());
+                    if let Some(pos) = env
+                        .storage()
+                        .persistent()
+                        .get::<_, crate::types::AmmUserPosition>(&pos_key)
+                    {
+                        if pos.total_invested > 0 {
+                            _accumulate_pending(&env, user.clone(), pos.total_invested)?;
+                        }
+                    }
+                }
+            }
+            let lp_participants: Vec<Address> = env
+                .storage()
+                .persistent()
+                .get(&DataKeyScoped::AmmLpParticipants(round_id))
+                .unwrap_or(Vec::new(&env));
+            let pool_key = DataKeyScoped::AmmPool(round_id);
+            if let Some(pool) = env
+                .storage()
+                .persistent()
+                .get::<_, crate::types::AmmPoolState>(&pool_key)
+            {
+                if pool.total_lp_shares > 0 {
+                    for i in 0..lp_participants.len() {
+                        if let Some(lp) = lp_participants.get(i) {
+                            let lp_key = DataKeyScoped::AmmLpShares(round_id, lp.clone());
+                            if let Some(shares) = env.storage().persistent().get::<_, i128>(&lp_key) {
+                                if shares > 0 {
+                                    let refund = (shares as u128)
+                                        .checked_mul(pool.total_collateral as u128)
+                                        .unwrap_or(0)
+                                        / (pool.total_lp_shares as u128);
+                                    if refund > 0 {
+                                        _accumulate_pending(&env, lp.clone(), refund as i128)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ─── Insurance coverage payout (Issue #367) ──────────────────────────
@@ -1314,6 +1365,10 @@ fn _complete_settlement(
             fee
         }
         RoundMode::Precision => _resolve_precision_mode(env, round_id, final_price, false)?.0,
+        RoundMode::Amm => {
+            crate::amm_market::settle_amm_round(env, round_id, round.price_start, final_price);
+            0i128
+        }
     };
 
     let participants: Vec<Address> = env
@@ -1357,6 +1412,9 @@ fn _complete_settlement(
                         .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
                 }
             }
+        }
+        RoundMode::Amm => {
+            // AMM positions and LP shares are retained until claimed via amm_claim_winnings
         }
     }
     env.storage()

@@ -10,6 +10,7 @@ use soroban_sdk::{contracttype, Address, Bytes, BytesN, Symbol, Vec};
 pub enum RoundMode {
     UpDown = 0,    // Simple up/down predictions
     Precision = 1, // Exact price predictions (Legends mode)
+    Amm = 2,       // Continuous AMM-style Up/Down predictions (Issue #361)
 }
 
 /// Runtime mode for the contract lifecycle
@@ -162,6 +163,10 @@ pub enum DataKeyExt {
     Amendment(u64),
     /// Monotonic counter for amendment IDs (Issue #363).
     NextAmendmentId,
+    /// Whether AMM market mode is enabled (Issue #361).
+    AmmMarketEnabled,
+    /// Configured AMM swap fee in basis points (Issue #361).
+    AmmFeeBps,
 }
 
 /// Parameterised and round-scoped storage keys.
@@ -222,6 +227,16 @@ pub enum DataKeyScoped {
     /// within a single ledger. This marker lets settlement reject a payload whose
     /// `start_ledger` resolves to a different round than the active one.
     RoundStartLedger(u32),
+    /// AMM liquidity pool state for a round: round_id -> AmmPoolState
+    AmmPool(u64),
+    /// Per-user AMM outcome position: (round_id, address) -> AmmUserPosition
+    AmmPosition(u64, Address),
+    /// Per-user AMM LP shares: (round_id, address) -> i128
+    AmmLpShares(u64, Address),
+    /// Ordered AMM LP participant list: round_id -> Vec<Address>
+    AmmLpParticipants(u64),
+    /// Ordered AMM trader participant list: round_id -> Vec<Address>
+    AmmParticipants(u64),
 }
 
 /// Fee incidence model (Issue #268).
@@ -385,6 +400,39 @@ pub enum BetSide {
 pub struct UserPosition {
     pub amount: i128,
     pub side: BetSide,
+}
+
+/// AMM liquidity pool state for continuous Up/Down pricing (Issue #361).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AmmPoolState {
+    pub round_id: u64,
+    /// AMM reserve of UP outcome shares
+    pub reserve_up: i128,
+    /// AMM reserve of DOWN outcome shares
+    pub reserve_down: i128,
+    /// Total collateral held in the AMM market (LPs + traders)
+    pub total_collateral: i128,
+    /// Total minted LP shares
+    pub total_lp_shares: i128,
+    /// Accumulated trading fees in stroops
+    pub accumulated_fees: i128,
+    /// Swap fee in basis points (e.g. 30 = 0.30%)
+    pub fee_bps: u32,
+    /// Resolution state: true after oracle resolution
+    pub is_resolved: bool,
+    /// Winning outcome: 0 = UP, 1 = DOWN, 2 = Tie/Refund
+    pub winning_side: Option<u32>,
+}
+
+/// User positions within an AMM-style round (Issue #361).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AmmUserPosition {
+    pub up_shares: i128,
+    pub down_shares: i128,
+    pub lp_shares: i128,
+    pub total_invested: i128,
 }
 
 #[contracttype]

@@ -121,15 +121,20 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
     // Default to Up/Down mode (0) if not specified
     let mode_value = mode.unwrap_or(0);
 
-    // Validate mode is either 0 or 1
-    if mode_value > 1 {
+    // Validate mode is 0 (UpDown), 1 (Precision), or 2 (Amm)
+    if mode_value > 2 {
         return Err(ContractError::InvalidMode);
     }
 
     let round_mode = if mode_value == 0 {
         RoundMode::UpDown
-    } else {
+    } else if mode_value == 1 {
         RoundMode::Precision
+    } else {
+        if !crate::amm_market::is_amm_enabled(&env) {
+            return Err(ContractError::AmmDisabled);
+        }
+        RoundMode::Amm
     };
 
     let admin: Address = env
@@ -224,6 +229,11 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
         .persistent()
         .set(&DataKeyCore::ActiveRound, &round);
     _extend_persistent_ttl(&env, &DataKeyCore::ActiveRound);
+
+    if round_mode == RoundMode::Amm {
+        let fee_bps = crate::amm_market::get_amm_fee_bps(&env);
+        crate::amm_market::init_amm_pool(&env, round_id, fee_bps);
+    }
 
     // Claim this ledger sequence for this round, so no later round can reuse it.
     let start_ledger_key = DataKeyScoped::RoundStartLedger(start_ledger);
