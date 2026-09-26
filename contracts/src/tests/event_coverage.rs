@@ -4,12 +4,14 @@
 use super::config_helpers::apply_windows;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, ConfigChangeKind, ConfigChangePayload, OraclePayload};
+use crate::types::{
+    BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore, GovAction, OraclePayload,
+};
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, Bytes, BytesN, Env, Symbol, TryIntoVal,
+    Address, Bytes, BytesN, Env, Symbol, TryIntoVal, Vec,
 };
 
 fn setup() -> (
@@ -28,6 +30,38 @@ fn setup() -> (
     client.initialize(&admin, &oracle);
     client.update_oracle_heartbeat(&0u32);
     (env, contract_id, admin, oracle, client)
+}
+
+fn assert_last_event_topics(env: &Env, contract_id: &Address, expected_topics: &[Symbol]) {
+    let (_, actual_topics, _) = env
+        .events()
+        .all()
+        .into_iter()
+        .rev()
+        .find(|(event_contract, _, _)| event_contract == contract_id)
+        .expect("contract event should exist");
+    let actual_topics = actual_topics
+        .iter()
+        .map(|topic| topic.try_into_val(env))
+        .collect::<Result<std::vec::Vec<Symbol>, _>>()
+        .expect("event topics should be symbols");
+
+    assert_eq!(
+        actual_topics.as_slice(),
+        expected_topics,
+        "event topic order mismatch: expected {expected_topics:?}, actual {actual_topics:?}"
+    );
+}
+
+fn last_event_data(env: &Env, contract_id: &Address) -> Bytes {
+    let (_, _, data) = env
+        .events()
+        .all()
+        .into_iter()
+        .rev()
+        .find(|(event_contract, _, _)| event_contract == contract_id)
+        .expect("contract event should exist");
+    data
 }
 
 fn assert_last_config_updated(
@@ -497,6 +531,140 @@ fn test_event_coverage_claim_winnings() {
     assert_eq!(ev_balance_before, 900_0000000i128);
     // balance_after: balance_before + amount = 1_000_0000000
     assert_eq!(ev_balance_after, 1_000_0000000i128);
+}
+
+// ─── Governance, TTL, and season field-order goldens (Issue #420) ────────────
+
+#[test]
+fn test_event_coverage_governance_propose_field_order() {
+    let (env, contract_id, admin, _, client) = setup();
+    let proposal_id = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &Some(50));
+    let expires_at = env.ledger().sequence() + 50;
+
+    assert_last_event_topics(
+        &env,
+        &contract_id,
+        &[symbol_short!("gov"), symbol_short!("proposed")],
+    );
+    assert_eq!(
+        last_event_data(&env, &contract_id).try_into_val(&env),
+        Ok((proposal_id, admin, 0u32, expires_at))
+    );
+}
+
+#[test]
+fn test_event_coverage_governance_approve_field_order() {
+    let (env, contract_id, admin, _, client) = setup();
+    let approver = Address::generate(&env);
+    client.set_gov_approver(&approver);
+    let proposal_id = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &Some(50));
+
+    client.approve_gov_proposal(&approver, &proposal_id);
+
+    assert_last_event_topics(
+        &env,
+        &contract_id,
+        &[symbol_short!("gov"), symbol_short!("approved")],
+    );
+    assert_eq!(
+        last_event_data(&env, &contract_id).try_into_val(&env),
+        Ok((proposal_id, approver))
+    );
+}
+
+#[test]
+fn test_event_coverage_governance_execute_field_order() {
+    let (env, contract_id, admin, _, client) = setup();
+    let approver = Address::generate(&env);
+    client.set_gov_approver(&approver);
+    let proposal_id = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &Some(50));
+    client.approve_gov_proposal(&approver, &proposal_id);
+
+    client.execute_gov_proposal(&admin, &proposal_id);
+
+    assert_last_event_topics(
+        &env,
+        &contract_id,
+        &[symbol_short!("gov"), symbol_short!("executed")],
+    );
+    assert_eq!(
+        last_event_data(&env, &contract_id).try_into_val(&env),
+        Ok((proposal_id, admin, 0u32))
+    );
+}
+
+#[test]
+fn test_event_coverage_governance_cancel_field_order() {
+    let (env, contract_id, admin, _, client) = setup();
+    let proposal_id = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &Some(50));
+
+    client.cancel_gov_proposal(&admin, &proposal_id);
+
+    assert_last_event_topics(
+        &env,
+        &contract_id,
+        &[symbol_short!("gov"), symbol_short!("cancel")],
+    );
+    assert_eq!(
+        last_event_data(&env, &contract_id).try_into_val(&env),
+        Ok((proposal_id, admin))
+    );
+}
+
+#[test]
+fn test_event_coverage_ttl_touch_field_order() {
+    let (env, contract_id, _, _, client) = setup();
+    let keys = Vec::from_array(
+        &env,
+        [
+            DataKeyCore::Admin,
+            DataKeyCore::CloseBufferLedgers,
+            DataKeyCore::MaxStake,
+        ],
+    );
+
+    assert_eq!(client.batch_touch_ttl(&keys), 1);
+
+    assert_last_event_topics(
+        &env,
+        &contract_id,
+        &[symbol_short!("storage"), symbol_short!("touch")],
+    );
+    assert_eq!(
+        last_event_data(&env, &contract_id).try_into_val(&env),
+        Ok((1u32, 2u32))
+    );
+}
+
+#[test]
+fn test_event_coverage_season_reset_and_archive_field_order() {
+    let (env, contract_id, _, _, client) = setup();
+    let participant = Address::generate(&env);
+    env.as_contract(&contract_id, || {
+        VirtualTokenContract::_update_stats_win(&env, participant.clone()).unwrap();
+    });
+    let ended_at = env.ledger().sequence();
+
+    assert_eq!(client.reset_leaderboard_season(), 2);
+
+    assert_last_event_topics(
+        &env,
+        &contract_id,
+        &[symbol_short!("season"), symbol_short!("reset")],
+    );
+    assert_eq!(
+        last_event_data(&env, &contract_id).try_into_val(&env),
+        Ok((1u32, 2u32, ended_at, 1u32))
+    );
+
+    let archive = client
+        .get_season_archive(&1)
+        .expect("reset should archive the previous season");
+    assert_eq!(archive.season_id, 1);
+    assert_eq!(archive.ended_at_ledger, ended_at);
+    assert_eq!(archive.participant_count, 1);
+    assert_eq!(archive.wins.len(), 1);
+    assert_eq!(archive.wins.get(0).unwrap().user, participant);
 }
 
 // ─── Action rejected diagnostic events (Issue #196) ─────────────────────────
