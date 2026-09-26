@@ -94,3 +94,20 @@ When adding, removing, renaming, or renumbering an error:
 | 99 | `InsuranceInvalidSplit` |
 | 100 | `InsuranceInsufficientFund` |
 | 101 | `InvalidAmount` |
+
+## Overflow vs. PayoutOverflow
+
+Two variants both signal arithmetic overflow, but they mean different things to a
+wallet or indexer and must not be conflated:
+
+| Code | Variant | Meaning | Retry? |
+|---:|---|---|---|
+| 11 | `Overflow` | **Non-financial** arithmetic overflow: round-ID counters, ledger/timing arithmetic, median/price math, outlier rejection, season keys. The operation is not a payout. | Usually not applicable to the failing call; re-check inputs. |
+| 25 | `PayoutOverflow` | **Payout/fee arithmetic** overflow: pot accumulation, fee multiplication, stake-weighted split, or indexed Precision fee calculation. A settlement that hits this aborts atomically — no partial payouts are written and the round is left untouched. | Safe to retry `resolve_round` later if the underlying pot/fee inputs change; the contract state is unchanged. |
+
+`PayoutOverflow` is the code a wallet should key off to recognize a
+settlement-payout failure (Issue #405, #556). All payout aggregation routes
+through `payout_add` / `payout_mul` (`contract.rs:1460-1467`) so it maps to
+`PayoutOverflow`; the indexed Precision fee path
+(`config::calculate_protocol_fee_precision`) does the same. `Overflow` is
+reserved for everything else.
