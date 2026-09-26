@@ -295,3 +295,147 @@ fn test_round_status_unaffected_by_pause() {
     assert_eq!(client.get_protocol_status(), ProtocolStatus::Active);
     assert_eq!(client.get_round_status(&1), RoundStatus::Running);
 }
+
+// ─── RuntimeMode consistency (Issue #567) ────────────────────────────────────
+//
+// `get_protocol_status`, `get_protocol_health` and `get_runtime_mode` must
+// never disagree about what "paused" means. These tests pin every
+// (RuntimeMode × active-round) cell of the table in docs/STATUS_CODES.md and
+// check each reported status against what the policy gate actually allows.
+
+use crate::errors::ContractError;
+
+/// Probes the real policy gate: can `bettor` (pre-funded) bet, and can a
+/// fresh user claim? Fresh users keep the probes from disturbing the round.
+fn probe_gate(
+    env: &Env,
+    client: &VirtualTokenContractClient<'_>,
+    bettor: &Address,
+) -> (bool, bool) {
+    let can_bet = client
+        .try_place_bet(bettor, &10_0000000, &BetSide::Up)
+        .map(|r| r.is_ok())
+        .unwrap_or(false);
+    let claimer = Address::generate(env);
+    let can_claim = match client.try_claim_winnings(&claimer) {
+        Ok(_) => true,
+        Err(Ok(ContractError::ContractPaused)) => false,
+        Err(other) => panic!("unexpected claim error: {:?}", other),
+    };
+    (can_bet, can_claim)
+}
+
+#[test]
+fn test_status_matrix_matches_runtime_mode_and_policy_gate() {
+    // (mode, with_round, expected ProtocolStatus, bets allowed, claims allowed)
+    let cases = [
+        (0u32, false, ProtocolStatus::ClaimsOnly, false, true),
+        (0u32, true, ProtocolStatus::Active, true, true),
+        (1u32, false, ProtocolStatus::ClaimsOnly, false, true),
+        (1u32, true, ProtocolStatus::ClaimsOnly, false, true),
+        (2u32, false, ProtocolStatus::Paused, false, false),
+        (2u32, true, ProtocolStatus::Paused, false, false),
+    ];
+
+    for (mode, with_round, expected, bets, claims) in cases {
+        let env = Env::default();
+        let (client, _admin, _oracle) = setup_contract(&env);
+        if with_round {
+            client.create_round(&10_0000u128, &None);
+        }
+        // Fund the probe bettor while minting is still allowed.
+        let bettor = Address::generate(&env);
+        client.mint_initial(&bettor);
+        client.set_runtime_mode(&mode);
+
+        let status = client.get_protocol_status();
+        assert_eq!(status, expected, "mode={} round={}", mode, with_round);
+        assert_eq!(client.get_runtime_mode(), mode);
+        assert_eq!(client.is_paused(), mode == 2);
+
+        let health = client.get_protocol_health();
+        assert_eq!(
+            health.paused,
+            mode == 2,
+            "health.paused must mean FullyPaused only"
+        );
+        assert_eq!(health.has_active_round, with_round);
+
+        // `Paused` <=> claims blocked; `Active` <=> bets accepted.
+        let (can_bet, can_claim) = probe_gate(&env, &client, &bettor);
+        assert_eq!(can_bet, bets, "bet gate mode={} round={}", mode, with_round);
+        assert_eq!(
+            can_claim, claims,
+            "claim gate mode={} round={}",
+            mode, with_round
+        );
+        assert_eq!(status == ProtocolStatus::Active, can_bet);
+        assert_eq!(status == ProtocolStatus::Paused, !can_claim);
+    }
+}
+
+/// Regression: ClaimsOnly with a live round used to report `Active` even
+/// though every bet was rejected with `ContractPaused`.
+#[test]
+fn test_protocol_status_claims_only_mode_with_active_round() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+
+    client.create_round(&10_0000u128, &None);
+    assert_eq!(client.get_protocol_status(), ProtocolStatus::Active);
+
+    client.set_runtime_mode(&1u32);
+    assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);
+    // The round's own lifecycle phase is independent of RuntimeMode.
+    assert_eq!(client.get_round_status(&1), RoundStatus::Betting);
+    assert_eq!(client.get_protocol_health().status_code, 6); // CLAIMS_ONLY
+
+    client.set_runtime_mode(&0u32);
+    assert_eq!(client.get_protocol_status(), ProtocolStatus::Active);
+    assert_eq!(client.get_protocol_health().status_code, 0); // HEALTHY
+}
+
+/// `set_runtime_mode(2)` and `pause_contract()` are the same state and must
+/// be reported identically by every status surface.
+#[test]
+fn test_pause_contract_and_mode_two_are_indistinguishable() {
+    let env_a = Env::default();
+    let (a, _, _) = setup_contract(&env_a);
+    a.create_round(&10_0000u128, &None);
+    a.pause_contract();
+
+    let env_b = Env::default();
+    let (b, _, _) = setup_contract(&env_b);
+    b.create_round(&10_0000u128, &None);
+    b.set_runtime_mode(&2u32);
+
+    assert_eq!(a.get_runtime_mode(), b.get_runtime_mode());
+    assert_eq!(a.get_protocol_status(), b.get_protocol_status());
+    assert_eq!(a.get_round_status(&1), b.get_round_status(&1));
+    let (ha, hb) = (a.get_protocol_health(), b.get_protocol_health());
+    assert_eq!(ha.paused, hb.paused);
+    assert_eq!(ha.status_code, hb.status_code);
+    assert_eq!(ha.status_code, 1); // PAUSED
+}
+
+/// ClaimsOnly counts as one degradation: combined with a stale oracle it must
+/// surface MULTIPLE_ISSUES instead of hiding the oracle problem.
+#[test]
+fn test_health_claims_only_does_not_mask_stale_oracle() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    client.create_round(&10_0000u128, &None);
+    client.set_runtime_mode(&1u32);
+    assert_eq!(client.get_protocol_health().status_code, 6); // CLAIMS_ONLY alone
+
+    // Push the ledger clock past the oracle stale threshold.
+    let threshold = client.get_oracle_stale_threshold();
+    env.ledger().with_mut(|li| li.timestamp += threshold + 1);
+    let health = client.get_protocol_health();
+    assert!(!health.oracle_live);
+    assert_eq!(health.status_code, 5); // MULTIPLE_ISSUES
+
+    // Escalating to FullyPaused always wins.
+    client.set_runtime_mode(&2u32);
+    assert_eq!(client.get_protocol_health().status_code, 1); // PAUSED
+}

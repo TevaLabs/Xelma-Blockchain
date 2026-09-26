@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Symbol, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -574,11 +574,17 @@ pub enum RoundArchiveStatus {
 /// | code | label           | severity | meaning                                   |
 /// |------|-----------------|----------|-------------------------------------------|
 /// | 0    | HEALTHY         | none     | All subsystems nominal                    |
-/// | 1    | PAUSED          | critical | Contract is emergency-paused               |
+/// | 1    | PAUSED          | critical | `RuntimeMode::FullyPaused`                |
 /// | 2    | ORACLE_STALE    | warning  | Oracle heartbeat is stale or offline      |
 /// | 3    | ROUND_STALE     | warning  | Round is past its end ledger but unresolved|
 /// | 4    | NO_ACTIVE_ROUND | info     | No round currently active (idle protocol) |
 /// | 5    | MULTIPLE_ISSUES | critical | Two or more issues detected simultaneously|
+/// | 6    | CLAIMS_ONLY     | warning  | `RuntimeMode::ClaimsOnly`                 |
+/// | 7    | ACCESS_RESTRICTED | info   | Allowlist mode on; otherwise healthy      |
+///
+/// Precedence: PAUSED > MULTIPLE_ISSUES > CLAIMS_ONLY > ORACLE_STALE >
+/// ROUND_STALE > NO_ACTIVE_ROUND > ACCESS_RESTRICTED > HEALTHY. ClaimsOnly,
+/// stale oracle and stale round each count as one issue.
 ///
 /// ## Phase codes (`active_round_phase`)
 ///
@@ -600,7 +606,8 @@ pub enum RoundArchiveStatus {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProtocolHealthStatus {
-    /// Whether the contract is emergency-paused (`Paused == true`)
+    /// `true` only in `RuntimeMode::FullyPaused` (same as `is_paused()`);
+    /// `ClaimsOnly` is reported via `status_code == 6`, not this flag.
     pub paused: bool,
     /// Whether the oracle heartbeat is non-stale and not offline
     pub oracle_live: bool,
@@ -660,27 +667,30 @@ pub struct OracleRotationProposal {
 ///
 /// | value | variant      | description                                                             |
 /// |-------|--------------|-------------------------------------------------------------------------|
-/// | 0     | `Active`     | Not paused; a round is currently active (bets open or running).          |
-/// | 1     | `Paused`     | Emergency-paused by the admin; no mutations accepted except unpause.     |
-/// | 2     | `ClaimsOnly` | Not paused; no active round. Only `claim_winnings` is meaningful.        |
+/// | 0     | `Active`     | `RuntimeMode::Normal` and a round is active; round mutations accepted.   |
+/// | 1     | `Paused`     | `RuntimeMode::FullyPaused`; every mutation (including claims) blocked.   |
+/// | 2     | `ClaimsOnly` | `RuntimeMode::ClaimsOnly`, or `Normal` with no active round; claims and settlement allowed. |
 ///
 /// ## Transition rules
 ///
-/// - `ClaimsOnly` → `Active` when `create_round()` succeeds.
-/// - `Active` → `ClaimsOnly` when `resolve_round()` or `cancel_round()` completes.
-/// - Any state → `Paused` when `pause_contract()` is called.
-/// - `Paused` → `Active` when `unpause_contract()` is called *and* an active round still exists.
-/// - `Paused` → `ClaimsOnly` when `unpause_contract()` is called *and* no active round exists.
+/// - `ClaimsOnly` → `Active` when `create_round()` succeeds in `Normal` mode.
+/// - `Active` → `ClaimsOnly` when `resolve_round()` or `cancel_round()` completes,
+///   or when `set_runtime_mode(1)` is called.
+/// - Any state → `Paused` when `pause_contract()` / `set_runtime_mode(2)` is called.
+/// - `Paused` → `Active` when the mode returns to `Normal` *and* an active round still exists.
+/// - `Paused` → `ClaimsOnly` when the mode returns to `Normal` with no active round,
+///   or is set to `ClaimsOnly`.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 #[repr(u32)]
 pub enum ProtocolStatus {
-    /// The contract is not paused and has a currently active round.
+    /// `RuntimeMode::Normal` and a round is currently active.
     Active = 0,
-    /// The contract is emergency-paused by the admin.
+    /// `RuntimeMode::FullyPaused`: every mutation is blocked, including claims.
     Paused = 1,
-    /// The contract is not paused, but no round is active.
-    /// Mutating actions are limited to claiming pending winnings.
+    /// `RuntimeMode::ClaimsOnly`, or `Normal` with no active round.
+    /// Round mutations are blocked (or have no round to act on); claims and
+    /// settlement remain available.
     ClaimsOnly = 2,
 }
 
@@ -892,7 +902,7 @@ pub struct DeviationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum DeviationConfigKey {
-    Config,
+    DevCfg,
 }
 
 #[contracttype]
@@ -904,7 +914,7 @@ pub struct AttestationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum AttestationConfigKey {
-    Config,
+    Attest,
 }
 
 #[contracttype]
@@ -918,7 +928,7 @@ pub struct HbGateConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum HbGateKey {
-    Config,
+    HbGate,
 }
 
 #[contracttype]
@@ -1004,7 +1014,7 @@ pub struct Amendment {
     pub id: u64,
     pub proposer: Address,
     pub parameter_name: Symbol,
-    pub new_value: Val,
+    pub new_value: Bytes,
     pub created_at_ledger: u32,
     pub veto_deadline_ledger: u32,
     pub activation_deadline_ledger: u32,

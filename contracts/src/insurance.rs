@@ -23,21 +23,26 @@ use crate::types::{DataKeyCore, InsuranceEvent};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 // ─── Storage key helpers (Symbol-based to avoid DataKeyCore XDR limit) ──────
+//
+// Keys must be built in the *calling* contract's `Env`. Symbols longer than 9
+// chars are host objects, so building them in a throwaway `Env::default()`
+// hands the real host a foreign object handle and every read/write traps with
+// "mis-tagged object reference" (this broke `cancel_round` for reasons 1-3).
 
-fn _fund_balance_key() -> Symbol {
-    Symbol::new(&Env::default(), "InsFundBal")
+fn _fund_balance_key(env: &Env) -> Symbol {
+    Symbol::new(env, "InsFundBal")
 }
 
-fn _split_bps_key() -> Symbol {
-    Symbol::new(&Env::default(), "InsSplitBps")
+fn _split_bps_key(env: &Env) -> Symbol {
+    Symbol::new(env, "InsSplitBps")
 }
 
-fn _coverage_bps_key() -> Symbol {
-    Symbol::new(&Env::default(), "InsCovBps")
+fn _coverage_bps_key(env: &Env) -> Symbol {
+    Symbol::new(env, "InsCovBps")
 }
 
-fn _eligible_events_key() -> Symbol {
-    Symbol::new(&Env::default(), "InsEligEvt")
+fn _eligible_events_key(env: &Env) -> Symbol {
+    Symbol::new(env, "InsEligEvt")
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -79,7 +84,7 @@ pub fn set_insurance_split_bps(env: Env, bps: u32) -> Result<(), ContractError> 
         return Err(ContractError::InsuranceInvalidSplit);
     }
 
-    let key = _split_bps_key();
+    let key = _split_bps_key(&env);
     let old_bps: u32 = env
         .storage()
         .persistent()
@@ -99,7 +104,7 @@ pub fn set_insurance_split_bps(env: Env, bps: u32) -> Result<(), ContractError> 
 
 /// Returns the configured insurance split in basis points (default 0).
 pub fn get_insurance_split_bps(env: &Env) -> u32 {
-    let key = _split_bps_key();
+    let key = _split_bps_key(&env);
     if env.storage().persistent().has(&key) {
         _extend_persistent_ttl(env, &key);
     }
@@ -135,7 +140,7 @@ pub fn set_insurance_coverage_bps(env: Env, bps: u32) -> Result<(), ContractErro
         return Err(ContractError::InsuranceInvalidSplit);
     }
 
-    let key = _coverage_bps_key();
+    let key = _coverage_bps_key(&env);
     let old_bps: u32 = env
         .storage()
         .persistent()
@@ -155,7 +160,7 @@ pub fn set_insurance_coverage_bps(env: Env, bps: u32) -> Result<(), ContractErro
 
 /// Returns the configured insurance coverage payout rate in basis points.
 pub fn get_insurance_coverage_bps(env: &Env) -> u32 {
-    let key = _coverage_bps_key();
+    let key = _coverage_bps_key(&env);
     if env.storage().persistent().has(&key) {
         _extend_persistent_ttl(env, &key);
     }
@@ -182,7 +187,7 @@ pub fn set_insurance_eligible_events(
         _emit_action_rejected(&env, &admin, symbol_short!("ins_cfg"), e);
     })?;
 
-    let key = _eligible_events_key();
+    let key = _eligible_events_key(&env);
     env.storage().persistent().set(&key, &events);
     _extend_persistent_ttl(&env, &key);
 
@@ -197,7 +202,7 @@ pub fn set_insurance_eligible_events(
 
 /// Returns the list of eligible insurance event type discriminants.
 pub fn get_insurance_eligible_events(env: &Env) -> Vec<u32> {
-    let key = _eligible_events_key();
+    let key = _eligible_events_key(&env);
     if env.storage().persistent().has(&key) {
         _extend_persistent_ttl(env, &key);
     }
@@ -209,7 +214,7 @@ pub fn get_insurance_eligible_events(env: &Env) -> Vec<u32> {
 
 /// Returns the current insurance fund balance.
 pub fn get_insurance_fund_balance(env: &Env) -> i128 {
-    let key = _fund_balance_key();
+    let key = _fund_balance_key(&env);
     if env.storage().persistent().has(&key) {
         _extend_persistent_ttl(env, &key);
     }
@@ -250,7 +255,7 @@ pub fn collect_insurance_fee(
     // Solvency: insurance_amount must not exceed fee_amount
     let capped_amount = insurance_amount.min(fee_amount);
 
-    let key = _fund_balance_key();
+    let key = _fund_balance_key(&env);
     let current: i128 = env
         .storage()
         .persistent()
@@ -346,7 +351,7 @@ pub fn deduct_insurance_coverage(
         return Ok(0);
     }
 
-    let fund_key = _fund_balance_key();
+    let fund_key = _fund_balance_key(&env);
     let current_fund: i128 = env
         .storage()
         .persistent()
@@ -407,7 +412,7 @@ pub fn top_up_insurance_fund(env: Env, amount: i128) -> Result<(), ContractError
     crate::common::_set_balance(&env, admin.clone(), new_balance);
 
     // Credit insurance fund
-    let fund_key = _fund_balance_key();
+    let fund_key = _fund_balance_key(&env);
     let current_fund: i128 = env
         .storage()
         .persistent()
@@ -460,7 +465,7 @@ pub fn withdraw_insurance_fund(
         return Err(ContractError::InvalidBetAmount);
     }
 
-    let fund_key = _fund_balance_key();
+    let fund_key = _fund_balance_key(&env);
     let current_fund: i128 = env
         .storage()
         .persistent()
@@ -503,7 +508,7 @@ pub fn execute_withdraw_insurance_fund(
         return Err(ContractError::InvalidBetAmount);
     }
 
-    let fund_key = _fund_balance_key();
+    let fund_key = _fund_balance_key(&env);
     let current_fund: i128 = env
         .storage()
         .persistent()

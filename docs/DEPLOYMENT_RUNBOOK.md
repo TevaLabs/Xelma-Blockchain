@@ -89,36 +89,39 @@ The output artifact is located at: `target/wasm32v1-none/release/xelma_contract.
 
 ## 7. Operator Playbook: Archive Retention & Expired Pending Winnings Reclaim
 
-### 7.1 FIFO Archive Prune
+The full playbook, with commands, events, failure modes and linked
+entrypoints, is in
+[OPS_ARCHIVE_RECLAIM_PLAYBOOK.md](OPS_ARCHIVE_RECLAIM_PLAYBOOK.md). Quick reference:
 
-Operators manage the on-chain archive depth using the `archive_retention` threshold and the `prune_archived_rounds` entrypoint in [contracts/src/admin.rs](file:///C:/Users/SOSA/Downloads/od/Xelma-Blockchain/contracts/src/admin.rs).
+### 7.1 Archive retention (automatic FIFO prune)
 
-* **Authorization**: Admin-only (`admin.require_auth()`).
-* **CLI Command**:
+* There is no manual prune entrypoint. Pruning happens on each archive write
+  (resolve / cancel / fallback / void) once more than `archive_retention`
+  rounds are archived.
+* Set the depth (admin, immediate, `1..=10000`, default `128`):
   ```bash
-  soroban contract invoke --id <CONTRACT_ID> --source-account <ADMIN_KEY> --network <NETWORK> -- prune_archived_rounds --max_prune_count 50
+  stellar contract invoke --id <CONTRACT_ID> --source <ADMIN> --network <NETWORK> -- set_archive_retention --limit 256
   ```
-* **Threshold Configuration**:
+* Watch `("archive", "pruned")` with `(round_id, retention_limit)`. Lowering the
+  limit prunes the whole backlog on the **next** archive write.
+* Failure modes: `#23 WindowOutOfRange` (limit out of range), `#22 ContractPaused` (FullyPaused).
+
+### 7.2 Reclaiming expired pending winnings
+
+* Enable the expiry through the config timelock (disabled by default):
   ```bash
-  soroban contract invoke --id <CONTRACT_ID> --source-account <ADMIN_KEY> --network <NETWORK> -- set_archive_retention --retention_count 100
+  stellar contract invoke ... -- schedule_pending_winnings_expiry --ledgers 518400
+  # after activation_ledger (get_pending_config_change), in Normal mode:
+  stellar contract invoke ... -- apply_scheduled_changes --kind PendingWinningsExpiry
   ```
-* **Monitoring & Failure Modes**:
-  - Monitor `("admin", "archive_pruned")` contract events for pruned counts.
-  - If `prune_archived_rounds` fails with `NotInitialized` or authorization error, verify admin signature.
-  - Excessive archival depth without pruning increases persistent storage footprint.
-
-### 7.2 Reclaiming Expired Pending Winnings
-
-Unclaimed user winnings past the global expiration threshold can be reclaimed into the protocol fee treasury.
-
-* **Authorization**: Admin-only (`admin.require_auth()`).
-* **CLI Command**:
+* Reclaim one user at a time (admin). Funds move to the **admin's** balance:
   ```bash
-  soroban contract invoke --id <CONTRACT_ID> --source-account <ADMIN_KEY> --network <NETWORK> -- reclaim_expired_pending_winnings --max_users 50
+  stellar contract invoke ... -- reclaim_expired_pending_winnings --user <G...>
   ```
-* **Failure Modes & Safety**:
-  - Unclaimed amounts that have not reached the expiration threshold remain untouched.
-  - Emits `("admin", "pending_reclaimed")` with `(user, amount, reclaimed_to_treasury)`.
+* Watch `("claim", "expired")` with `(user, amount, admin)`.
+* Failure modes: `#78 ExpiryNotConfigured`, `#77 PendingWinningsNotFound`,
+  `#86 PendingWinningsNotExpired` (any new credit resets the timer),
+  `#22 ContractPaused` (FullyPaused; ClaimsOnly is allowed).
 
 ---
 

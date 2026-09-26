@@ -274,7 +274,7 @@ fn test_denylist_blocks_cashout() {
 }
 
 /// `test_protocol_health_reports_access_mode` — enabling allowlist mode is
-/// surfaced as the informational `ACCESS_RESTRICTED` (6) status code when the
+/// surfaced as the informational `ACCESS_RESTRICTED` (7) status code when the
 /// rest of the protocol is otherwise healthy.
 #[test]
 fn test_protocol_health_reports_access_mode() {
@@ -285,9 +285,9 @@ fn test_protocol_health_reports_access_mode() {
     client.create_round(&1_0000000, &None);
 
     let before = client.get_protocol_health();
-    assert_ne!(before.status_code, 6, "should not be restricted before enabling");
+    assert_ne!(before.status_code, 7, "should not be restricted before enabling");
 
     client.set_access_control_enabled(&true);
     let after = client.get_protocol_health();
-    assert_eq!(after.status_code, 6, "allowlist mode should surface ACCESS_RESTRICTED");
+    assert_eq!(after.status_code, 7, "allowlist mode should surface ACCESS_RESTRICTED");
 }
