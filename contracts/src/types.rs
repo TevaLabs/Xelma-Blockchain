@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, BytesN, Symbol, Val, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Symbol, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -222,6 +222,8 @@ pub enum DataKeyScoped {
     /// within a single ledger. This marker lets settlement reject a payload whose
     /// `start_ledger` resolves to a different round than the active one.
     RoundStartLedger(u32),
+    /// Rolling commitment aggregate for round aggregate obfuscation during betting: round_id -> RollingCommitment
+    RollingCommitment(u64),
 }
 
 /// Fee incidence model (Issue #268).
@@ -498,6 +500,17 @@ pub struct RoundPoolStats {
     pub precision_prediction_count: u32,
     pub precision_commitment_count: u32,
     pub precision_revealed_count: u32,
+}
+
+/// Rolling commitment state for active round aggregate obfuscation during the betting phase.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RollingCommitment {
+    pub round_id: u64,
+    pub commitment_hash: BytesN<32>,
+    pub total_commitments: u32,
+    pub total_stake: i128,
+    pub is_opened: bool,
 }
 
 /// One-read composite view of current market state for frontends: round
