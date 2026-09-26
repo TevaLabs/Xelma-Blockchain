@@ -63,40 +63,46 @@ Emitted when a new prediction round is opened.
 
 ### `("bet", "placed")`
 
-Emitted when a user places an Up/Down bet.
+Emitted when a user places an Up/Down bet. During the betting phase, the
+payload contains only the rolling aggregate hash and count; it does not reveal
+stake or side.
 
 | Position | Field      | Type      | Description                                      |
 |----------|------------|-----------|--------------------------------------------------|
 | 0        | `user`     | `Address` | User who placed the bet                          |
 | 1        | `round_id` | `u64`     | Round the bet belongs to                         |
-| 2        | `amount`   | `i128`    | Bet amount in stroops                            |
-| 3        | `side`     | `u32`     | Prediction side: `0` = Up, `1` = Down            |
+| 2        | `aggregate_hash` | `BytesN<32>` | Updated rolling commitment hash             |
+| 3        | `aggregate_count` | `u32` | Number of betting actions committed so far       |
 
 ---
 
 ### `("predict", "price")`
 
-Emitted when a user submits a Precision mode price prediction.
+Emitted when a user submits a Precision mode price prediction. During the
+betting phase, the payload omits the prediction and stake; these details are
+exposed after betting closes through the open query path.
 
 | Position | Field             | Type      | Description                                          |
 |----------|-------------------|-----------|------------------------------------------------------|
 | 0        | `user`            | `Address` | User who submitted the prediction                    |
 | 1        | `round_id`        | `u64`     | Round the prediction belongs to                      |
-| 2        | `predicted_price` | `u128`    | Predicted price (4 decimal places)                   |
-| 3        | `amount`          | `i128`    | Bet amount in stroops                                |
+| 2        | `aggregate_hash` | `BytesN<32>` | Updated rolling commitment hash                    |
+| 3        | `aggregate_count` | `u32` | Number of betting actions committed so far             |
 
 ---
 
 ### `("commit", "predict")`
 
-Emitted when a user locks a Precision stake behind a commitment hash.
+Emitted when a user locks a Precision stake behind a commitment hash. The
+payload omits the individual stake and exposes only the updated rolling
+aggregate hash and count during the betting phase.
 
 | Position | Field        | Type         | Description                                      |
 |----------|--------------|--------------|--------------------------------------------------|
 | 0        | `user`       | `Address`    | User who submitted the commitment                |
 | 1        | `round_id`   | `u64`        | Round the commitment belongs to                  |
-| 2        | `commitment` | `BytesN<32>` | SHA-256 commitment digest                        |
-| 3        | `amount`     | `i128`       | Locked stake in stroops                          |
+| 2        | `aggregate_hash` | `BytesN<32>` | Updated rolling commitment hash             |
+| 3        | `aggregate_count` | `u32` | Number of betting actions committed so far       |
 
 ---
 

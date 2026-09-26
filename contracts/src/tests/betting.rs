@@ -435,6 +435,15 @@ fn test_get_round_pool_stats_partial_updown_pool() {
     client.place_bet(&bob, &200_0000000, &BetSide::Up);
 
     let stats = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(stats.total_up_stake, 0);
+    assert_eq!(stats.total_down_stake, 0);
+    assert_eq!(stats.up_participant_count, 0);
+    assert_eq!(stats.down_participant_count, 0);
+    assert_eq!(stats.up_stake_ratio_bps, 0);
+    assert_eq!(stats.down_stake_ratio_bps, 0);
+
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+    let stats = client.get_round_pool_stats().expect("open round stats");
     assert_eq!(stats.total_up_stake, 300_0000000);
     assert_eq!(stats.total_down_stake, 0);
     assert_eq!(stats.up_participant_count, 2);
@@ -466,6 +475,15 @@ fn test_get_round_pool_stats_full_updown_pool() {
     client.place_bet(&carol, &300_0000000, &BetSide::Down);
 
     let stats = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(stats.total_up_stake, 0);
+    assert_eq!(stats.total_down_stake, 0);
+    assert_eq!(stats.up_participant_count, 0);
+    assert_eq!(stats.down_participant_count, 0);
+    assert_eq!(stats.up_stake_ratio_bps, 0);
+    assert_eq!(stats.down_stake_ratio_bps, 0);
+
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+    let stats = client.get_round_pool_stats().expect("open round stats");
     let round = client.get_active_round().expect("active round");
     assert_eq!(stats.total_up_stake, round.pool_up);
     assert_eq!(stats.total_down_stake, round.pool_down);
@@ -507,7 +525,7 @@ fn test_get_round_pool_stats_precision_pool() {
     assert_eq!(stats.down_stake_ratio_bps, 0);
     assert_eq!(stats.precision_total_stake, 200_0000000);
     assert_eq!(stats.precision_participant_count, 2);
-    assert_eq!(stats.precision_prediction_count, 1);
-    assert_eq!(stats.precision_commitment_count, 1);
+    assert_eq!(stats.precision_prediction_count, 0);
+    assert_eq!(stats.precision_commitment_count, 2);
     assert_eq!(stats.precision_revealed_count, 0);
 }

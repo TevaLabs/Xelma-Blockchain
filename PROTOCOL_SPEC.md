@@ -70,6 +70,23 @@ unrevealed stakes); with all-unrevealed refunds,
 All token amounts are stored as `i128` stroops where `1 vXLM = 10_000_000`.
 Prices are stored as `u128` values scaled to 4 decimal places.
 
+### Betting-phase aggregates and trust boundary
+
+During `RoundPhase::Betting`, public pool-stat queries expose only aggregate
+stake/count values; UpDown side totals and ratios, and Precision guesses and
+reveal counts, remain hidden until the betting window closes. Betting-time
+events likewise carry the rolling aggregate hash and action count rather than
+the submitted side, prediction, or individual stake. Once the ledger reaches
+`bet_end_ledger`, query results take the open path and expose the round's
+composition for settlement transparency.
+
+The rolling SHA-256 value is an order-dependent, tamper-evident commitment, not
+a zero-knowledge proof or cryptographic confidentiality. Contract storage,
+transaction inputs, balances, and ledger data remain publicly observable to
+chain participants; this boundary only governs the contract's aggregate query
+and event interfaces. Clients must not treat the aggregate as concealing data
+from validators or independent ledger observers.
+
 ## Roles and Trust Assumptions
 
 | Role | Trust level | Authority | Assumptions |

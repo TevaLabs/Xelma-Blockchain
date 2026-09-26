@@ -2370,6 +2370,9 @@ pub fn _archive_round(
     let status_val = status.clone() as u32;
     let participant_count = participants.len() as u32;
     let settled_at_ledger = env.ledger().sequence();
+
+    // Settlement hook: open commitment aggregate for the settling round
+    let _ = crate::commitments::_open_commitment_aggregate(env, round.round_id);
     let summary = ArchivedRoundSummary {
         round_id: round.round_id,
         price_start: round.price_start,
