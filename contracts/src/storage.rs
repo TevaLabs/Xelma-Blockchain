@@ -66,6 +66,9 @@ pub fn clear_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>
     env.storage()
         .persistent()
         .remove(&DataKeyScoped::RoundParticipants(round_id));
+    env.storage()
+        .persistent()
+        .remove(&DataKeyScoped::RollingCommitment(round_id));
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
 
     // Legacy keys — safe no-op when absent

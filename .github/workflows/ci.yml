@@ -201,6 +201,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Rust for Stellar CLI
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Stellar CLI binary
+        run: cargo install stellar-cli --locked --no-default-features
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -212,9 +218,19 @@ jobs:
         working-directory: bindings
         run: npm ci
 
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: contract-wasm
+          path: target/wasm32v1-none/release/
+
       - name: Build TypeScript bindings
         working-directory: bindings
         run: npm run build
+
+      - name: Check generated bindings are committed
+        working-directory: bindings
+        run: npm run check:generated
 
       - name: Lint TypeScript bindings
         working-directory: bindings

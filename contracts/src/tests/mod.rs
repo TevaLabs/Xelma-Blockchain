@@ -10,6 +10,7 @@ mod betting;
 mod cei_ordering;
 mod chaos_recovery;
 mod commit_reveal_e2e;
+mod commitments_test;
 mod claim_many;
 // mod commit_reveal_e2e; // upstream bug: all-unrevealed refunds test expects behavior contract doesn't implement
 mod config_helpers;

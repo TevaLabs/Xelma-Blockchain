@@ -17,6 +17,8 @@
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
+    "generate": "node scripts/generate-bindings.mjs",
+    "check:generated": "node scripts/generate-bindings.mjs --check",
     "test:parity": "node src/parity.js",
     "test:errors": "vitest run tests/contract-error-parity.test.js",
     "test:wasm": "vitest run tests/wasm-parity.test.js",

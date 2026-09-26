@@ -290,9 +290,15 @@ fn test_event_coverage_place_bet() {
         topics.get(1).unwrap().try_into_val(&env),
         Ok(symbol_short!("placed"))
     );
+    let aggregate = client.get_rolling_commitment(&1).unwrap();
     assert_eq!(
         data.try_into_val(&env),
-        Ok((user, 1u64, 100_0000000i128, 0u32))
+        Ok((
+            user,
+            1u64,
+            aggregate.commitment_hash,
+            aggregate.total_commitments
+        ))
     );
 }
 
@@ -332,9 +338,10 @@ fn test_event_coverage_commit_and_reveal() {
         topics.get(1).unwrap().try_into_val(&env),
         Ok(symbol_short!("predict"))
     );
+    let aggregate = client.get_rolling_commitment(&1).unwrap();
     assert_eq!(
         data.try_into_val(&env),
-        Ok((user.clone(), 1u64, committed_hash, 100_0000000i128))
+        Ok((user.clone(), 1u64, aggregate.commitment_hash, aggregate.total_commitments))
     );
 
     // Move ledger beyond bet window to allow reveal
