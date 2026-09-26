@@ -643,7 +643,19 @@ export const ContractError = {
   /** The insurance fund cannot cover the requested payout. */
   100: {message:"InsuranceInsufficientFund"},
   /** The supplied token amount is invalid. */
-  101: {message:"InvalidAmount"}
+  101: {message:"InvalidAmount"},
+  /** AMM market feature is not enabled. */
+  102: {message:"AmmDisabled"},
+  /** AMM pool has insufficient liquidity for this trade. */
+  103: {message:"AmmInsufficientLiquidity"},
+  /** Slippage tolerance exceeded for AMM share trade. */
+  104: {message:"AmmSlippageExceeded"},
+  /** Amount passed to AMM operation must be greater than zero. */
+  105: {message:"AmmZeroAmount"},
+  /** User has no LP shares in the AMM pool. */
+  106: {message:"AmmNoLpShares"},
+  /** User has no AMM position to operate on. */
+  107: {message:"AmmPositionNotFound"}
 }
 
 /**

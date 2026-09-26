@@ -17,6 +17,7 @@ extern crate alloc;
 extern crate std;
 
 
+pub mod amm_market;
 mod access_control;
 mod admin;
 mod betting;
@@ -42,10 +43,11 @@ mod tests;
 pub use contract::VirtualTokenContract;
 pub use errors::ContractError;
 pub use types::{
-    ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped,
+    AmmPoolState, AmmUserPosition, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped,
     InsuranceEvent, LeaderboardEntry, OracleRotationProposal, PendingConfigChange,
     PrecisionCommitment, PrecisionPrediction, ProtocolHealthStatus, Round, RoundArchiveStatus,
     RoundTemplate, SeasonArchive, SeasonLeaderboardEntry, UserPosition, UserStats,
     CANCEL_REASON_GENERIC, CANCEL_REASON_ORACLE_OUTAGE, CANCEL_REASON_ORACLE_DEVIATION,
     CANCEL_REASON_FALLBACK_REFUND,
 };
+

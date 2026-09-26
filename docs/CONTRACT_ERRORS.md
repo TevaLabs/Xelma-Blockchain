@@ -94,3 +94,9 @@ When adding, removing, renaming, or renumbering an error:
 | 99 | `InsuranceInvalidSplit` |
 | 100 | `InsuranceInsufficientFund` |
 | 101 | `InvalidAmount` |
+| 102 | `AmmDisabled` |
+| 103 | `AmmInsufficientLiquidity` |
+| 104 | `AmmSlippageExceeded` |
+| 105 | `AmmZeroAmount` |
+| 106 | `AmmNoLpShares` |
+| 107 | `AmmPositionNotFound` |

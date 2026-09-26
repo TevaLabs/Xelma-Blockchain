@@ -10,7 +10,7 @@ use crate::config::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
+    AmmPoolState, ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
     MarketSnapshot, PrecisionCommitment, PrecisionPayoutPolicy, PrecisionPrediction,
     PendingWinningsUpdatedAtKey, Round, RoundMode, RoundPhase, RoundPoolStats, RoundTemplate,
     SeasonArchive, SimulationResult, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
@@ -105,6 +105,25 @@ pub fn get_round_pool_stats(env: Env) -> Option<RoundPoolStats> {
                     }
                 }
                 idx += 1;
+            }
+        }
+        RoundMode::Amm => {
+            if let Some(pool) = env
+                .storage()
+                .persistent()
+                .get::<_, AmmPoolState>(&DataKeyScoped::AmmPool(round.round_id))
+            {
+                stats.total_up_stake = pool.reserve_up;
+                stats.total_down_stake = pool.reserve_down;
+                let total = pool.reserve_up.checked_add(pool.reserve_down).unwrap_or(0);
+                if total > 0 {
+                    stats.up_stake_ratio_bps = ((pool.reserve_down as u128)
+                        .saturating_mul(BPS_DENOMINATOR as u128)
+                        / total as u128) as u32;
+                    stats.down_stake_ratio_bps = ((pool.reserve_up as u128)
+                        .saturating_mul(BPS_DENOMINATOR as u128)
+                        / total as u128) as u32;
+                }
             }
         }
     }
