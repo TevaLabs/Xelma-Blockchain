@@ -30,42 +30,42 @@ export class InsufficientBalanceError extends XelmaError {
 
 export class NoActiveRoundError extends XelmaError {
   constructor() {
-    super("No active round is available for betting", 7, "NoActiveRound");
+    super("No active round is available for betting", 5, "NoActiveRound");
     this.name = "NoActiveRoundError";
   }
 }
 
 export class ContractPausedError extends XelmaError {
   constructor() {
-    super("Contract is currently paused — no betting allowed", 22, "ContractPaused");
+    super("Contract is currently paused — no betting allowed", 18, "ContractPaused");
     this.name = "ContractPausedError";
   }
 }
 
 export class AlreadyBetError extends XelmaError {
   constructor() {
-    super("User has already placed a bet in the current round", 10, "AlreadyBet");
+    super("User has already placed a bet in the current round", 8, "AlreadyBet");
     this.name = "AlreadyBetError";
   }
 }
 
 export class StakeExceedsMaxError extends XelmaError {
   constructor() {
-    super("Bet amount exceeds the configured maximum stake", 28, "StakeExceedsMax");
+    super("Bet amount exceeds the configured maximum stake", 23, "StakeExceedsMax");
     this.name = "StakeExceedsMaxError";
   }
 }
 
 export class ExposureCapExceededError extends XelmaError {
   constructor() {
-    super("User's cumulative exposure in this round exceeds the configured cap", 29, "ExposureCapExceeded");
+    super("User's cumulative exposure in this round exceeds the configured cap", 24, "ExposureCapExceeded");
     this.name = "ExposureCapExceededError";
   }
 }
 
 export class NoRoundTemplateError extends XelmaError {
   constructor() {
-    super("No round template configured", 65, "NoRoundTemplate");
+    super("No round template configured", 46, "NoRoundTemplate");
     this.name = "NoRoundTemplateError";
   }
 }
@@ -73,8 +73,7 @@ export class NoRoundTemplateError extends XelmaError {
 export class AccessDeniedError extends XelmaError {
   constructor() {
     super(
-      "Participant is blocked by the active access-control policy",
-      79,
+      "Participant is blocked by the active access-control policy", 61,
       "AccessDenied",
     );
     this.name = "AccessDeniedError";
@@ -84,14 +83,14 @@ export class AccessDeniedError extends XelmaError {
 // ─── Error Mapping ─────────────────────────────────────────────
 
 const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
-  7: NoActiveRoundError,
-  9: InsufficientBalanceError,
-  10: AlreadyBetError,
-  22: ContractPausedError,
-  28: StakeExceedsMaxError,
-  29: ExposureCapExceededError,
-  65: NoRoundTemplateError,
-  79: AccessDeniedError,
+  5: NoActiveRoundError,
+  7: InsufficientBalanceError,
+  8: AlreadyBetError,
+  18: ContractPausedError,
+  23: StakeExceedsMaxError,
+  24: ExposureCapExceededError,
+  46: NoRoundTemplateError,
+  61: AccessDeniedError,
 };
 
 /**
@@ -273,3 +272,4 @@ export async function simulateBet(
     };
   }
 }
+
