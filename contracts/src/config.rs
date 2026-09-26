@@ -154,6 +154,27 @@ pub fn get_oracle_timestamp_skew(env: Env) -> u64 {
         .unwrap_or(DEFAULT_ORACLE_TIMESTAMP_SKEW)
 }
 
+pub fn set_commit_fee(env: Env, fee: i128) -> Result<(), ContractError> {
+    schedule_commit_fee(env, fee)
+}
+
+pub fn get_commit_fee(env: Env) -> i128 {
+    let key = DataKeyCore::CommitFee;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key).unwrap_or(0)
+}
+
+pub fn schedule_commit_fee(env: Env, fee: i128) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    _validate_commit_fee(fee)?;
+    _schedule_config_change(
+        &env,
+        ConfigChangeKind::CommitFee,
+        ConfigChangePayload::CommitFee(fee),
+    )
+}
+
+
 pub fn schedule_protocol_fee_bps(env: Env, bps: Option<u32>) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     _validate_protocol_fee_bps(bps)?;
@@ -1000,6 +1021,13 @@ pub fn _validate_protocol_fee_bps(bps: Option<u32>) -> Result<(), ContractError>
         if v == 0 || v > MAX_PROTOCOL_FEE_BPS {
             return Err(ContractError::InvalidProtocolFeeBps);
         }
+    }
+    Ok(())
+}
+
+pub fn _validate_commit_fee(fee: i128) -> Result<(), ContractError> {
+    if fee < 0 {
+        return Err(ContractError::InvalidBetAmount);
     }
     Ok(())
 }

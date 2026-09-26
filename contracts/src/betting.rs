@@ -595,8 +595,15 @@ pub fn commit_prediction(
         return Err(ContractError::RoundEnded);
     }
 
+    let commit_fee: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::CommitFee)
+        .unwrap_or(0);
+    let total_cost = amount.checked_add(commit_fee).ok_or(ContractError::Overflow)?;
+
     let user_balance = balance(env.clone(), user.clone());
-    if user_balance < amount {
+    if user_balance < total_cost {
         return Err(ContractError::InsufficientBalance);
     }
 
@@ -609,9 +616,22 @@ pub fn commit_prediction(
 
     // Deduct balance
     let new_balance = user_balance
-        .checked_sub(amount)
+        .checked_sub(total_cost)
         .ok_or(ContractError::Overflow)?;
     _set_balance(&env, user.clone(), new_balance);
+
+    if commit_fee > 0 {
+        let treasury_key = DataKeyCore::ProtocolFeeTreasury;
+        let mut treasury: i128 = env.storage().persistent().get(&treasury_key).unwrap_or(0);
+        treasury = treasury.checked_add(commit_fee).ok_or(ContractError::Overflow)?;
+        env.storage().persistent().set(&treasury_key, &treasury);
+        crate::common::_extend_persistent_ttl(&env, &treasury_key);
+
+        env.events().publish(
+            (symbol_short!("commit"), symbol_short!("fee")),
+            (user.clone(), round.round_id, commit_fee),
+        );
+    }
 
     // Store commitment
     let commitment = PrecisionCommitment {
