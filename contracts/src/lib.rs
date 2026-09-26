@@ -28,6 +28,7 @@ mod governance;
 mod insurance;
 mod leaderboard;
 mod queries;
+mod risk;
 mod settlement;
 mod storage;
 mod math_common;

@@ -11,6 +11,7 @@ use crate::config::{
 };
 use crate::errors::ContractError;
 use crate::settlement::_persist_user_outcome;
+use crate::risk;
 use crate::types::{
     BetSide, DataKeyCore, DataKeyScoped, PrecisionCommitment, PrecisionPrediction, Round,
     RoundMode, RoundTemplate, UserOutcomeType, UserPosition,
@@ -359,6 +360,8 @@ pub fn place_bet(
         return Err(ContractError::AlreadyBet);
     }
 
+    risk::add_stake(&env, user.clone(), amount, Some(side.clone()))?;
+
     // Deduct balance
     let new_balance = user_balance
         .checked_sub(amount)
@@ -480,6 +483,8 @@ pub fn place_precision_prediction(
     if env.storage().persistent().has(&pred_key) || env.storage().persistent().has(&commit_key) {
         return Err(ContractError::AlreadyBet);
     }
+
+    risk::add_stake(&env, user.clone(), amount, None)?;
 
     let participants_key = DataKeyScoped::RoundParticipants(round.round_id);
     let mut participants: Vec<Address> = env
@@ -606,6 +611,8 @@ pub fn commit_prediction(
     if env.storage().persistent().has(&pred_key) || env.storage().persistent().has(&commit_key) {
         return Err(ContractError::AlreadyBet);
     }
+
+    risk::add_stake(&env, user.clone(), amount, None)?;
 
     // Deduct balance
     let new_balance = user_balance
@@ -860,6 +867,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // Remove user's position
     env.storage().persistent().remove(&pos_key);
+    risk::remove_stake(&env, user.clone(), stake, Some(position.side.clone()))?;
 
     // Remove user from participant list
     let participants_key = DataKeyScoped::RoundParticipants(round.round_id);

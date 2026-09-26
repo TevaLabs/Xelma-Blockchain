@@ -2,6 +2,7 @@
 extern crate alloc;
 use alloc::vec::Vec as StdVec;
 use crate::errors::ContractError;
+use crate::risk;
 use crate::types::{ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, PendingWinningsUpdatedAtKey, Round, RoundPhase};
 use soroban_sdk::{symbol_short, Address, Env, IntoVal, Symbol, Val, Vec};
 
@@ -158,6 +159,7 @@ pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(),
     }
 
     env.storage().persistent().set(&key, &new_pending);
+    risk::add_pending(env, user_key.clone(), amount)?;
     _extend_persistent_ttl(env, &key);
 
     // Track the ledger when this entry was last written for expiry checks.
