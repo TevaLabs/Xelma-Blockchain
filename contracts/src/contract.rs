@@ -3,7 +3,7 @@
 
 #![allow(dead_code)]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec};
 
 use crate::access_control;
 use crate::errors::ContractError;
@@ -707,7 +707,7 @@ impl VirtualTokenContract {
         env: Env,
         proposer: Address,
         parameter_name: Symbol,
-        new_value: Val,
+        new_value: Bytes,
     ) -> Result<u64, ContractError> {
         governance::propose_amendment(env, proposer, parameter_name, new_value)
     }

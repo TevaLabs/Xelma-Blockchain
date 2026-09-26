@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Symbol, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -902,7 +902,7 @@ pub struct DeviationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum DeviationConfigKey {
-    Config,
+    DevCfg,
 }
 
 #[contracttype]
@@ -914,7 +914,7 @@ pub struct AttestationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum AttestationConfigKey {
-    Config,
+    Attest,
 }
 
 #[contracttype]
@@ -928,7 +928,7 @@ pub struct HbGateConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum HbGateKey {
-    Config,
+    HbGate,
 }
 
 #[contracttype]
@@ -1014,7 +1014,7 @@ pub struct Amendment {
     pub id: u64,
     pub proposer: Address,
     pub parameter_name: Symbol,
-    pub new_value: Val,
+    pub new_value: Bytes,
     pub created_at_ledger: u32,
     pub veto_deadline_ledger: u32,
     pub activation_deadline_ledger: u32,
