@@ -368,7 +368,7 @@ Emitted for every admin configuration mutation when a value is actually written,
 
 Example payload for a windows update: `(Windows, Windows(6, 12), Windows(10, 20))`.
 
-`ConfigChangeKind` values currently include `Windows`, `MaxStake`, `MaxUserRoundExposure`, `MaxPendingWinnings`, `OracleStaleThreshold`, `OracleMaxDeviationBps`, `ProtocolFeeBps`, `MinParticipants`, `MaxPrecisionParticipants`, `MintLimit`, `ArchiveRetention`, `CloseBufferLedgers`, and `OracleQuorum`.
+`ConfigChangeKind` values currently include `Windows`, `MaxStake`, `MaxUserRoundExposure`, `MaxPendingWinnings`, `OracleStaleThreshold`, `OracleMaxDeviationBps`, `ProtocolFeeBps`, `MinParticipants`, `MaxPrecisionParticipants`, `MintLimit`, `ArchiveRetention`, `CloseBufferLedgers`, `OracleTimestampSkew`, `EpochMintBudget`, `PendingWinningsExpiry`, `PrecisionPayoutPolicy`, `MinBet`, `DisputeLedgers`, `FeeModel`, and `EarlyCashoutBps` (20 variants, discriminants `0`–`19`; must stay in sync with `contracts/src/types.rs` and `bindings/src/index.ts`).
 
 ---
 

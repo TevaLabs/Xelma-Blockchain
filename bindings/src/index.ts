@@ -245,6 +245,11 @@ export interface OracleQuorumConfig {
 
 /**
  * Identifies which critical risk setting is pending timelocked activation.
+ *
+ * MUST stay in 1:1 sync with `contracts/src/types.rs::ConfigChangeKind` (same
+ * variant names, same `repr(u32)` discriminants). A duplicate discriminant
+ * would make two kinds indistinguishable on the wire — see the
+ * `config-change-kind-parity` check in `parity.js`.
  */
 export enum ConfigChangeKind {
   Windows = 0,
@@ -254,14 +259,19 @@ export enum ConfigChangeKind {
   OracleStaleThreshold = 4,
   OracleMaxDeviationBps = 5,
   ProtocolFeeBps = 6,
-  /** Fee incidence model: 0 = FeeOnPot (default), 1 = FeeOnWinnings (Issue #268). */
-  FeeModel = 12,
   MinParticipants = 7,
   MaxPrecisionParticipants = 8,
   MintLimit = 9,
   ArchiveRetention = 10,
   CloseBufferLedgers = 11,
-  EpochMintBudget = 12,
+  OracleTimestampSkew = 12,
+  EpochMintBudget = 13,
+  PendingWinningsExpiry = 14,
+  PrecisionPayoutPolicy = 15,
+  MinBet = 16,
+  DisputeLedgers = 17,
+  FeeModel = 18,
+  EarlyCashoutBps = 19,
 }
 
 /**
@@ -275,6 +285,10 @@ export enum RoundArchiveStatus {
 
 /**
  * Payload for a scheduled critical config change.
+ *
+ * MUST stay in 1:1 sync with `contracts/src/types.rs::ConfigChangePayload` (same
+ * variant tags and field types). See the `config-change-kind-parity` check in
+ * `parity.js`.
  */
 export type ConfigChangePayload =
   | {tag: "Windows", values: readonly [u32, u32]}
@@ -289,7 +303,14 @@ export type ConfigChangePayload =
   | {tag: "MintLimit", values: readonly [u32]}
   | {tag: "ArchiveRetention", values: readonly [u32]}
   | {tag: "CloseBufferLedgers", values: readonly [u32]}
-  | {tag: "EpochMintBudget", values: readonly [i128]};
+  | {tag: "OracleTimestampSkew", values: readonly [u64]}
+  | {tag: "EpochMintBudget", values: readonly [i128]}
+  | {tag: "PendingWinningsExpiry", values: readonly [u32]}
+  | {tag: "PrecisionPayoutPolicy", values: readonly [u32]}
+  | {tag: "MinBet", values: readonly [Option<i128>]}
+  | {tag: "DisputeLedgers", values: readonly [u32]}
+  | {tag: "FeeModel", values: readonly [FeeModel]}
+  | {tag: "EarlyCashoutBps", values: readonly [Option<u32>]};
 
 
 /**

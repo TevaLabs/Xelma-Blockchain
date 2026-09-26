@@ -3,7 +3,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{ConfigChangeKind, ConfigChangePayload};
+use crate::types::{ConfigChangeKind, ConfigChangePayload, FeeModel};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -421,6 +421,181 @@ fn test_protocol_fee_timelock_disable_via_none() {
     );
     assert_eq!(client.get_protocol_fee_bps(), None,
         "re-issuing with None must remove the storage key entirely");
+}
+
+// ============================================================================
+// PER-KIND DISCRIMINANT ROUTING REGRESSIONS (Issue #539)
+// ============================================================================
+//
+// Every `ConfigChangeKind` variant must route to its own, correct config-change
+// behaviour. A variant's discriminant is the value that distinguishes it on the
+// wire (Soroban `#[repr(u32)]` contracttype serialization, the TS bindings
+// `ConfigChangeKind` enum, and the `("config","updated")` audit event), so a
+// collision would silently apply the wrong change logic. These tests assert one
+// behaviour per kind:
+//   - the 10 timelocked kinds are scheduled, verified pending before the
+//     activation ledger, and asserted to flip the correct storage key after
+//     `apply_scheduled_changes` (Windows, MaxStake, OracleStaleThreshold,
+//     OracleMaxDeviationBps, MaxUserRoundExposure, ProtocolFeeBps, MaxPendingWinnings,
+//     OracleTimestampSkew, PendingWinningsExpiry, MinBet);
+//   - the 10 immediate kinds write through their own setter and are read back
+//     from the storage key that the matching `_apply_config_payload` arm uses
+//     (CloseBufferLedgers, MinParticipants, MaxPrecisionParticipants,
+//     PrecisionPayoutPolicy, MintLimit, EpochMintBudget, ArchiveRetention,
+//     DisputeLedgers, FeeModel, EarlyCashoutBps).
+
+#[test]
+fn test_apply_scheduled_max_pending_winnings_happy_path() {
+    let (env, _, client) = setup();
+
+    client.schedule_max_pending_winnings(&Some(1_0000000));
+    let pending = client
+        .get_pending_config_change(&ConfigChangeKind::MaxPendingWinnings)
+        .unwrap();
+    assert!(client.get_max_pending_winnings().is_none());
+
+    advance_to_activation(&env, pending.activation_ledger);
+    client.apply_scheduled_changes(&ConfigChangeKind::MaxPendingWinnings);
+
+    assert_eq!(client.get_max_pending_winnings(), Some(1_0000000));
+}
+
+#[test]
+fn test_apply_scheduled_oracle_timestamp_skew_happy_path() {
+    let (env, _, client) = setup();
+
+    client.schedule_oracle_timestamp_skew(&3600);
+    let pending = client
+        .get_pending_config_change(&ConfigChangeKind::OracleTimestampSkew)
+        .unwrap();
+    assert_eq!(client.get_oracle_timestamp_skew(), 300);
+
+    advance_to_activation(&env, pending.activation_ledger);
+    client.apply_scheduled_changes(&ConfigChangeKind::OracleTimestampSkew);
+
+    assert_eq!(client.get_oracle_timestamp_skew(), 3600);
+}
+
+#[test]
+fn test_apply_scheduled_pending_winnings_expiry_happy_path() {
+    let (env, _, client) = setup();
+
+    client.schedule_pending_winnings_expiry(&1000);
+    let pending = client
+        .get_pending_config_change(&ConfigChangeKind::PendingWinningsExpiry)
+        .unwrap();
+    assert_eq!(client.get_pending_winnings_expiry(), 0);
+
+    advance_to_activation(&env, pending.activation_ledger);
+    client.apply_scheduled_changes(&ConfigChangeKind::PendingWinningsExpiry);
+
+    assert_eq!(client.get_pending_winnings_expiry(), 1000);
+}
+
+#[test]
+fn test_apply_scheduled_min_bet_happy_path() {
+    let (env, _, client) = setup();
+
+    client.schedule_min_bet(&Some(1_0000000));
+    let pending = client
+        .get_pending_config_change(&ConfigChangeKind::MinBet)
+        .unwrap();
+    assert!(client.get_min_bet().is_none());
+
+    advance_to_activation(&env, pending.activation_ledger);
+    client.apply_scheduled_changes(&ConfigChangeKind::MinBet);
+
+    assert_eq!(client.get_min_bet(), Some(1_0000000));
+}
+
+#[test]
+fn test_set_close_buffer_ledgers_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert_eq!(client.get_close_buffer_ledgers(), 0);
+    client.set_close_buffer_ledgers(&5);
+    assert_eq!(client.get_close_buffer_ledgers(), 5);
+}
+
+#[test]
+fn test_set_min_participants_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert!(client.get_min_participants().is_none());
+    client.set_min_participants(&Some(5));
+    assert_eq!(client.get_min_participants(), Some(5));
+}
+
+#[test]
+fn test_set_max_precision_participants_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert_eq!(client.get_max_precision_participants(), 1_000);
+    client.set_max_precision_participants(&500);
+    assert_eq!(client.get_max_precision_participants(), 500);
+}
+
+#[test]
+fn test_set_precision_payout_policy_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert_eq!(client.get_precision_payout_policy(), 0);
+    client.set_precision_payout_policy(&1);
+    assert_eq!(client.get_precision_payout_policy(), 1);
+}
+
+#[test]
+fn test_set_mint_limit_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert_eq!(client.get_mint_limit(), 0);
+    client.set_mint_limit(&500);
+    assert_eq!(client.get_mint_limit(), 500);
+}
+
+#[test]
+fn test_set_epoch_mint_budget_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert_eq!(client.get_epoch_mint_budget(), 0);
+    client.set_epoch_mint_budget(&1_0000000);
+    assert_eq!(client.get_epoch_mint_budget(), 1_0000000);
+}
+
+#[test]
+fn test_set_archive_retention_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert_eq!(client.get_archive_retention(), 128);
+    client.set_archive_retention(&500);
+    assert_eq!(client.get_archive_retention(), 500);
+}
+
+#[test]
+fn test_set_dispute_ledgers_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert_eq!(client.get_dispute_ledgers(), 0);
+    client.set_dispute_ledgers(&5);
+    assert_eq!(client.get_dispute_ledgers(), 5);
+}
+
+#[test]
+fn test_set_fee_model_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert_eq!(client.get_fee_model(), FeeModel::FeeOnPot);
+    client.set_fee_model(&FeeModel::FeeOnWinnings);
+    assert_eq!(client.get_fee_model(), FeeModel::FeeOnWinnings);
+}
+
+#[test]
+fn test_set_early_cashout_bps_routes_correctly() {
+    let (_, _, client) = setup();
+
+    assert!(client.get_early_cashout_bps().is_none());
+    client.set_early_cashout_bps(&Some(500));
+    assert_eq!(client.get_early_cashout_bps(), Some(500));
 }
 
 /// Regression: every ConfigChangeKind variant must have a unique discriminant (Issue #383).
