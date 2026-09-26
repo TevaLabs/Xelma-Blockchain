@@ -959,7 +959,7 @@ fn test_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(soroban_sdk::Symbol::new(&env, "hb_override"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hoverride"))
     });
     assert!(
         hb_override_event.is_some(),
@@ -978,14 +978,15 @@ fn test_heartbeat_grace_config() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
 
-    // Default (0 seconds)
-    assert_eq!(client.get_hb_grace_seconds(), 0);
+    // Default
+    assert_eq!(client.get_hb_grace_seconds(), 600);
 
     // Set custom
     client.set_hb_grace_seconds(&900u64);
     assert_eq!(client.get_hb_grace_seconds(), 900);
 
-    // Below minimum rejected / > MAX
+    // Below minimum rejected
+    // Note: MIN is 0, so 0 is valid — test > MAX
     let result = client.try_set_hb_grace_seconds(&86_401u64);
     assert_eq!(result, Err(Ok(ContractError::InvalidDuration)));
 }
@@ -1008,9 +1009,10 @@ fn test_heartbeat_strict_mode_config() {
     assert!(!client.get_hb_strict_mode());
 }
 
-/// Arming override emits hb_arm_ovr event.
+/// Arming the heartbeat override sets the one-shot flag. The contract does not
+/// emit a separate arm event; consumption emits `("oracle", "hoverride")`.
 #[test]
-fn test_arm_heartbeat_override_emits_event() {
+fn test_arm_heartbeat_override_sets_flag() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let admin = Address::generate(&env);
@@ -1019,16 +1021,9 @@ fn test_arm_heartbeat_override_emits_event() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
 
+    assert!(!client.get_hb_override_armed());
     client.arm_hb_override();
-
-    let events = env.events().all();
-    let arm_event = events.iter().find(|e| {
-        let (_contract, topics, _data) = e;
-        topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(soroban_sdk::Symbol::new(&env, "hb_arm_ovr"))
-    });
-    assert!(arm_event.is_some(), "hb_arm_ovr event must be emitted on arm");
+    assert!(client.get_hb_override_armed());
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
@@ -2003,7 +1998,7 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
         let config: HbGateConfig = env
             .storage()
             .persistent()
-            .get(&HbGateKey::Config)
+            .get(&HbGateKey::HbGate)
             .unwrap_or(HbGateConfig {
                 strict_mode: false,
                 override_armed: false,

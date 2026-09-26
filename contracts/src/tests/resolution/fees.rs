@@ -101,7 +101,7 @@ fn test_protocol_fee_updown_indexed_conservation() {
 
     assert_eq!(count_protocol_fee_events(&env), 1);
     let events = collect_protocol_fee_events(&env);
-    let (ev_round_id, fee, _treasury_after, bps) = events[0];
+    let (ev_round_id, fee, _treasury_after, bps, _model) = events[0];
     assert_eq!(ev_round_id, 1u64);
     assert_eq!(fee, 3_000_0000i128);
     assert_eq!(bps, 200u32);
