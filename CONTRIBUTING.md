@@ -7,6 +7,7 @@ Thanks for improving Xelma. This document explains the expected workflow for con
 - Open or reference an issue describing the change.
 - Keep changes focused and easy to review.
 - For contract changes, include or update tests.
+- Start with the [architecture overview](./docs/architecture.md) for crate boundaries, contract modules, storage, and runtime modes; use the [contributor map](./docs/CONTRIBUTOR_MAP.md) to find focused tests and areas of ownership.
 
 ## Label Guidance
 
