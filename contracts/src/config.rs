@@ -1151,7 +1151,7 @@ pub fn calculate_protocol_fee_precision(
         FeeModel::FeeOnWinnings => {
             let profit = total_pot
                 .checked_sub(winner_stakes)
-                .ok_or(ContractError::Overflow)?;
+                .ok_or(ContractError::PayoutOverflow)?;
             if profit <= 0 {
                 return Ok((total_pot, 0));
             }
@@ -1159,16 +1159,20 @@ pub fn calculate_protocol_fee_precision(
         }
     };
 
+    // Precision fee/pot arithmetic is payout arithmetic (Issue #405/#556):
+    // overflow must surface as `PayoutOverflow`, not a generic `Overflow`, so
+    // wallets can distinguish a settlement-payout failure from unrelated
+    // arithmetic overflow (e.g. round-ID counter, ledger arithmetic).
     let fee_amount = taxable_base
         .checked_mul(bps_value as i128)
-        .ok_or(ContractError::Overflow)?
+        .ok_or(ContractError::PayoutOverflow)?
         / BPS_DENOMINATOR;
     if fee_amount == 0 {
         return Ok((total_pot, 0));
     }
     let distributable = total_pot
         .checked_sub(fee_amount)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     Ok((distributable, fee_amount))
 }
 
