@@ -148,6 +148,126 @@ for (const [name, val] of Object.entries(bindingsErrors)) {
     }
 }
 
+// ─── ConfigChangeKind / ConfigChangePayload parity (Issue #539) ──────────────
+//
+// `ConfigChangeKind` is `#[repr(u32)]` on-chain and mirrored in the TS bindings
+// `ConfigChangeKind` enum. A duplicate discriminant makes two kinds
+// indistinguishable on the wire, so this check enforces a 1:1 mapping between
+// `contracts/src/types.rs` and `bindings/src/index.ts` (variant names AND
+// discriminants) and rejects any duplicate value on either side.
+
+function parseRustEnumVariants(code, enumName) {
+    const segments = code.split(`pub enum ${enumName}`);
+    if (segments.length < 2) return null;
+    const block = segments[1].split('}')[0];
+    const out = {};
+    for (const line of block.split('\n')) {
+        const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*([0-9]+)\s*,/);
+        if (m) out[m[1]] = parseInt(m[2], 10);
+    }
+    return out;
+}
+
+function parseTsEnumVariants(code, enumName) {
+    const segments = code.split(`export enum ${enumName}`);
+    if (segments.length < 2) return null;
+    const block = segments[1].split('}')[0];
+    const out = {};
+    for (const line of block.split('\n')) {
+        const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*([0-9]+)\s*,/);
+        if (m) out[m[1]] = parseInt(m[2], 10);
+    }
+    return out;
+}
+
+function parseRustPayloadTags(code) {
+    const segments = code.split('pub enum ConfigChangePayload');
+    if (segments.length < 2) return null;
+    const block = segments[1].split('}')[0];
+    const out = {};
+    for (const line of block.split('\n')) {
+        const m = line.match(/^\s*([A-Za-z0-9_]+)\s*\(/);
+        if (m) out[m[1]] = true;
+    }
+    return out;
+}
+
+function parseTsPayloadTags(code) {
+    const segments = code.split('export type ConfigChangePayload');
+    if (segments.length < 2) return null;
+    const block = segments[1].split(';')[0];
+    const out = {};
+    const re = /tag:\s*"([A-Za-z0-9_]+)"/g;
+    let m;
+    while ((m = re.exec(block)) !== null) {
+        out[m[1]] = true;
+    }
+    return out;
+}
+
+const typesCode = fs.readFileSync(path.resolve(__dirname, '../../contracts/src/types.rs'), 'utf8');
+
+const rustKindVariants = parseRustEnumVariants(typesCode, 'ConfigChangeKind');
+const tsKindVariants = parseTsEnumVariants(bindingsCode, 'ConfigChangeKind');
+const rustPayloadTags = parseRustPayloadTags(typesCode);
+const tsPayloadTags = parseTsPayloadTags(bindingsCode);
+
+const configKindDrift = [];
+
+if (!rustKindVariants || Object.keys(rustKindVariants).length === 0) {
+    configKindDrift.push('Failed to parse `ConfigChangeKind` enum from contracts/src/types.rs.');
+}
+if (!tsKindVariants || Object.keys(tsKindVariants).length === 0) {
+    configKindDrift.push('Failed to parse `ConfigChangeKind` enum from bindings/src/index.ts.');
+}
+
+if (rustKindVariants && tsKindVariants) {
+    for (const [name, val] of Object.entries(rustKindVariants)) {
+        if (tsKindVariants[name] === undefined) {
+            configKindDrift.push(`ConfigChangeKind '${name}' (value ${val}) exists in contract but is missing from bindings.`);
+        } else if (tsKindVariants[name] !== val) {
+            configKindDrift.push(`ConfigChangeKind '${name}' has value ${val} in contract but value ${tsKindVariants[name]} in bindings.`);
+        }
+    }
+    for (const [name, val] of Object.entries(tsKindVariants)) {
+        if (rustKindVariants[name] === undefined) {
+            configKindDrift.push(`ConfigChangeKind '${name}' (value ${val}) exists in bindings but is missing from contract.`);
+        }
+    }
+
+    // Duplicate discriminants on the Rust side.
+    const rustByVal = {};
+    for (const [name, val] of Object.entries(rustKindVariants)) {
+        if (rustByVal[val] !== undefined) {
+            configKindDrift.push(`ConfigChangeKind collision in contract: '${rustByVal[val]}' and '${name}' both have discriminant ${val}.`);
+        }
+        rustByVal[val] = name;
+    }
+    // Duplicate discriminants on the TS side.
+    const tsByVal = {};
+    for (const [name, val] of Object.entries(tsKindVariants)) {
+        if (tsByVal[val] !== undefined) {
+            configKindDrift.push(`ConfigChangeKind collision in bindings: '${tsByVal[val]}' and '${name}' both have discriminant ${val}.`);
+        }
+        tsByVal[val] = name;
+    }
+}
+
+if (rustPayloadTags && tsPayloadTags) {
+    for (const name of Object.keys(rustPayloadTags)) {
+        if (!tsPayloadTags[name]) {
+            configKindDrift.push(`ConfigChangePayload tag '${name}' exists in contract but is missing from bindings.`);
+        }
+    }
+    for (const name of Object.keys(tsPayloadTags)) {
+        if (!rustPayloadTags[name]) {
+            configKindDrift.push(`ConfigChangePayload tag '${name}' exists in bindings but is missing from contract.`);
+        }
+    }
+} else {
+    configKindDrift.push('Failed to parse ConfigChangePayload tags from contract or bindings.');
+}
+
 let failed = false;
 
 if (missingInBindings.length > 0 || missingInContract.length > 0) {
@@ -175,11 +295,20 @@ if (errorsDrift.length > 0) {
     console.log("✅ Error enum parity check passed: Rust, TypeScript, and docs are synced.");
 }
 
+if (configKindDrift.length > 0) {
+    console.error("❌ ConfigChangeKind/Payload parity check failed: Drift detected");
+    failed = true;
+    configKindDrift.forEach(err => console.error(`  - ${err}`));
+} else {
+    console.log("✅ ConfigChangeKind/Payload parity check passed: Rust and TypeScript enums are 1:1 synced with no colliding discriminants.");
+}
+
 if (failed) {
     console.error("\n💡 To resolve parity drift:");
     console.error("  1. For method drift, regenerate/update the fromJSON map in bindings/src/index.ts.");
     console.error("  2. For error drift, update bindings/src/index.ts and docs/CONTRACT_ERRORS.md to match contracts/src/errors.rs.");
-    console.error("  3. Run `npm run test:parity` and consult CONTRIBUTING.md before committing.");
+    console.error("  3. For config-change drift, update bindings/src/index.ts (ConfigChangeKind enum + ConfigChangePayload union) to match contracts/src/types.rs.");
+    console.error("  4. Run `npm run test:parity` and consult CONTRIBUTING.md before committing.");
     process.exit(1);
 } else {
     process.exit(0);

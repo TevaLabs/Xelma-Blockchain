@@ -68,7 +68,7 @@ sent back for detail before they are picked up.
    - `cargo clippy --workspace --all-targets -- -D warnings`
    - `cargo fmt --all -- --check`
    - `cd bindings && npm ci && npm run build`
-   - `cd bindings && npm run test:parity` (ABI drift check; mirrors the CI `bindings-test` job)
+   - `cd bindings && npm run test:parity` (ABI drift check; mirrors the CI `bindings-test` job). Also validates that `ConfigChangeKind`/`ConfigChangePayload` in `contracts/src/types.rs` and `bindings/src/index.ts` are 1:1 synced with no colliding discriminants (Issue #539).
 
 Before opening a PR, consult [`docs/CONTRIBUTOR_TASK_MATRIX.md`](./docs/CONTRIBUTOR_TASK_MATRIX.md) for task-type-specific test and evidence requirements.
 
