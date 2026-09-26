@@ -387,10 +387,14 @@ These test files involve complex multi-step scenarios, protocol invariants,
 economic safety, or chaos recovery. They require deeper understanding of the
 contract and the Stellar/Soroban execution model.
 
-#### `contracts/src/tests/resolution.rs`
+#### `contracts/src/tests/resolution/`
 
-**Covers:** Full settlement logic — UpDown proportional payouts, Precision
-closest/tie payouts, unchanged-price refunds, remainder (dust) policy.
+**Covers:** Full settlement logic, split into scenario packs — UpDown
+proportional payouts (`updown`), Precision closest-guess (`precision`),
+tie and remainder (`precision_ties`), pot conservation
+(`precision_conservation`), commit-reveal settlement (`precision_commit`),
+and loss events (`outcome_loss`). Unchanged-price refunds live in `updown`
+and `events`.
 
 **Focused command:**
 ```bash

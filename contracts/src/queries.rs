@@ -11,8 +11,8 @@ use crate::config::{
 use crate::errors::ContractError;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
-    MarketSnapshot, PrecisionCommitment, PrecisionPayoutPolicy, PrecisionPrediction,
-    PendingWinningsUpdatedAtKey, Round, RoundMode, RoundPhase, RoundPoolStats, RoundTemplate,
+    MarketSnapshot, PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy,
+    PrecisionPrediction, Round, RoundMode, RoundPhase, RoundPoolStats, RoundTemplate,
     SeasonArchive, SimulationResult, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
 use soroban_sdk::{Address, Env, Map, Vec};
@@ -47,64 +47,88 @@ pub fn get_round_pool_stats(env: Env) -> Option<RoundPoolStats> {
         precision_revealed_count: 0,
     };
 
+    let current_phase = _derive_round_phase(env.ledger().sequence(), &round);
+    let is_betting = current_phase == crate::types::RoundPhase::Betting;
+
     match round.mode {
         RoundMode::UpDown => {
-            stats.total_up_stake = round.pool_up;
-            stats.total_down_stake = round.pool_down;
+            if is_betting {
+                // During betting, raw side pools and ratios are blinded (commitment-based public aggregate).
+                stats.total_up_stake = 0;
+                stats.total_down_stake = 0;
+                stats.up_participant_count = 0;
+                stats.down_participant_count = 0;
+                stats.up_stake_ratio_bps = 0;
+                stats.down_stake_ratio_bps = 0;
+            } else {
+                // Open path: reveal raw side pool composition after betting closes.
+                stats.total_up_stake = round.pool_up;
+                stats.total_down_stake = round.pool_down;
 
-            let mut idx = 0;
-            while idx < participants.len() {
-                if let Some(user) = participants.get(idx) {
-                    if let Some(position) = env
-                        .storage()
-                        .persistent()
-                        .get::<_, UserPosition>(&DataKeyScoped::Position(round.round_id, user))
-                    {
-                        match position.side {
-                            BetSide::Up => stats.up_participant_count += 1,
-                            BetSide::Down => stats.down_participant_count += 1,
+                let mut idx = 0;
+                while idx < participants.len() {
+                    if let Some(user) = participants.get(idx) {
+                        if let Some(position) = env
+                            .storage()
+                            .persistent()
+                            .get::<_, UserPosition>(&DataKeyScoped::Position(round.round_id, user))
+                        {
+                            match position.side {
+                                BetSide::Up => stats.up_participant_count += 1,
+                                BetSide::Down => stats.down_participant_count += 1,
+                            }
                         }
                     }
+                    idx += 1;
                 }
-                idx += 1;
-            }
 
-            let total_stake = round.pool_up.checked_add(round.pool_down).unwrap_or(0);
-            if total_stake > 0 {
-                stats.up_stake_ratio_bps = ((round.pool_up as u128)
-                    .saturating_mul(BPS_DENOMINATOR as u128)
-                    / total_stake as u128) as u32;
-                stats.down_stake_ratio_bps = ((round.pool_down as u128)
-                    .saturating_mul(BPS_DENOMINATOR as u128)
-                    / total_stake as u128) as u32;
+                let total_stake = round.pool_up.checked_add(round.pool_down).unwrap_or(0);
+                if total_stake > 0 {
+                    stats.up_stake_ratio_bps =
+                        ((round.pool_up as u128).saturating_mul(BPS_DENOMINATOR as u128)
+                            / total_stake as u128) as u32;
+                    stats.down_stake_ratio_bps =
+                        ((round.pool_down as u128).saturating_mul(BPS_DENOMINATOR as u128)
+                            / total_stake as u128) as u32;
+                }
             }
         }
         RoundMode::Precision => {
-            stats.precision_participant_count = participants.len();
+            if is_betting {
+                if let Some(aggregate) =
+                    crate::commitments::_get_rolling_commitment(&env, round.round_id)
+                {
+                    stats.precision_total_stake = aggregate.total_stake;
+                    stats.precision_participant_count = aggregate.total_commitments;
+                    stats.precision_commitment_count = aggregate.total_commitments;
+                }
+            } else {
+                stats.precision_participant_count = participants.len();
 
-            let mut idx = 0;
-            while idx < participants.len() {
-                if let Some(user) = participants.get(idx) {
-                    if let Some(prediction) =
-                        env.storage().persistent().get::<_, PrecisionPrediction>(
-                            &DataKeyScoped::PrecisionPosition(round.round_id, user.clone()),
-                        )
-                    {
-                        stats.precision_prediction_count += 1;
-                        stats.precision_total_stake += prediction.amount;
-                    } else if let Some(commitment) =
-                        env.storage().persistent().get::<_, PrecisionCommitment>(
-                            &DataKeyScoped::PrecisionCommitment(round.round_id, user),
-                        )
-                    {
-                        stats.precision_commitment_count += 1;
-                        stats.precision_total_stake += commitment.amount;
-                        if commitment.revealed {
-                            stats.precision_revealed_count += 1;
+                let mut idx = 0;
+                while idx < participants.len() {
+                    if let Some(user) = participants.get(idx) {
+                        if let Some(prediction) =
+                            env.storage().persistent().get::<_, PrecisionPrediction>(
+                                &DataKeyScoped::PrecisionPosition(round.round_id, user.clone()),
+                            )
+                        {
+                            stats.precision_prediction_count += 1;
+                            stats.precision_total_stake += prediction.amount;
+                        } else if let Some(commitment) =
+                            env.storage().persistent().get::<_, PrecisionCommitment>(
+                                &DataKeyScoped::PrecisionCommitment(round.round_id, user),
+                            )
+                        {
+                            stats.precision_commitment_count += 1;
+                            stats.precision_total_stake += commitment.amount;
+                            if commitment.revealed {
+                                stats.precision_revealed_count += 1;
+                            }
                         }
                     }
+                    idx += 1;
                 }
-                idx += 1;
             }
         }
     }
@@ -563,16 +587,24 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
                 if price_went_up {
                     winning_side = BetSide::Up;
                     winning_pool = round.pool_up;
-                    let (dw, dl, fee) =
-                        calculate_protocol_fee_updown(bps, fee_model, round.pool_up, round.pool_down)?;
+                    let (dw, dl, fee) = calculate_protocol_fee_updown(
+                        bps,
+                        fee_model,
+                        round.pool_up,
+                        round.pool_down,
+                    )?;
                     dist_winning = dw;
                     dist_losing = dl;
                     total_fee = fee;
                 } else if price_went_down {
                     winning_side = BetSide::Down;
                     winning_pool = round.pool_down;
-                    let (dw, dl, fee) =
-                        calculate_protocol_fee_updown(bps, fee_model, round.pool_down, round.pool_up)?;
+                    let (dw, dl, fee) = calculate_protocol_fee_updown(
+                        bps,
+                        fee_model,
+                        round.pool_down,
+                        round.pool_up,
+                    )?;
                     dist_winning = dw;
                     dist_losing = dl;
                     total_fee = fee;
@@ -583,10 +615,13 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
 
             for i in 0..participants.len() {
                 if let Some(user) = participants.get(i) {
-                    if let Some(pos) = env
-                        .storage()
-                        .persistent()
-                        .get::<_, UserPosition>(&DataKeyScoped::Position(round.round_id, user.clone()))
+                    if let Some(pos) =
+                        env.storage()
+                            .persistent()
+                            .get::<_, UserPosition>(&DataKeyScoped::Position(
+                                round.round_id,
+                                user.clone(),
+                            ))
                     {
                         let prediction_side = match pos.side {
                             BetSide::Up => 0,
@@ -698,9 +733,9 @@ pub fn simulate_payout(env: Env, final_price: u128) -> Result<SimulationResult, 
             let mut payout_pool: i128 = 0;
             if !winners.is_empty() && total_pot > 0 {
                 // Sum winner stakes for fee-on-winnings model
-                let winner_stakes: i128 = winners.iter().fold(0, |acc, w| {
-                    acc.checked_add(w.amount).unwrap_or(acc)
-                });
+                let winner_stakes: i128 = winners
+                    .iter()
+                    .fold(0, |acc, w| acc.checked_add(w.amount).unwrap_or(acc));
                 let (dist, fee) =
                     calculate_protocol_fee_precision(bps, fee_model, total_pot, winner_stakes)?;
                 total_fee = fee;

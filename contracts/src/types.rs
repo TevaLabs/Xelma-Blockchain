@@ -915,7 +915,7 @@ pub struct DeviationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum DeviationConfigKey {
-    Config,
+    DevCfg,
 }
 
 #[contracttype]
@@ -927,7 +927,7 @@ pub struct AttestationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum AttestationConfigKey {
-    Config,
+    Attest,
 }
 
 #[contracttype]
@@ -941,7 +941,7 @@ pub struct HbGateConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum HbGateKey {
-    Config,
+    HbGate,
 }
 
 #[contracttype]
@@ -1022,12 +1022,12 @@ pub enum AmendmentStatus {
 /// Represents a proposed change to a protocol parameter that must pass through a
 /// governance lifecycle: optional veto window, timelock, then activation.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Amendment {
     pub id: u64,
     pub proposer: Address,
     pub parameter_name: Symbol,
-    pub new_value: Val,
+    pub new_value: Bytes,
     pub created_at_ledger: u32,
     pub veto_deadline_ledger: u32,
     pub activation_deadline_ledger: u32,

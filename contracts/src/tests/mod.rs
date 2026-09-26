@@ -10,6 +10,7 @@ mod betting;
 mod cei_ordering;
 mod chaos_recovery;
 mod commit_reveal_e2e;
+mod commitments_test;
 mod claim_many;
 // mod commit_reveal_e2e; // upstream bug: all-unrevealed refunds test expects behavior contract doesn't implement
 mod config_helpers;
@@ -24,6 +25,8 @@ mod drill_chaos_migration;
 mod event_coverage;
 mod event_order_golden;
 mod fee_model;
+mod fee_onesided_precision_tie;
+mod fuzz_lifecycle;
 mod guard_tests;
 // mod initialization; // upstream bug
 mod invariant_harness;
