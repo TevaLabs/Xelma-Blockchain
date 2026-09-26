@@ -129,6 +129,21 @@ refunded, or on cancellation/fallback refund paths.
 
 ---
 
+### `("cashout", "early")`
+
+Emitted when a user explicitly cashes out their UpDown bet early during the Running phase.
+
+| Position | Field      | Type      | Description                                      |
+|----------|------------|-----------|--------------------------------------------------|
+| 0        | `user`     | `Address` | User who cashed out                              |
+| 1        | `round_id` | `u64`     | Round the cash-out belongs to                    |
+| 2        | `side`     | `u32`     | Prediction side they had: `0` = Up, `1` = Down   |
+| 3        | `stake`    | `i128`    | Original bet amount in stroops                   |
+| 4        | `cashout`  | `i128`    | Amount refunded to the user (stroops)            |
+| 5        | `forfeit`  | `i128`    | Amount forfeited to the pot/treasury (stroops)   |
+
+---
+
 ### `("round", "summary")`
 ### `("round", "resolved")`
 
@@ -465,6 +480,16 @@ Emitted when the oracle records an on-chain liveness heartbeat.
 |----------|-------------|-------|--------------------------------------------------------------|
 | 0        | `timestamp` | `u64` | Unix epoch seconds when the heartbeat was recorded on-chain  |
 | 1        | `status`    | `u32` | Oracle status: `0` = active, `1` = degraded, `2` = offline  |
+
+---
+
+## `("oracle", "attkey")` — Attestation key updated
+
+Emitted when the admin configures or clears the oracle attestation public key (Issue #263).
+
+| Position | Field     | Type   | Description                                           |
+|----------|-----------|--------|-------------------------------------------------------|
+| 0        | `enabled` | `bool` | `true` if an attestation key was set, `false` if cleared |
 
 ---
 
