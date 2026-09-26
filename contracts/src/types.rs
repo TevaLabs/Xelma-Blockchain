@@ -301,6 +301,8 @@ pub struct PendingConfigChange {
 #[contracttype]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
+/// Policy for determining refund/resolve behavior when exactly one pool is empty.
+/// Documented in ROUND_LIFECYCLE.md.
 pub enum OneSidedPolicy {
     Refund = 0,
     Void = 1,
