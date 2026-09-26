@@ -104,6 +104,18 @@ Reports are written to `adversarial-reports/adversarial-report.{md,json}`.
 Three CI-critical scenarios run in the default `ci.yml` rust-test job; the full
 suite (13 scenarios) runs nightly via `.github/workflows/nightly-adversarial.yml`.
 
+## Commit-reveal grinding (Issue #564)
+
+Named scenarios live in [`contracts/src/tests/adversarial/commit_reveal.rs`](contracts/src/tests/adversarial/commit_reveal.rs).
+
+| Scenario | Defense | Residual risk |
+| --- | --- | --- |
+| Salt grind (zero and constant bytes) | `InvalidSalt` before the hash compare | Salts with two distinct bytes pass the entropy floor; wallets must use a CSPRNG |
+| Zero-hash commitment | `InvalidCommitment` before any stake is locked | Non-zero hashes are still accepted and must be opened with the preimage |
+| Selective non-reveal grief | Unrevealed stake is forfeited when someone else reveals | Honest users wait until resolution |
+| Cross-round commitment replay | `CommitmentNotFound` | none |
+| Double commit in one round | `AlreadyBet` | none |
+
 ## Threat Model
 
 For the formal protocol invariant list, role assumptions, upgrade guarantees,
