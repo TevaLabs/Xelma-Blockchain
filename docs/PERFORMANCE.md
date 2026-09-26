@@ -53,7 +53,7 @@ workflow run's Artifacts section, not just the truncated job log. When you
 touch a benchmark-sensitive path, download that artifact from your PR's CI
 run and paste the relevant rows into this file's table in the same change.
 
-## Pagination query limits (Issue #430)
+## Pagination query limits (Issues #430 and #574)
 
 To prevent adversarial over-limit requests from bypassing CPU/memory budgets,
 paginated query functions enforce strict pagination limits:
@@ -80,6 +80,12 @@ Soroban's per-transaction budget. Rejecting over-limit requests prevents callers
 accidentally or maliciously requesting unbounded batches that could fail during
 settlement or cause timeouts.
 
+`contracts/src/tests/pagination_gas_guards.rs` exercises every cursor query at
+`0`, `MAX_PAGE_SIZE + 1`, and `u32::MAX` and asserts the exact
+`PageSizeExceeded` error. It also proves that `MAX_PAGE_SIZE` itself is
+accepted. Validation happens before any storage scan, so adversarial limits
+have constant rejection cost rather than caller-controlled iteration cost.
+
 ## Updating a cost-benchmark ceiling
 
 The `*_CPU_MAX`/`*_MEM_MAX` constants in `contracts/src/tests/cost_benchmarks.rs`
@@ -93,7 +99,7 @@ and in `contracts/BENCHMARKS.md` with the new baseline and the commit/date it
 was captured on, exactly like `docs/wasm-size-budget.md`'s baseline-bump
 procedure for the separate WASM size gate.
 
-## Leaderboard performance analysis (Issue #431)
+## Leaderboard performance analysis (Issues #431 and #575)
 
 Leaderboard operations are benchmarked at `LEADERBOARD_LIMIT` (100 entries) to
 verify bounded CPU cost. See `contracts/src/tests/cost_benchmarks.rs` for the
@@ -141,3 +147,21 @@ At `LEADERBOARD_LIMIT = 100`, the worst-case insertion sort performs at most
 instructions, so leaderboard operations should consume well under 1% of the
 budget. The 50% ceiling assertions in the benchmark tests provide a safety
 margin for host allocator jitter and SDK overhead.
+
+### Benchmark evidence
+
+The executable results are produced by the following named tests in
+[`contracts/src/tests/cost_benchmarks.rs`](../contracts/src/tests/cost_benchmarks.rs):
+
+| Operation at `LEADERBOARD_LIMIT` | Result / guard |
+|---|---|
+| Update | `bench_cost_leaderboard_update_at_limit` records CPU and memory; `verify_leaderboard_update_cost_is_bounded` requires CPU below 50% of the transaction budget |
+| Season reset | `bench_cost_season_reset_at_limit` records CPU and memory; `verify_season_reset_cost_is_bounded` requires CPU below 50% of the transaction budget |
+| Full-page read | `bench_cost_leaderboard_full_page_read_at_limit` records CPU and memory and requires exactly 100 returned entries |
+
+CI runs these tests with `--nocapture` and uploads the complete
+[`cost-benchmarks` artifact](../.github/workflows/ci.yml) for each run. This is
+the authoritative result because host-cost numbers vary with the Soroban SDK
+and runner architecture. The current source baseline cannot be measured
+locally until the unrelated upstream compile failures recorded in
+`SECURITY_REVIEW.md` are repaired; no fabricated CPU numbers are published.

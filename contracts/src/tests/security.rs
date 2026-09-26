@@ -672,7 +672,7 @@ fn test_heartbeat_stale_beyond_grace_blocks_resolve() {
 
     // Stale threshold 120s, grace 300s
     apply_oracle_stale_threshold(&env, &client, 120u64);
-    client.set_oracle_heartbeat_grace(&300u64);
+    client.set_hb_grace_seconds(&300u64);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 0;
@@ -711,7 +711,7 @@ fn test_heartbeat_stale_within_grace_strict_blocks_resolve() {
     client.initialize(&admin, &oracle);
 
     apply_oracle_stale_threshold(&env, &client, 120u64);
-    client.set_oracle_heartbeat_strict_mode(&true);
+    client.set_hb_strict_mode(&true);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 0;
@@ -748,7 +748,7 @@ fn test_heartbeat_degraded_fresh_strict_blocks_resolve() {
     env.mock_all_auths();
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
-    client.set_oracle_heartbeat_strict_mode(&true);
+    client.set_hb_strict_mode(&true);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 100;
@@ -851,7 +851,7 @@ fn test_heartbeat_override_allows_resolve() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
     // No heartbeat — would normally block
-    client.arm_oracle_heartbeat_override();
+    client.arm_hb_override();
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -882,7 +882,7 @@ fn test_heartbeat_override_cleared_after_use() {
     env.mock_all_auths();
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
-    client.arm_oracle_heartbeat_override();
+    client.arm_hb_override();
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -901,7 +901,7 @@ fn test_heartbeat_override_cleared_after_use() {
     });
 
     // Verify override is consumed (one-shot)
-    let armed = client.is_oracle_heartbeat_override_armed();
+    let armed = client.get_hb_override_armed();
     assert!(!armed, "override must be cleared after first use");
 
     // Create a new round WITHOUT re-arming and WITHOUT a heartbeat — should fail
@@ -935,7 +935,7 @@ fn test_heartbeat_override_emits_event() {
     env.mock_all_auths();
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
-    client.arm_oracle_heartbeat_override();
+    client.arm_hb_override();
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -959,7 +959,7 @@ fn test_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_override"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hoverride"))
     });
     assert!(
         hb_override_event.is_some(),
@@ -979,15 +979,15 @@ fn test_heartbeat_grace_config() {
     client.initialize(&admin, &oracle);
 
     // Default
-    assert_eq!(client.get_oracle_heartbeat_grace(), 600);
+    assert_eq!(client.get_hb_grace_seconds(), 600);
 
     // Set custom
-    client.set_oracle_heartbeat_grace(&900u64);
-    assert_eq!(client.get_oracle_heartbeat_grace(), 900);
+    client.set_hb_grace_seconds(&900u64);
+    assert_eq!(client.get_hb_grace_seconds(), 900);
 
     // Below minimum rejected
     // Note: MIN is 0, so 0 is valid — test > MAX
-    let result = client.try_set_oracle_heartbeat_grace(&86_401u64);
+    let result = client.try_set_hb_grace_seconds(&86_401u64);
     assert_eq!(result, Err(Ok(ContractError::InvalidDuration)));
 }
 
@@ -1002,16 +1002,17 @@ fn test_heartbeat_strict_mode_config() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
 
-    assert!(!client.get_oracle_heartbeat_strict_mode());
-    client.set_oracle_heartbeat_strict_mode(&true);
-    assert!(client.get_oracle_heartbeat_strict_mode());
-    client.set_oracle_heartbeat_strict_mode(&false);
-    assert!(!client.get_oracle_heartbeat_strict_mode());
+    assert!(!client.get_hb_strict_mode());
+    client.set_hb_strict_mode(&true);
+    assert!(client.get_hb_strict_mode());
+    client.set_hb_strict_mode(&false);
+    assert!(!client.get_hb_strict_mode());
 }
 
-/// Arming override emits hb_arm_ovr event.
+/// Arming the heartbeat override sets the one-shot flag. The contract does not
+/// emit a separate arm event; consumption emits `("oracle", "hoverride")`.
 #[test]
-fn test_arm_heartbeat_override_emits_event() {
+fn test_arm_heartbeat_override_sets_flag() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let admin = Address::generate(&env);
@@ -1020,16 +1021,9 @@ fn test_arm_heartbeat_override_emits_event() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
 
-    client.arm_oracle_heartbeat_override();
-
-    let events = env.events().all();
-    let arm_event = events.iter().find(|e| {
-        let (_contract, topics, _data) = e;
-        topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_arm_ovr"))
-    });
-    assert!(arm_event.is_some(), "hb_arm_ovr event must be emitted on arm");
+    assert!(!client.get_hb_override_armed());
+    client.arm_hb_override();
+    assert!(client.get_hb_override_armed());
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
@@ -2004,7 +1998,7 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
         let config: HbGateConfig = env
             .storage()
             .persistent()
-            .get(&HbGateKey::Config)
+            .get(&HbGateKey::HbGate)
             .unwrap_or(HbGateConfig {
                 strict_mode: false,
                 override_armed: false,

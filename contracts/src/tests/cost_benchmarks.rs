@@ -397,7 +397,7 @@ fn bench_cost_leaderboard_update_at_limit() {
     let new_user = Address::generate(&env);
     let (cpu, mem, _) = measure(&env, || {
         env.as_contract(&contract_id, || {
-            VirtualTokenContract::_update_stats_win(env, new_user.clone()).unwrap();
+            VirtualTokenContract::_update_stats_win(&env, new_user.clone()).unwrap();
         })
     });
     report("leaderboard_update_at_limit", cpu, mem);
@@ -442,11 +442,11 @@ fn bench_cost_leaderboard_full_page_read_at_limit() {
 
     // Read a full page (LEADERBOARD_LIMIT entries).
     let (cpu, mem, page) = measure(&env, || {
-        client.get_leaderboard_by_wins(&0, &LEADERBOARD_LIMIT)
+        client.get_leaderboard_by_wins(&None, &LEADERBOARD_LIMIT)
     });
     report("leaderboard_full_page_read_at_limit", cpu, mem);
     assert_eq!(
-        page.len(),
+        page.0.len(),
         LEADERBOARD_LIMIT,
         "should return exactly LEADERBOARD_LIMIT entries"
     );
@@ -471,7 +471,7 @@ fn verify_leaderboard_update_cost_is_bounded() {
     let new_user = Address::generate(&env);
     let (cpu, _mem, _) = measure(&env, || {
         env.as_contract(&contract_id, || {
-            VirtualTokenContract::_update_stats_win(env, new_user.clone()).unwrap();
+            VirtualTokenContract::_update_stats_win(&env, new_user.clone()).unwrap();
         })
     });
 
