@@ -642,3 +642,96 @@ fn test_precision_remainder_3way_tie_goes_to_lexicographically_lowest_winner() {
         + client.get_pending_winnings(&highest);
     assert_eq!(total, 100_0000000);
 }
+
+/// Extends `test_precision_remainder_3way_tie_goes_to_lexicographically_lowest_winner`
+/// to a 5-way tie: the indivisible remainder must land on the
+/// lexicographically-lowest address among five *winners* (not the first to bet,
+/// not the largest stake, not the first generated). This closes the end-to-end
+/// coverage gap for the 5-way case, which previously existed only as a pure-math
+/// vector in `contracts/test_vectors/settlement_math.json`
+/// (`five_way_tie_large_remainder_goes_to_first_winner`).
+#[test]
+fn test_precision_remainder_5way_tie_goes_to_lexicographically_lowest_winner() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+
+    let mut users: alloc::vec::Vec<Address> = alloc::vec![
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+    ];
+    users.sort();
+    let (u0, u1, u2, u3, u4) = (
+        users[0].clone(),
+        users[1].clone(),
+        users[2].clone(),
+        users[3].clone(),
+        users[4].clone(),
+    );
+
+    for u in &users {
+        client.mint_initial(u);
+    }
+
+    client.create_round(&1_0000000, &Some(1)); // Precision mode
+
+    // All five predict the exact same price -> guaranteed 5-way tie.
+    // Total pot = 30_0000003 + 21_0000000 + 20_0000000 + 18_0000000 +
+    // 14_0000000 = 103_0000003; split 5 ways leaves a 3-stroop remainder
+    // (103_0000003 % 5 == 3). NOTE: whole-token stakes are always multiples
+    // of 10^7, which is itself divisible by 5, so a non-zero remainder here
+    // requires a non-whole-token amount — u0 carries the +3 stroops. `u0`
+    // (lexicographically lowest) stakes the *most* here specifically to prove
+    // the remainder follows address order, not stake size.
+    let price = 5000u128;
+    client.place_precision_prediction(&u0, &30_0000003, &price);
+    client.place_precision_prediction(&u1, &21_0000000, &price);
+    client.place_precision_prediction(&u2, &20_0000000, &price);
+    client.place_precision_prediction(&u3, &18_0000000, &price);
+    client.place_precision_prediction(&u4, &14_0000000, &price);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price,
+        timestamp: env.ledger().timestamp(),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    // per_winner = 103_0000003 / 5 = 20_6000000, remainder = 3_0000000.
+    // The lowest-address winner (u0) gets the remainder regardless of stake
+    // size or bet order.
+    assert_eq!(client.get_pending_winnings(&u0), 20_6000003);
+    assert_eq!(client.get_pending_winnings(&u1), 20_6000000);
+    assert_eq!(client.get_pending_winnings(&u2), 20_6000000);
+    assert_eq!(client.get_pending_winnings(&u3), 20_6000000);
+    assert_eq!(client.get_pending_winnings(&u4), 20_6000000);
+
+    // Conservation: the whole pot is accounted for.
+    let total: i128 = client.get_pending_winnings(&u0)
+        + client.get_pending_winnings(&u1)
+        + client.get_pending_winnings(&u2)
+        + client.get_pending_winnings(&u3)
+        + client.get_pending_winnings(&u4);
+    assert_eq!(total, 103_0000003);
+}
