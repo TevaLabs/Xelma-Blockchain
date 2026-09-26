@@ -284,6 +284,7 @@ fn test_claim_winnings_event_emitted() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::UpDownPositions, &positions);
+        index_legacy_positions(&env, &contract_id);
 
         let mut round: Round = env
             .storage()
@@ -507,6 +508,7 @@ fn test_outcome_loss_event_updown_legacy_path() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::UpDownPositions, &positions);
+        index_legacy_positions(&env, &contract_id);
 
         let mut round: Round = env
             .storage()
@@ -689,6 +691,7 @@ fn test_outcome_loss_event_precision_legacy_path() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
@@ -777,6 +780,7 @@ fn test_outcome_loss_event_not_emitted_on_refund() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::UpDownPositions, &positions);
+        index_legacy_positions(&env, &contract_id);
         let mut round: Round = env
             .storage()
             .persistent()

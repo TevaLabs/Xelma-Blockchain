@@ -111,6 +111,9 @@ fn test_simulate_payout_precision_stake_weighted_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    // Heartbeat required: `resolve_round` enforces the always-on heartbeat
+    // health gate (Issue #264) before settling.
+    client.update_oracle_heartbeat(&0u32);
 
     // 1 = StakeWeighted (see `PrecisionPayoutPolicy`).
     client.set_precision_payout_policy(&1u32);

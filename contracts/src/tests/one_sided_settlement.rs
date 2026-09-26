@@ -21,6 +21,8 @@ fn setup_test_env() -> (Env, VirtualTokenContractClient<'static>, Address, Addre
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    // Heartbeat required by the always-on settlement heartbeat gate (Issue #264).
+    client.update_oracle_heartbeat(&0u32);
 
     (env, client, admin, oracle)
 }
