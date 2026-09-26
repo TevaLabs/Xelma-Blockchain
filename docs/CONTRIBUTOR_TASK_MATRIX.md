@@ -19,7 +19,8 @@ Every PR must clear these before domain-specific requirements apply.
 | Bindings build and parity | `cd bindings && npm ci && npm run build && npm run test:parity` |
 
 > **Note on parity coverage:** `parity.js` checks public method parity only —
-> it does not check error enum parity. If your PR adds a new `ContractError`
+> it also checks error enum parity across Rust, TypeScript, and the canonical
+> documentation table. If your PR adds a new `ContractError`
 > variant, you must also update the error map in `bindings/src/index.ts`
 > manually. The parity script will not catch the drift (open finding
 > SR-2026-04-001).
@@ -216,7 +217,7 @@ the `bindings/src/parity.js` error-enum gap.
 | Changed event payload field | MAJOR version bump; update `docs/EVENT_SCHEMA.md`; notify indexer/frontend consumers in PR description |
 | Changed event topic string | MAJOR version bump |
 | New public entrypoint | Regenerate or update `bindings/src/index.ts`; confirm `npm run test:parity` passes; include `bindings/dist/index.d.ts` diff in PR |
-| New `ContractError` variant | Manually add the variant to the error map in `bindings/src/index.ts` (the parity script does not check enum parity); include the updated map in the PR diff |
+| New `ContractError` variant | Add the variant to `bindings/src/index.ts` and `docs/CONTRACT_ERRORS.md`; run `npm --prefix bindings run test:parity` |
 | Removed or renumbered `ContractError` variant | MAJOR version bump — clients that match the numeric code will break |
 
 ---

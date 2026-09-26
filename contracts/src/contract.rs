@@ -3,7 +3,7 @@
 
 #![allow(dead_code)]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec};
 
 use crate::access_control;
 use crate::errors::ContractError;
@@ -281,28 +281,32 @@ impl VirtualTokenContract {
         admin::get_protocol_health(env)
     }
 
-    /// Returns the configured oracle stale threshold, or the default if not set.
     /// Returns the global status of the protocol.
     ///
     /// This is the canonical single-call status endpoint for frontends and
-    /// monitoring dashboards. The returned [`ProtocolStatus`] maps directly to
-    /// the three mutually-exclusive states visible to end users:
+    /// monitoring dashboards. It is a pure projection of [`RuntimeMode`]
+    /// plus "is a round active" (see `docs/STATUS_CODES.md`):
     ///
-    /// | return value      | meaning                                             |
-    /// |-------------------|-----------------------------------------------------|
-    /// | `Active`      (0) | A round is live; bets or reveals are accepted.      |
-    /// | `Paused`      (1) | Emergency pause active; mutations rejected.          |
-    /// | `ClaimsOnly`  (2) | No active round; only `claim_winnings` is useful.   |
+    /// | `RuntimeMode`       | active round? | return value      |
+    /// |---------------------|---------------|-------------------|
+    /// | `FullyPaused` (2)   | any           | `Paused`      (1) |
+    /// | `ClaimsOnly`  (1)   | any           | `ClaimsOnly`  (2) |
+    /// | `Normal`      (0)   | no            | `ClaimsOnly`  (2) |
+    /// | `Normal`      (0)   | yes           | `Active`      (0) |
     ///
-    /// **Priority**: `Paused` is always returned first when the contract is
-    /// paused, regardless of whether an active round exists.
+    /// `Active` is returned only when round mutations (bets, reveals) would
+    /// actually pass the policy gate; `Paused` only when claims are blocked.
     pub fn get_protocol_status(env: Env) -> ProtocolStatus {
-        if Self::is_paused(env.clone()) {
-            ProtocolStatus::Paused
-        } else if env.storage().persistent().has(&DataKeyCore::ActiveRound) {
-            ProtocolStatus::Active
-        } else {
-            ProtocolStatus::ClaimsOnly
+        match admin::_current_mode(&env) {
+            RuntimeMode::FullyPaused => ProtocolStatus::Paused,
+            RuntimeMode::ClaimsOnly => ProtocolStatus::ClaimsOnly,
+            RuntimeMode::Normal => {
+                if env.storage().persistent().has(&DataKeyCore::ActiveRound) {
+                    ProtocolStatus::Active
+                } else {
+                    ProtocolStatus::ClaimsOnly
+                }
+            }
         }
     }
 
@@ -326,6 +330,10 @@ impl VirtualTokenContract {
     /// | `Resolved`       (4)  | Settled normally; pot distributed.                           |
     /// | `Cancelled`      (5)  | Admin-cancelled; stakes refunded.                            |
     /// | `FallbackRefund` (6)  | Settled with insufficient participants; stakes refunded.     |
+    /// | `Voided`         (7)  | Dispute window voided the result; stakes refunded.           |
+    ///
+    /// `RuntimeMode` never changes this value: a paused contract still reports
+    /// the round's ledger-derived phase. Combine with `get_protocol_status`.
     ///
     /// Note: `Betting`, `Running`, and `AwaitingResolve` are **derived** from
     /// ledger sequence — they do not involve additional storage writes.
@@ -699,7 +707,7 @@ impl VirtualTokenContract {
         env: Env,
         proposer: Address,
         parameter_name: Symbol,
-        new_value: Val,
+        new_value: Bytes,
     ) -> Result<u64, ContractError> {
         governance::propose_amendment(env, proposer, parameter_name, new_value)
     }

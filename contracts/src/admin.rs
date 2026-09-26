@@ -372,7 +372,7 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
 
 /// Loads the deviation guardrail config, returning the `StartPrice` default if unset (Issue #266).
 pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
-    let key = DeviationConfigKey::Config;
+    let key = DeviationConfigKey::DevCfg;
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -390,7 +390,7 @@ pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
 }
 
 fn _save_deviation_config(env: &Env, config: &DeviationConfig) {
-    let key = DeviationConfigKey::Config;
+    let key = DeviationConfigKey::DevCfg;
     env.storage().persistent().set(&key, config);
     env.storage().persistent().extend_ttl(
         &key,
@@ -459,7 +459,7 @@ pub fn get_deviation_window_samples(env: Env) -> u32 {
 
 /// Loads the attestation config, returning `key: None` (disabled) if unset (Issue #263).
 pub fn _load_attestation_config(env: &Env) -> AttestationConfig {
-    let key = AttestationConfigKey::Config;
+    let key = AttestationConfigKey::Attest;
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -488,7 +488,7 @@ pub fn set_attestation_key(env: Env, key: Option<BytesN<32>>) -> Result<(), Cont
         _emit_action_rejected(&env, &admin, symbol_short!("attkey"), e);
     })?;
 
-    let storage_key = AttestationConfigKey::Config;
+    let storage_key = AttestationConfigKey::Attest;
     env.storage()
         .persistent()
         .set(&storage_key, &AttestationConfig { key: key.clone() });
@@ -674,7 +674,7 @@ pub fn _consume_hb_override(env: &Env) -> bool {
 
 /// Loads the heartbeat gate config, returning defaults if unset.
 pub fn _load_hb_config(env: &Env) -> HbGateConfig {
-    let key = HbGateKey::Config;
+    let key = HbGateKey::HbGate;
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -694,7 +694,7 @@ pub fn _load_hb_config(env: &Env) -> HbGateConfig {
 
 /// Saves the heartbeat gate config to persistent storage.
 pub fn _save_hb_config(env: &Env, config: &HbGateConfig) {
-    let key = HbGateKey::Config;
+    let key = HbGateKey::HbGate;
     env.storage().persistent().set(&key, config);
     env.storage().persistent().extend_ttl(
         &key,
@@ -829,9 +829,16 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
     let schema_version = _schema_version(&env).unwrap_or(1);
     let mode = _current_mode(&env);
     let is_claims_only = mode == RuntimeMode::ClaimsOnly;
+    let access_restricted = crate::access_control::is_access_control_enabled(env.clone());
 
+    // Every non-`Normal` runtime mode counts as a degradation so that a
+    // ClaimsOnly incident can never mask a stale oracle or stale round
+    // (see "Status precedence" in docs/STATUS_CODES.md).
     let mut issues: u32 = 0;
     if paused {
+        issues += 1;
+    }
+    if is_claims_only {
         issues += 1;
     }
     if !oracle_live {
@@ -853,6 +860,8 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         3u32 // ROUND_STALE
     } else if !has_active_round {
         4u32 // NO_ACTIVE_ROUND
+    } else if access_restricted {
+        7u32 // ACCESS_RESTRICTED
     } else {
         0u32 // HEALTHY
     };
@@ -880,7 +889,7 @@ pub fn get_oracle_stale_threshold(env: Env) -> u64 {
 }
 
 /// Reads the current [`RuntimeMode`], defaulting to `Normal` if unset.
-fn _current_mode(env: &Env) -> RuntimeMode {
+pub(crate) fn _current_mode(env: &Env) -> RuntimeMode {
     let key = DataKeyCore::Paused;
     _extend_persistent_ttl(env, &key);
     env.storage()
@@ -1201,10 +1210,13 @@ pub fn _require_supported_schema(env: &Env) -> Result<u32, ContractError> {
 ///
 /// # Errors
 /// - `AdminNotSet` — contract not initialized.
-/// - `ContractPaused` — contract is fully paused.
+/// - `ContractPaused` — contract is fully paused (allowed in `ClaimsOnly`).
+/// - `ExpiryNotConfigured` — expiry is disabled (`0`, the default).
+/// - `PendingWinningsNotFound` — the user has no pending winnings (or no
+///   last-credited ledger is recorded for them).
 /// - `PendingWinningsNotExpired` — entry exists but hasn't reached the expiry threshold.
-/// - `NoActiveRound` — used as a generic "no pending winnings" signal when
-///   the entry doesn't exist or expiry is disabled (0).
+///
+/// Operator playbook: `docs/OPS_ARCHIVE_RECLAIM_PLAYBOOK.md`.
 pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env
