@@ -10,6 +10,7 @@ use crate::types::{
     Amendment, AmendmentStatus, ConstitutionMetadata,
 };
 use soroban_sdk::{symbol_short, Address, Env};
+use soroban_sdk::xdr::ToXdr;
 
 /// Returns whether `user` is an authorized governance administrator or approver.
 pub fn _is_authorized_gov_user(env: &Env, user: &Address) -> bool {
@@ -427,10 +428,10 @@ pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
 }
 
 // ─── On-Chain Constitution Framework (Issue #363) ─────────────────────────────
-//!
-//! This module implements the on-chain constitution system for parameter governance,
-//! introducing immutable, timelocked, and dual-approval parameters with optional
-//! veto and guardian windows before activation.
+//
+// This module implements the on-chain constitution system for parameter governance,
+// introducing immutable, timelocked, and dual-approval parameters with optional
+// veto and guardian windows before activation.
 
 /// Establishes the on-chain constitution with initial governance parameters (admin only).
 ///
@@ -531,7 +532,10 @@ pub fn propose_amendment(
         id: amendment_id,
         proposer: proposer.clone(),
         parameter_name: parameter_name.clone(),
-        new_value,
+        // `Amendment::new_value` is stored as XDR bytes: `#[contracttype]`
+        // cannot encode a raw `Val` field, so the proposed value is serialized
+        // once at proposal time and round-tripped unchanged by `get_amendment`.
+        new_value: new_value.to_xdr(&env),
         created_at_ledger: current_ledger,
         veto_deadline_ledger: veto_deadline,
         activation_deadline_ledger: activation_deadline,

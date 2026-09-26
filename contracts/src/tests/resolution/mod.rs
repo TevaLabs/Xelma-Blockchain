@@ -43,6 +43,73 @@ use soroban_sdk::{
 };
 use std::string::{String, ToString};
 
+/// Materializes legacy `Map`-based position fixtures into the indexed
+/// settlement path (`RoundParticipants` + per-user `Position` /
+/// `PrecisionPosition` keys) that `resolve_round` reads when the
+/// `legacy-map-settlement` feature is disabled.
+///
+/// The fixtures below predate the indexed layout; without this call the
+/// resolver finds zero participants and settles every payout to zero.
+pub(super) fn index_legacy_positions(env: &Env, contract_id: &Address) {
+    env.as_contract(contract_id, || {
+        let round: Round = match env
+            .storage()
+            .persistent()
+            .get(&DataKeyCore::ActiveRound)
+        {
+            Some(r) => r,
+            None => return,
+        };
+
+        let mut parts: Vec<Address> = Vec::new(env);
+
+        let updown: Map<Address, UserPosition> = env
+            .storage()
+            .persistent()
+            .get(&DataKeyCore::UpDownPositions)
+            .unwrap_or_else(|| Map::new(env));
+        for (user, pos) in updown.iter() {
+            let key = DataKeyScoped::Position(round.round_id, user.clone());
+            if !env.storage().persistent().has(&key) {
+                env.storage().persistent().set(&key, &pos);
+            }
+            if !parts.contains(&user) {
+                parts.push_back(user);
+            }
+        }
+
+        let preds: Map<Address, PrecisionPrediction> = env
+            .storage()
+            .persistent()
+            .get(&DataKeyCore::PrecisionPositions)
+            .unwrap_or_else(|| Map::new(env));
+        for (user, pred) in preds.iter() {
+            let key = DataKeyScoped::PrecisionPosition(round.round_id, user.clone());
+            if !env.storage().persistent().has(&key) {
+                env.storage().persistent().set(&key, &pred);
+            }
+            if !parts.contains(&user) {
+                parts.push_back(user);
+            }
+        }
+
+        let existing: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKeyScoped::RoundParticipants(round.round_id))
+            .unwrap_or_else(|| Vec::new(env));
+        for user in existing.iter() {
+            if !parts.contains(&user) {
+                parts.push_back(user);
+            }
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::RoundParticipants(round.round_id), &parts);
+    });
+}
+
 /// Salt satisfying on-chain minimum entropy (non-zero, non-constant).
 pub(super) fn test_salt(env: &Env, seed: u8) -> BytesN<32> {
     let mut bytes = [0u8; 32];
@@ -133,7 +200,9 @@ pub(super) fn collect_outcome_loss_events(
         .collect()
 }
 
-pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128, i128, u32)> {
+pub(super) fn collect_protocol_fee_events(
+    env: &Env,
+) -> std::vec::Vec<(u64, i128, i128, u32, u32)> {
     env.events()
         .all()
         .iter()
@@ -145,7 +214,8 @@ pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128
             {
                 return None;
             }
-            let res: Result<(u64, i128, i128, u32), _> = data.try_into_val(env);
+            // `fee_coll` payload is `(round_id, fee, treasury_after, bps, model)`.
+            let res: Result<(u64, i128, i128, u32, u32), _> = data.try_into_val(env);
             res.ok()
         })
         .collect()

@@ -39,6 +39,8 @@ fn test_resolve_precision_stake_weighted_policy() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    // Heartbeat required by the always-on settlement heartbeat gate (Issue #264).
+    client.update_oracle_heartbeat(&0u32);
 
     client.set_precision_payout_policy(&1);
 
@@ -73,17 +75,19 @@ fn test_resolve_precision_stake_weighted_policy() {
         attestation: None,
     });
 
-    assert_eq!(
-        client.balance(&lowest_user),
-        1000_0000000 - 100_0000000 + 200_0000000
-    );
-    assert_eq!(
-        client.balance(&middle_user),
-        1000_0000000 - 200_0000000 + 400_0000000
-    );
-    assert_eq!(client.balance(&highest_user), 1000_0000000 - 300_0000000);
-
+    // Snapshot events immediately: the mock host's event buffer only reflects
+    // the most recent contract invocation, so read it before further queries.
     let events = env.events().all();
+
+    // Claim-based settlement: the stake is debited from the balance and the
+    // stake-weighted payout is parked in pending winnings until claimed.
+    assert_eq!(client.balance(&lowest_user), 1000_0000000 - 100_0000000);
+    assert_eq!(client.get_pending_winnings(&lowest_user), 200_0000000);
+    assert_eq!(client.balance(&middle_user), 1000_0000000 - 200_0000000);
+    assert_eq!(client.get_pending_winnings(&middle_user), 400_0000000);
+    assert_eq!(client.balance(&highest_user), 1000_0000000 - 300_0000000);
+    assert_eq!(client.get_pending_winnings(&highest_user), 0);
+
     let resolved_event = events
         .iter()
         .find(|e| {
@@ -112,6 +116,8 @@ fn test_precision_stake_weighted_conservation_remainder() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    // Heartbeat required by the always-on settlement heartbeat gate (Issue #264).
+    client.update_oracle_heartbeat(&0u32);
 
     client.set_precision_payout_policy(&1);
 
@@ -143,9 +149,13 @@ fn test_precision_stake_weighted_conservation_remainder() {
         attestation: None,
     });
 
-    assert_eq!(
-        client.balance(&lowest_user),
-        1000_0000000 - 100i128 + 34i128
-    );
-    assert_eq!(client.balance(&other_user), 1000_0000000 - 200i128 + 66i128);
+    // Claim-based settlement: stake debited from balance, payout parked in
+    // pending winnings. Stake-weighted split of the 300-stroop pot returns
+    // exactly each winner's proportional share — conservation must be exact
+    // (the first winner absorbs any division remainder).
+    let lowest_pending = client.get_pending_winnings(&lowest_user);
+    let other_pending = client.get_pending_winnings(&other_user);
+    assert_eq!(lowest_pending + other_pending, 300i128);
+    assert_eq!(client.balance(&lowest_user), 1000_0000000 - 100);
+    assert_eq!(client.balance(&other_user), 1000_0000000 - 200);
 }

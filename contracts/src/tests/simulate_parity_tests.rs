@@ -4,9 +4,20 @@
 extern crate std;
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{BetSide, OraclePayload, RoundMode, UserOutcomeType};
+use crate::types::{BetSide, DataKeyCore, OraclePayload, RoundMode, UserOutcomeType};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env};
+
+/// Writes the protocol fee directly into storage so the round settles with an
+/// *active* fee. `set_protocol_fee_bps` only schedules a timelocked change, so
+/// the preview/parity assertions below would otherwise see `fee_amount == 0`.
+fn set_fee_bps_now(env: &Env, contract_id: &Address, bps: u32) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::ProtocolFeeBps, &bps);
+    });
+}
 
 /// Parity test for UpDown mode with protocol fees: `simulate_payout` predictions must
 /// match actual `resolve_round` payouts exactly, accounting for fee deduction from
@@ -21,6 +32,9 @@ fn test_simulate_payout_updown_with_fees_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    // Record a fresh heartbeat: `resolve_round` runs an always-on heartbeat
+    // health gate (Issue #264) that rejects settlement when no heartbeat exists.
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -28,7 +42,7 @@ fn test_simulate_payout_updown_with_fees_matches_resolve() {
     client.mint_initial(&bob);
 
     // Set protocol fee to 1% (100 bps)
-    client.set_protocol_fee_bps(&Some(100));
+    set_fee_bps_now(&env, &contract_id, 100);
 
     client.create_round(&10000, &Some(0)); // UpDown mode
 
@@ -96,6 +110,7 @@ fn test_simulate_payout_updown_one_sided_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -158,6 +173,7 @@ fn test_simulate_payout_updown_tie_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -217,6 +233,7 @@ fn test_simulate_payout_precision_equal_policy_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     // 0 = Equal (default)
     client.set_precision_payout_policy(&0u32);

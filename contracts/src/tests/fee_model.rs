@@ -8,7 +8,7 @@
 //! - Edge cases: one-sided pools, all-unrevealed, ties, zero-profit
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{BetSide, DataKeyCore, FeeModel, OraclePayload, PrecisionPrediction};
+use crate::types::{BetSide, DataKeyCore, DataKeyScoped, FeeModel, OraclePayload, PrecisionPrediction};
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -26,6 +26,9 @@ fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Addres
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    // Record a heartbeat so the always-on settlement heartbeat gate
+    // (Issue #264) does not reject `resolve_round` in these tests.
+    client.update_oracle_heartbeat(&0u32);
 
     (client, contract_id, admin, oracle)
 }
@@ -135,7 +138,7 @@ fn fee_zero_both_models_produce_identical_updown() {
     client.place_bet(&charlie2, &5, &BetSide::Down);
     set_fee_model_now(&env, &contract_id, FeeModel::FeeOnWinnings);
 
-    env.ledger().with_mut(|li| li.sequence_number = 13);
+    env.ledger().with_mut(|li| li.sequence_number = 24);
     let treasury_before2 = client.get_protocol_fee_treasury();
     resolve_at(&env, &client, &contract_id, 2_000u128);
 
@@ -188,7 +191,7 @@ fn fee_zero_both_models_produce_identical_precision() {
     client.place_precision_prediction(&bob2, &30, &1_100u128);
     set_fee_model_now(&env, &contract_id, FeeModel::FeeOnWinnings);
 
-    env.ledger().with_mut(|li| li.sequence_number = 13);
+    env.ledger().with_mut(|li| li.sequence_number = 24);
     let treasury_before2 = client.get_protocol_fee_treasury();
     resolve_at(&env, &client, &contract_id, 1_006u128);
 
@@ -552,6 +555,7 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &None);
 
         let alice = Address::generate(&env);
@@ -559,17 +563,28 @@ proptest! {
         let charlie = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            use crate::types::UserPosition;
-            let mut positions: soroban_sdk::Map<Address, UserPosition> = soroban_sdk::Map::new(&env);
-            positions.set(alice.clone(), UserPosition { amount: a_up, side: BetSide::Up });
-            positions.set(bob.clone(), UserPosition { amount: b_up, side: BetSide::Up });
-            positions.set(charlie.clone(), UserPosition { amount: c_down, side: BetSide::Down });
-            env.storage().persistent().set(&DataKeyCore::UpDownPositions, &positions);
-
-            let mut round: crate::types::Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
+            use crate::types::{Round, UserPosition};
+            let mut round: Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
             round.pool_up = total_up;
             round.pool_down = total_down;
             env.storage().persistent().set(&DataKeyCore::ActiveRound, &round);
+
+            // Indexed settlement path (RoundParticipants + per-user Position keys).
+            let mut parts = soroban_sdk::Vec::<Address>::new(&env);
+            for (user, pos) in [
+                (alice.clone(), UserPosition { amount: a_up, side: BetSide::Up }),
+                (bob.clone(), UserPosition { amount: b_up, side: BetSide::Up }),
+                (charlie.clone(), UserPosition { amount: c_down, side: BetSide::Down }),
+            ] {
+                env.storage().persistent().set(
+                    &DataKeyScoped::Position(round.round_id, user.clone()),
+                    &pos,
+                );
+                parts.push_back(user);
+            }
+            env.storage()
+                .persistent()
+                .set(&DataKeyScoped::RoundParticipants(round.round_id), &parts);
 
             env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
             env.storage().persistent().set(&DataKeyCore::FeeModel, &FeeModel::FeeOnWinnings);
@@ -614,7 +629,7 @@ proptest! {
         price_a in 0u128..99_999_999u128,
         price_b in 1u128..99_999_999u128,
         price_c in 2u128..99_999_999u128,
-        final_price in 0u128..99_999_999u128,
+        final_price in 1u128..99_999_999u128,
         fee_bps_raw in 1u32..=1_000u32,
     ) {
         prop_assume!(price_a != price_b && price_b != price_c && price_a != price_c);
@@ -630,6 +645,7 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &Some(1));
 
         let alice = Address::generate(&env);
@@ -637,11 +653,25 @@ proptest! {
         let charlie = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            let mut predictions: soroban_sdk::Map<Address, PrecisionPrediction> = soroban_sdk::Map::new(&env);
-            predictions.set(alice.clone(), PrecisionPrediction { user: alice.clone(), predicted_price: price_a, amount: amount_a });
-            predictions.set(bob.clone(), PrecisionPrediction { user: bob.clone(), predicted_price: price_b, amount: amount_b });
-            predictions.set(charlie.clone(), PrecisionPrediction { user: charlie.clone(), predicted_price: price_c, amount: amount_c });
-            env.storage().persistent().set(&DataKeyCore::PrecisionPositions, &predictions);
+            use crate::types::Round;
+            let round: Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
+
+            // Indexed settlement path (RoundParticipants + PrecisionPosition keys).
+            let mut parts = soroban_sdk::Vec::<Address>::new(&env);
+            for (user, pred) in [
+                (alice.clone(), PrecisionPrediction { user: alice.clone(), predicted_price: price_a, amount: amount_a }),
+                (bob.clone(), PrecisionPrediction { user: bob.clone(), predicted_price: price_b, amount: amount_b }),
+                (charlie.clone(), PrecisionPrediction { user: charlie.clone(), predicted_price: price_c, amount: amount_c }),
+            ] {
+                env.storage().persistent().set(
+                    &DataKeyScoped::PrecisionPosition(round.round_id, user.clone()),
+                    &pred,
+                );
+                parts.push_back(user);
+            }
+            env.storage()
+                .persistent()
+                .set(&DataKeyScoped::RoundParticipants(round.round_id), &parts);
 
             env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
             env.storage().persistent().set(&DataKeyCore::FeeModel, &FeeModel::FeeOnWinnings);

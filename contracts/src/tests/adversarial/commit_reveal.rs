@@ -18,7 +18,7 @@
 //! mock auths, round creation at ledger 0, bet window = [0, 6),
 //! reveal window = [6, 12), resolve at ≥ 12.
 
-use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env, TryFromVal};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Bytes, BytesN, Env, TryFromVal};
 use soroban_sdk::xdr::ToXdr;
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};

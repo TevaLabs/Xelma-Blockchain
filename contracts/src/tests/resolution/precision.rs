@@ -61,6 +61,7 @@ fn test_resolve_precision_closest_guess_wins() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     // Advance ledger to allow resolution
@@ -161,6 +162,7 @@ fn test_resolve_precision_tie_splits_pot() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     // Advance ledger
@@ -245,6 +247,7 @@ fn test_resolve_precision_exact_match() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
@@ -364,6 +367,7 @@ fn test_resolve_precision_three_way_tie() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
@@ -429,6 +433,7 @@ fn test_resolve_precision_single_prediction() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
@@ -498,6 +503,7 @@ fn test_resolve_precision_large_differences() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
@@ -580,6 +586,7 @@ fn test_precision_remainder_3way_tie_uneven_pot() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
@@ -698,6 +705,7 @@ fn test_precision_remainder_5way_tie() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
@@ -783,6 +791,7 @@ fn test_precision_no_remainder() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
@@ -864,6 +873,7 @@ fn test_precision_payout_deterministic_same_inputs() {
             env.storage()
                 .persistent()
                 .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
         });
 
         env.ledger().with_mut(|li| {
@@ -950,6 +960,7 @@ fn test_precision_payout_conservation_two_way_tie_remainder() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
@@ -1041,6 +1052,7 @@ fn test_precision_payout_conservation_large_tie_set() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
+    index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {
