@@ -3,31 +3,31 @@
 
 #![allow(dead_code)]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec};
 
 use crate::access_control;
 use crate::errors::ContractError;
 use crate::governance;
 use crate::insurance;
 use crate::types::{
-    ArchivedRoundSummary, AccessState, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy,
-    MarketSnapshot, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, OracleRotationProposal, PendingConfigChange,
-    PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
+    DataKeyScoped, DeviationReferenceMode, FeeModel, GovAction, GovProposal, LeaderboardEntry,
+    MarketSnapshot, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload,
+    OracleQuorumConfig, OracleRotationProposal, PendingConfigChange, PolicyAction,
+    PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
     RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
-    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
-    UserRoundOutcome, UserStats, FeeModel, GovAction, GovProposal,
+    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition, UserRoundOutcome,
+    UserStats,
 };
 
 use crate::common::{
-    CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
+    BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
     DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
-    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_MIN_PARTICIPANTS,
-    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
+    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS,
+    MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
     MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
     MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
-    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD, BPS_DENOMINATOR,
+    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
 
 // ─── Oracle rotation expiry ───────────────────────────────────────────────────
@@ -484,11 +484,7 @@ impl VirtualTokenContract {
             #[allow(deprecated)]
             env.events().publish(
                 (symbol_short!("oracle"), symbol_short!("early")),
-                (
-                    proposal.new_oracle.clone(),
-                    current_ts,
-                    earliest_accept,
-                ),
+                (proposal.new_oracle.clone(), current_ts, earliest_accept),
             );
             return Err(ContractError::RotationDelayNotElapsed);
         }
@@ -621,6 +617,14 @@ impl VirtualTokenContract {
         access_control::get_access_policy(env, user)
     }
 
+    /// Returns the rolling commitment aggregate for a round, if initialized.
+    pub fn get_rolling_commitment(
+        env: Env,
+        round_id: u64,
+    ) -> Option<crate::types::RollingCommitment> {
+        crate::commitments::_get_rolling_commitment(&env, round_id)
+    }
+
     // ─── Dual-Approval Governance (Issue #272) ──────────────────────────────
 
     /// Configures the secondary governance approver (admin only).
@@ -694,7 +698,12 @@ impl VirtualTokenContract {
         timelock_ledgers: u32,
         dual_approval_required: bool,
     ) -> Result<(), ContractError> {
-        governance::establish_constitution(env, veto_window_ledgers, timelock_ledgers, dual_approval_required)
+        governance::establish_constitution(
+            env,
+            veto_window_ledgers,
+            timelock_ledgers,
+            dual_approval_required,
+        )
     }
 
     /// Returns the on-chain constitution metadata, if established.
@@ -707,18 +716,26 @@ impl VirtualTokenContract {
         env: Env,
         proposer: Address,
         parameter_name: Symbol,
-        new_value: Val,
+        new_value: Bytes,
     ) -> Result<u64, ContractError> {
         governance::propose_amendment(env, proposer, parameter_name, new_value)
     }
 
     /// Vetoes a pending amendment before its veto window expires.
-    pub fn veto_amendment(env: Env, vetoer: Address, amendment_id: u64) -> Result<(), ContractError> {
+    pub fn veto_amendment(
+        env: Env,
+        vetoer: Address,
+        amendment_id: u64,
+    ) -> Result<(), ContractError> {
         governance::veto_amendment(env, vetoer, amendment_id)
     }
 
     /// Activates an amendment after timelock expires.
-    pub fn activate_amendment(env: Env, activator: Address, amendment_id: u64) -> Result<(), ContractError> {
+    pub fn activate_amendment(
+        env: Env,
+        activator: Address,
+        amendment_id: u64,
+    ) -> Result<(), ContractError> {
         governance::activate_amendment(env, activator, amendment_id)
     }
 
@@ -809,10 +826,7 @@ impl VirtualTokenContract {
     }
 
     /// Schedules a timelocked update to the oracle timestamp skew (admin only).
-    pub fn schedule_oracle_timestamp_skew(
-        env: Env,
-        seconds: u64,
-    ) -> Result<(), ContractError> {
+    pub fn schedule_oracle_timestamp_skew(env: Env, seconds: u64) -> Result<(), ContractError> {
         config::schedule_oracle_timestamp_skew(env, seconds)
     }
 
@@ -1072,10 +1086,7 @@ impl VirtualTokenContract {
     /// Requires `OracleQuorumConfig` to be configured by the admin before
     /// this path is available. The legacy single-oracle `resolve_round`
     /// remains available independently.
-    pub fn resolve_round_multi(
-        env: Env,
-        payload: MultiFeedPayload,
-    ) -> Result<(), ContractError> {
+    pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), ContractError> {
         settlement::resolve_round_multi(env, payload)
     }
 
@@ -1223,7 +1234,6 @@ impl VirtualTokenContract {
         limit: u32,
     ) -> Vec<(Address, UserPosition)> {
         queries::get_updown_positions_page(env, offset, limit)
-
     }
 
     /// Returns user's vXLM balance
@@ -1704,7 +1714,10 @@ impl VirtualTokenContract {
         config::_apply_config_payload(env, kind, payload)
     }
 
-    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(env: &Env, key: &T) {
+    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(
+        env: &Env,
+        key: &T,
+    ) {
         if env.storage().persistent().has(key) {
             env.storage()
                 .persistent()

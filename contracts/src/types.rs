@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Symbol, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -222,6 +222,8 @@ pub enum DataKeyScoped {
     /// within a single ledger. This marker lets settlement reject a payload whose
     /// `start_ledger` resolves to a different round than the active one.
     RoundStartLedger(u32),
+    /// Rolling commitment aggregate for round aggregate obfuscation during betting: round_id -> RollingCommitment
+    RollingCommitment(u64),
 }
 
 /// Fee incidence model (Issue #268).
@@ -465,15 +467,15 @@ pub struct OracleHeartbeatRecord {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Round {
-    pub round_id: u64,       // Unique monotonically increasing round identifier
-    pub price_start: u128,   // Starting XLM price in stroops
-    pub start_ledger: u32,   // Ledger when round was created
-    pub start_timestamp: u64,  // Ledger timestamp when round was created
-    pub bet_end_ledger: u32, // Ledger when betting closes
-    pub end_ledger: u32,     // Ledger when round ends (~5s per ledger)
-    pub pool_up: i128,       // Total vXLM bet on UP
-    pub pool_down: i128,     // Total vXLM bet on DOWN
-    pub mode: RoundMode,     // Round mode: UpDown (0) or Precision (1)
+    pub round_id: u64,        // Unique monotonically increasing round identifier
+    pub price_start: u128,    // Starting XLM price in stroops
+    pub start_ledger: u32,    // Ledger when round was created
+    pub start_timestamp: u64, // Ledger timestamp when round was created
+    pub bet_end_ledger: u32,  // Ledger when betting closes
+    pub end_ledger: u32,      // Ledger when round ends (~5s per ledger)
+    pub pool_up: i128,        // Total vXLM bet on UP
+    pub pool_down: i128,      // Total vXLM bet on DOWN
+    pub mode: RoundMode,      // Round mode: UpDown (0) or Precision (1)
 }
 
 /// Aggregated active-round pool composition for frontend transparency.
@@ -498,6 +500,17 @@ pub struct RoundPoolStats {
     pub precision_prediction_count: u32,
     pub precision_commitment_count: u32,
     pub precision_revealed_count: u32,
+}
+
+/// Rolling commitment state for active round aggregate obfuscation during the betting phase.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RollingCommitment {
+    pub round_id: u64,
+    pub commitment_hash: BytesN<32>,
+    pub total_commitments: u32,
+    pub total_stake: i128,
+    pub is_opened: bool,
 }
 
 /// One-read composite view of current market state for frontends: round
@@ -1009,12 +1022,12 @@ pub enum AmendmentStatus {
 /// Represents a proposed change to a protocol parameter that must pass through a
 /// governance lifecycle: optional veto window, timelock, then activation.
 #[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Amendment {
     pub id: u64,
     pub proposer: Address,
     pub parameter_name: Symbol,
-    pub new_value: Val,
+    pub new_value: Bytes,
     pub created_at_ledger: u32,
     pub veto_deadline_ledger: u32,
     pub activation_deadline_ledger: u32,

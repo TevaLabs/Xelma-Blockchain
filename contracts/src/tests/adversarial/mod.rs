@@ -28,6 +28,7 @@
 //! Deterministic seed: [`ADVERSARIAL_SEED`]
 
 mod economic;
+mod grinding;
 mod lifecycle;
 mod oracle;
 mod precision;
