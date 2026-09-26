@@ -24,6 +24,7 @@ mod drill_chaos_migration;
 mod event_coverage;
 mod event_order_golden;
 mod fee_model;
+mod fuzz_lifecycle;
 mod guard_tests;
 // mod initialization; // upstream bug
 mod invariant_harness;

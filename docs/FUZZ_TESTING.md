@@ -31,7 +31,7 @@ When an invariant violation occurs, the harness outputs structured failure diagn
 ```text
 ================ PROPERTY FUZZ INVARIANT VIOLATION ================
 Mode: fast
-Seed: Some(1847291048291)
+Seed: 5612026
 Failing Step Index: 12
 Violated Invariant: Asset Conservation
 Failed Action: PlaceBet { user_idx: 1, amount: 50000000, side: Up }
@@ -44,7 +44,7 @@ Action Trace History: [...]
 To replay and debug a specific failing run deterministically, supply the reported `SEED` environment variable:
 
 ```bash
-SEED=1847291048291 cargo test --package xelma-contract --lib tests::fuzz_lifecycle -- --nocapture
+SEED=5612026 cargo test --package xelma-contract --lib tests::fuzz_lifecycle -- --nocapture
 ```
 
 ---
@@ -66,5 +66,5 @@ SEED=1847291048291 cargo test --package xelma-contract --lib tests::fuzz_lifecyc
 
 ## Extending the Harness
 
-- **Adding New Actions**: Add a variant to `LifecycleAction` in `contracts/src/tests/fuzz_lifecycle.rs`, update `action_generator()`, and handle execution in `fuzz_protocol_lifecycle_invariants()`.
+- **Adding New Actions**: Add a variant to `LifecycleAction` in `contracts/src/tests/fuzz_lifecycle.rs`, update `action_generator()`, and handle execution in `execute_sequence()`. Current actions beyond Up/Down include `PlacePrecisionBet`, `CommitReveal`, `CashOutPosition`, `ResolveMulti`, and `AccessControl` (Issue #561). The default seed is `5612026`; `fuzz_lifecycle_seeded_repro_matches_trace` checks that this seed replays the same trace.
 - **Adding New Invariants**: Implement assertion logic inside the action execution loop in `fuzz_protocol_lifecycle_invariants()`.
