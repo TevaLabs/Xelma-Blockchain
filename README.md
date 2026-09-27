@@ -701,6 +701,7 @@ export ORACLE_ADDRESS="G..."
 - [ ] Deployer account funded with testnet XLM (use [Friendbot](https://friendbot.stellar.org))
 - [ ] Admin and oracle addresses are correct Stellar `G...` public keys
 - [ ] Contract builds and tests pass (`cargo test --workspace --locked`)
+- [ ] Emergency drill gate passes (`./scripts/emergency_drill_gate.sh`; required `Emergency Drill Gate` check in CI)
 - [ ] Dry-run passes with `--dry-run` flag (no errors)
 - [ ] `SOROBAN_NETWORK_PASSPHRASE` matches the target network
 - [ ] WASM hash recorded for provenance tracking
@@ -708,7 +709,7 @@ export ORACLE_ADDRESS="G..."
 - [ ] Post-deployment: configure round windows with `set_windows()`
 - [ ] Post-deployment: verify with `get_admin()` and `get_oracle()`
 
-For the full staged deployment and incident response playbook, see [docs/DEPLOYMENT_RUNBOOK.md](./docs/DEPLOYMENT_RUNBOOK.md). Operators can execute the machine-checkable checklist with `python3 scripts/check_release_checklist.py --network mainnet --strict`.
+For the full staged deployment and incident response playbook, see [docs/DEPLOYMENT_RUNBOOK.md](./docs/DEPLOYMENT_RUNBOOK.md). Operators can execute the machine-checkable checklist with `python3 scripts/check_release_checklist.py --network mainnet --strict`. The incident-mode `pause → claims → resume` drill is a required release gate — see [docs/EMERGENCY_DRILL.md](./docs/EMERGENCY_DRILL.md) and [docs/RELEASE.md](./docs/RELEASE.md).
 
 ### Deployment Script
 

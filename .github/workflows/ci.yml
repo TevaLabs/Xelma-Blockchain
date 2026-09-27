@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
   pull_request:
     branches: ["**"]
+  # Manual trigger: re-run the full gate (including the emergency drill gate)
+  # against a release branch or tag before cutting a release.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -46,9 +49,6 @@ jobs:
 
       - name: Run deterministic replay parity suite (Issue #369)
         run: cargo test -p xelma-replay --locked -- --nocapture
-
-      - name: Run emergency claims-only drill test
-        run: cargo test --package xelma-contract --lib tests::drill --locked -- --nocapture
 
       - name: Run adversarial CI-critical scenarios only
         run: cargo test --package xelma-contract --lib test_critical_ --locked -- --nocapture
@@ -599,10 +599,78 @@ jobs:
       - name: Measure WASM size and check budget
         run: ./scripts/check_wasm_size.sh target/wasm32v1-none/release/xelma_contract.wasm
 
+  # ── Release checklist gate: claims-only emergency drill ─────────────────────
+  #
+  # Split out of `rust-test` so the drill is an explicit, separately required
+  # check rather than one more step inside a large test job. `ci-success`
+  # depends on this job, so a red (or missing) drill blocks the release.
+  #
+  # The gate runs scripts/emergency_drill_gate.sh, which asserts that every
+  # drill covering `pause → claims → resume` actually executed — a bare
+  # `cargo test tests::drill` exits 0 when the filter matches nothing, which
+  # would silently turn this gate green after a drill was renamed or deleted.
+  #
+  # Runbook and release checklist: docs/EMERGENCY_DRILL.md (§4), docs/RELEASE.md.
+  emergency-drill:
+    name: Emergency Drill Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-drill-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-drill-
+            ${{ runner.os }}-cargo-
+
+      - name: Run claims-only emergency drill gate (pause to claims to resume)
+        run: ./scripts/emergency_drill_gate.sh emergency-drill-gate.log
+
+      - name: Post emergency drill summary
+        if: always()
+        run: |
+          {
+            echo "## Emergency Drill Gate"
+            echo ""
+            echo "Claims-only drill covering \`pause → claims → resume\`."
+            echo ""
+            echo "| Check | Result |"
+            echo "|-------|--------|"
+            echo "| Emergency Drill Gate | ${{ job.status == 'success' && '✅' || '❌' }} |"
+            echo ""
+            echo "Runbook: \`docs/EMERGENCY_DRILL.md\` — release checklist in \`docs/RELEASE.md\`."
+            echo ""
+            echo '```'
+            echo "Drill suite: cargo test --package xelma-contract --lib tests::drill -- --nocapture"
+            echo "Local gate : ./scripts/emergency_drill_gate.sh"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload emergency drill log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emergency-drill-log
+          path: emergency-drill-gate.log
+          retention-days: 30
+          if-no-files-found: ignore
+
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [rust-test, contract-build, bindings-test, bindings-build, bindings-vitest, e2e-smoke, parity-check, coverage, format-check, license-header-check, security-audit, wasm-size-gate]
+    needs: [rust-test, contract-build, bindings-test, bindings-build, bindings-vitest, e2e-smoke, parity-check, coverage, format-check, license-header-check, security-audit, wasm-size-gate, emergency-drill]
     if: always()
     steps:
       - name: Check all jobs status
@@ -618,7 +686,8 @@ jobs:
              [ "${{ needs.format-check.result }}" != "success" ] || \
              [ "${{ needs.license-header-check.result }}" != "success" ] || \
              [ "${{ needs.security-audit.result }}" != "success" ] || \
-             [ "${{ needs.wasm-size-gate.result }}" != "success" ]; then
+             [ "${{ needs.wasm-size-gate.result }}" != "success" ] || \
+             [ "${{ needs.emergency-drill.result }}" != "success" ]; then
             echo "One or more CI jobs failed"
             echo "Rust Tests: ${{ needs.rust-test.result }}"
             echo "Contract Build: ${{ needs.contract-build.result }}"
@@ -632,6 +701,7 @@ jobs:
             echo "SPDX Headers: ${{ needs.license-header-check.result }}"
             echo "Security Audit: ${{ needs.security-audit.result }}"
             echo "WASM Size Gate: ${{ needs.wasm-size-gate.result }}"
+            echo "Emergency Drill Gate: ${{ needs.emergency-drill.result }}"
             exit 1
           fi
           echo "All CI checks passed"
