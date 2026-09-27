@@ -301,8 +301,12 @@ pub fn place_bet(
 ) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
-    _ensure_normal_mode(&env)?;
-    _enforce_access_control(&env, &user)?;
+    _ensure_normal_mode(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("place_bet"), e);
+    })?;
+    _enforce_access_control(&env, &user).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("place_bet"), e);
+    })?;
 
     if amount <= 0 {
         return Err(ContractError::InvalidBetAmount);
@@ -424,8 +428,12 @@ pub fn place_precision_prediction(
 ) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
-    _ensure_normal_mode(&env)?;
-    _enforce_access_control(&env, &user)?;
+    _ensure_normal_mode(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("plc_prec"), e);
+    })?;
+    _enforce_access_control(&env, &user).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("plc_prec"), e);
+    })?;
 
     if amount <= 0 {
         return Err(ContractError::InvalidBetAmount);
@@ -542,8 +550,12 @@ pub fn commit_prediction(
     amount: i128,
 ) -> Result<(), ContractError> {
     user.require_auth();
-    _ensure_normal_mode(&env)?;
-    _enforce_access_control(&env, &user)?;
+    _ensure_normal_mode(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("commit"), e);
+    })?;
+    _enforce_access_control(&env, &user).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("commit"), e);
+    })?;
 
     // Reject clearly invalid commitment placeholders early (before balance
     // reads / deductions) so griefing commits cannot lock liquidity.
@@ -649,8 +661,12 @@ pub fn reveal_prediction(
     salt: BytesN<32>,
 ) -> Result<(), ContractError> {
     user.require_auth();
-    _ensure_normal_mode(&env)?;
-    _enforce_access_control(&env, &user)?;
+    _ensure_normal_mode(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("reveal"), e);
+    })?;
+    _enforce_access_control(&env, &user).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("reveal"), e);
+    })?;
 
     // Enforce salt entropy before any storage reads so malformed reveals fail
     // fast with an explicit error (not HashMismatch after a wasted lookup).
@@ -756,8 +772,12 @@ pub fn reveal_prediction(
 pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
-    _ensure_normal_mode(&env)?;
-    _enforce_access_control(&env, &user)?;
+    _ensure_normal_mode(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("cashout"), e);
+    })?;
+    _enforce_access_control(&env, &user).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("cashout"), e);
+    })?;
 
     // Check early cash-out is enabled
     let penalty_bps = get_early_cashout_bps(env.clone())

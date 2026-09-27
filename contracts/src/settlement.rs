@@ -370,7 +370,9 @@ pub fn claim_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     // ── Checks ────────────────────────────────────────────────────────────
     _require_supported_schema(&env)?;
     user.require_auth();
-    _ensure_not_paused(&env)?; // rejects FullyPaused; allows Normal & ClaimsOnly
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &user, symbol_short!("claim"), e);
+    })?; // rejects FullyPaused; allows Normal & ClaimsOnly
 
     let key = DataKeyScoped::PendingWinnings(user.clone());
     let pending: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -447,7 +449,9 @@ pub fn claim_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
 pub fn claim_many(env: Env, users: Vec<Address>) -> Result<Vec<i128>, ContractError> {
     // ── Checks ────────────────────────────────────────────────────────────
     _require_supported_schema(&env)?;
-    _ensure_not_paused(&env)?; // rejects FullyPaused; allows Normal & ClaimsOnly
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &env.current_contract_address(), symbol_short!("clm_many"), e);
+    })?; // rejects FullyPaused; allows Normal & ClaimsOnly
 
     if users.len() > MAX_CLAIM_BATCH_SIZE {
         return Err(ContractError::ClaimBatchTooLarge);
@@ -1404,7 +1408,9 @@ fn _complete_settlement(
 /// stake recorded for this round.
 pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
-    _ensure_not_paused(&env)?;
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &env.current_contract_address(), symbol_short!("void"), e);
+    })?;
 
     let pending =
         _read_pending_dispute(&env, round_id).ok_or(ContractError::RoundNotCancellable)?;
@@ -1507,7 +1513,9 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
 /// has closed. Calling at the exact deadline is allowed.
 pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
-    _ensure_not_paused(&env)?;
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &env.current_contract_address(), symbol_short!("finalize"), e);
+    })?;
 
     let pending = _read_pending_dispute(&env, round_id).ok_or(ContractError::NoActiveRound)?;
     if env.ledger().sequence() < pending.deadline_ledger {
