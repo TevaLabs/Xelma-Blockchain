@@ -1037,6 +1037,92 @@ pub struct ConstitutionMetadata {
     pub established_at_ledger: u32,
 }
 
+// ─── Blue/Green Migration types (Issue #518) ─────────────────────────────────
+
+/// Storage key for the blue/green migration export manifest.
+#[contracttype]
+#[derive(Clone)]
+pub enum MigrationKey {
+    /// Canonical export snapshot written by `export_state`.
+    ExportManifest,
+    /// Flag written once import completes successfully; prevents double-import.
+    ImportComplete,
+}
+
+/// A single user balance entry captured during state export.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BalanceEntry {
+    pub user: Address,
+    pub balance: i128,
+}
+
+/// A single pending-winnings entry captured during state export.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingClaimEntry {
+    pub user: Address,
+    pub amount: i128,
+}
+
+/// Protocol configuration snapshot for the target (vN+1) contract.
+///
+/// Only the fields that affect economic behaviour and risk controls are
+/// exported. Governance keys, oracle rotation proposals, and ephemeral
+/// per-round state are intentionally excluded — they must be re-configured
+/// on the destination contract through normal admin calls.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationConfig {
+    pub schema_version: u32,
+    pub bet_window_ledgers: u32,
+    pub run_window_ledgers: u32,
+    pub close_buffer_ledgers: u32,
+    pub protocol_fee_bps: Option<u32>,
+    pub max_stake: Option<i128>,
+    pub max_user_round_exposure: Option<i128>,
+    pub max_pending_winnings: Option<i128>,
+    pub min_participants: Option<u32>,
+    pub min_bet: Option<i128>,
+    pub oracle_stale_threshold: u64,
+    pub archive_retention: u32,
+    pub dispute_ledgers: u32,
+}
+
+/// Canonical state export produced by `export_state` on the source (vN)
+/// contract.
+///
+/// The snapshot is deterministic: `balances` and `pending_claims` are
+/// sorted lexicographically by user address so that `checksum` can be
+/// reproduced off-chain and verified on the destination contract.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationManifest {
+    /// Monotonically increasing export sequence number (starts at 1).
+    /// Prevents re-using a stale snapshot on the same contract.
+    pub export_seq: u32,
+    /// Ledger sequence at which the export was captured.
+    pub captured_at_ledger: u32,
+    /// Ledger timestamp at which the export was captured.
+    pub captured_at_timestamp: u64,
+    /// Schema version of the source contract.
+    pub source_schema_version: u32,
+    /// All non-zero balances at export time.
+    pub balances: Vec<BalanceEntry>,
+    /// All non-zero pending winnings at export time.
+    pub pending_claims: Vec<PendingClaimEntry>,
+    /// Configuration snapshot.
+    pub config: MigrationConfig,
+    /// SHA-256 of the canonical serialisation of `balances ++ pending_claims`.
+    ///
+    /// Encoding: for each `BalanceEntry` concatenate
+    /// `user.to_string_bytes() | balance.to_be_bytes()`;
+    /// for each `PendingClaimEntry` concatenate
+    /// `user.to_string_bytes() | amount.to_be_bytes()`.
+    /// The two lists are concatenated in order then SHA-256'd.
+    pub checksum: BytesN<32>,
+}
+
 /// Legacy monolithic storage key — retained for a few migration/read paths.
 #[contracttype]
 #[derive(Clone)]
