@@ -107,6 +107,12 @@ pub enum ContractError {
     ClaimBatchTooLarge = 87,
     /// claim_many batch contains the same address more than once (Issue #277)
     DuplicateClaimAddress = 88,
+    /// Blue/green export is too large; reduce the number of tracked users
+    /// and retry (Issue #518).
+    MigrationExportTooLarge = 89,
+    /// Destination contract already completed an import; double-import blocked
+    /// (Issue #518).
+    MigrationAlreadyImported = 90,
     /// Early cash-out feature is disabled or not configured
     EarlyCashoutDisabled = 95,
     /// User does not have an active position to cash out
