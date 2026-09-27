@@ -5,6 +5,10 @@ use crate::admin::{
     _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
     _require_supported_schema,
 };
+use crate::oracle_validation::{
+    _build_attestation_message, _check_heartbeat_health_blocked, _load_twap_samples,
+    _record_twap_sample, _twap_reference_price,
+};
 use crate::common::{
     _accumulate_pending, _emit_action_rejected, _extend_persistent_ttl, _extend_ttl_symbol,
     _set_balance, balance, payout_add, payout_mul, sort_addresses, DEFAULT_ARCHIVE_RETENTION,
@@ -22,13 +26,12 @@ use crate::settlement_math::{
 use crate::storage::clear_round_storage;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
-    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord, OraclePayload,
+    LeaderboardEntry, MultiFeedPayload, OraclePayload,
     OracleQuorumConfig, OneSidedPolicy, PendingWinningsUpdatedAtKey, PrecisionCommitment,
-    PrecisionPayoutPolicy, PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode,
-    TwapSamplesKey, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
+    PrecisionPayoutPolicy, PrecisionPrediction, Round, RoundArchiveStatus, RoundMode,
+    UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
-use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Map, Symbol, Vec};
 
 #[contracttype]
 #[derive(Clone)]
@@ -2692,134 +2695,11 @@ pub fn _refund_under_threshold(
     Ok(())
 }
 
-/// Domain-separation prefix for oracle attestation messages (Issue #263).
-/// Ensures an attestation signature can never be replayed against another
-/// message type that happens to XDR-encode to the same bytes (e.g. a
-/// different contract's signed struct), independent of the on-chain
-/// network_id/contract_addr equality checks performed separately.
-const ATTESTATION_DOMAIN_PREFIX: &[u8] = b"XELMA_ORACLE_ATTESTATION_V1";
-
-/// Builds the canonical message an oracle operator signs off-chain
-/// (Issue #263): a fixed domain prefix followed by the XDR encoding of
-/// every field that binds this payload to a specific network, contract,
-/// round, price, timestamp, and nonce. Verified on-chain via
-/// `env.crypto().ed25519_verify()` against the configured attestation key.
-///
-/// Deliberately excludes `confidence` and `attestation` itself — the former
-/// is advisory metadata, the latter is the signature being verified.
-pub fn _build_attestation_message(env: &Env, payload: &OraclePayload) -> Bytes {
-    let mut message = Bytes::from_slice(env, ATTESTATION_DOMAIN_PREFIX);
-    message.append(&payload.network_id.clone().into());
-    message.append(&payload.contract_addr.clone().to_xdr(env));
-    message.append(&payload.round_id.to_xdr(env));
-    message.append(&payload.price.to_xdr(env));
-    message.append(&payload.timestamp.to_xdr(env));
-    message.append(&payload.nonce.to_xdr(env));
-    message
-}
-
-/// Computes the TWAP reference price from the last `window_samples` recorded
-/// settlement prices (Issue #266). Simple arithmetic mean — samples are
-/// recorded once per settled round (not on a continuous clock), so a
-/// duration-weighted average would weight every sample equally anyway.
-///
-/// Returns `InsufficientTwapSamples` if fewer than `window_samples` have
-/// been recorded yet, so an admin can't silently settle against a thin or
-/// empty window early in a deployment's life.
-pub fn _twap_reference_price(env: &Env, window_samples: u32) -> Result<u128, ContractError> {
-    let samples = _load_twap_samples(env);
-    if samples.len() < window_samples {
-        return Err(ContractError::WindowOutOfRange);
-    }
-
-    let start = samples.len() - window_samples;
-    let mut sum: u128 = 0;
-    let mut count: u128 = 0;
-    for i in start..samples.len() {
-        if let Some(sample) = samples.get(i) {
-            sum = sum
-                .checked_add(sample.price)
-                .ok_or(ContractError::Overflow)?;
-            count += 1;
-        }
-    }
-    if count == 0 {
-        return Err(ContractError::WindowOutOfRange);
-    }
-    Ok(sum / count)
-}
-
-/// Loads the bounded ring of recent settlement price samples (Issue #266).
-pub fn _load_twap_samples(env: &Env) -> Vec<PriceSample> {
-    let key = TwapSamplesKey::Samples;
-    if env.storage().persistent().has(&key) {
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
-    }
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Vec::new(env))
-}
-
-/// Appends a settled price to the TWAP sample ring, evicting the oldest
-/// entry once the ring exceeds `MAX_TWAP_WINDOW_SAMPLES` (Issue #266).
-pub fn _record_twap_sample(env: &Env, price: u128, timestamp: u64) {
-    let key = TwapSamplesKey::Samples;
-    let mut samples = _load_twap_samples(env);
-    samples.push_back(PriceSample { price, timestamp });
-    while samples.len() > crate::common::MAX_TWAP_WINDOW_SAMPLES {
-        samples.remove(0);
-    }
-    env.storage().persistent().set(&key, &samples);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
-}
-
-/// Returns `true` if the oracle heartbeat health gate should block settlement (Issue #264).
-///
-/// Checks:
-/// 1. No heartbeat recorded → blocked
-/// 2. Status = 2 (offline) → blocked
-/// 3. Heartbeat stale beyond (threshold + grace) → blocked
-/// 4. Otherwise → not blocked (allowed)
-pub fn _check_heartbeat_health_blocked(env: &Env, config: &HbGateConfig) -> bool {
-    use crate::common::DEFAULT_ORACLE_STALE_THRESHOLD;
-
-    let heartbeat_key = DataKeyCore::OracleHeartbeat;
-    _extend_persistent_ttl(env, &heartbeat_key);
-    let record: OracleHeartbeatRecord = match env.storage().persistent().get(&heartbeat_key) {
-        Some(r) => r,
-        None => return true, // No heartbeat → blocked
-    };
-
-    // Offline status always blocks
-    if record.status == 2 {
-        return true;
-    }
-
-    // Check staleness with grace period
-    let threshold_key = DataKeyCore::OracleStaleThreshold;
-    _extend_persistent_ttl(env, &threshold_key);
-    let threshold: u64 = env
-        .storage()
-        .persistent()
-        .get(&threshold_key)
-        .unwrap_or(DEFAULT_ORACLE_STALE_THRESHOLD);
-
-    let grace: u64 = config.grace_seconds;
-
-    let current_time = env.ledger().timestamp();
-    let deadline = record
-        .timestamp
-        .saturating_add(threshold)
-        .saturating_add(grace);
-
-    // Blocked if past the stale threshold + grace period
-    current_time > deadline
-}
+// ─── Oracle validation helpers ────────────────────────────────────────────────
+//
+// Extracted to `crate::oracle_validation` (Issue #511).
+// Imported at the top of this file; settlement calls them directly.
+// See `contracts/src/oracle_validation.rs` for documentation and unit tests.
 
 pub fn _update_stats_win(env: &Env, user: Address) -> Result<(), ContractError> {
     let key = DataKeyScoped::UserStats(user.clone());

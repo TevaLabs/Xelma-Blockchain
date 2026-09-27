@@ -3,7 +3,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::settlement::_build_attestation_message;
+use crate::oracle_validation::_build_attestation_message;
 use crate::types::OraclePayload;
 use ed25519_dalek::{Signer, SigningKey};
 use rand::rngs::OsRng;

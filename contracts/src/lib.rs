@@ -27,6 +27,7 @@ mod errors;
 mod governance;
 mod insurance;
 mod leaderboard;
+pub mod oracle_validation;
 mod queries;
 mod settlement;
 mod storage;
