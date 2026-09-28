@@ -84,7 +84,7 @@ fn test_reclaim_fails_when_expiry_disabled() {
     set_pending_at_current_ledger(&env, &contract_id, &user, 1000);
 
     let result = client.try_reclaim_expired_pending_winnings(&user);
-    assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
+    assert_eq!(result, Err(Ok(ContractError::ExpiryNotConfigured)));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn test_reclaim_fails_for_nonexistent_pending() {
     apply_pending_winnings_expiry(&env, &client, 500);
 
     let result = client.try_reclaim_expired_pending_winnings(&user);
-    assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
+    assert_eq!(result, Err(Ok(ContractError::PendingWinningsNotFound)));
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn test_reclaim_succeeds_when_expired() {
 
     // Tracking key cleared — second call fails
     let result = client.try_reclaim_expired_pending_winnings(&user);
-    assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
+    assert_eq!(result, Err(Ok(ContractError::PendingWinningsNotFound)));
 }
 
 #[test]
@@ -196,6 +196,8 @@ fn test_claim_winnings_clears_tracking_key() {
 
     // Advance past bet window (6) + into run window so resolve works
     env.ledger().with_mut(|li| li.sequence_number = 19);
+    // Settlement requires a healthy oracle heartbeat.
+    client.update_oracle_heartbeat(&0u32);
 
     client.resolve_round(&OraclePayload {
         price: 1_2000000,

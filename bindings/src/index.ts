@@ -562,7 +562,6 @@ export const ContractError = {
   /**
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
-  61: {message:"PendingWinningsNotExpired"},
   63: {message:"InvalidCommitment"},
   64: {message:"InvalidSalt"},
   /**
@@ -618,7 +617,33 @@ export const ContractError = {
   /** Oracle heartbeat failed the configured health policy. */
   85: {message:"OracleHeartbeatUnhealthy"},
   /** Pending winnings have not reached their expiry threshold. */
-  86: {message:"PendingWinningsNotExpired"}
+  86: {message:"PendingWinningsNotExpired"},
+  /** claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE. */
+  87: {message:"ClaimBatchTooLarge"},
+  /** claim_many batch contains a duplicate address. */
+  88: {message:"DuplicateClaimAddress"},
+  /** The dispute window for voiding the round has expired. */
+  91: {message:"DisputeWindowExpired"},
+  /** The round cannot be finalized before its dispute window elapses. */
+  92: {message:"ClaimLocked"},
+  /** The current ledger already identifies another round. */
+  93: {message:"RoundStartLedgerReused"},
+  /** A pagination limit is zero or exceeds MAX_PAGE_SIZE. */
+  94: {message:"PageSizeExceeded"},
+  /** Early cash-out is disabled. */
+  95: {message:"EarlyCashoutDisabled"},
+  /** The user has no active position to cash out. */
+  96: {message:"PositionNotFound"},
+  /** Early cash-out is unavailable in the current round phase. */
+  97: {message:"InvalidPhaseForCashout"},
+  /** Early cash-out is only available for Up/Down rounds. */
+  98: {message:"WrongModeForCashout"},
+  /** An insurance payout split does not match the covered balance. */
+  99: {message:"InsuranceInvalidSplit"},
+  /** The insurance fund cannot cover the requested payout. */
+  100: {message:"InsuranceInsufficientFund"},
+  /** The supplied token amount is invalid. */
+  101: {message:"InvalidAmount"}
 }
 
 /**

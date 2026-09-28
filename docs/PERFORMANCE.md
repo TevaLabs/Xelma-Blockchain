@@ -76,7 +76,7 @@ cargo test --package xelma-contract precision_cap -- --nocapture
 Each step prints a machine-readable line:
 
 ```text
-[cost-benchmark-cap] participants=10 cpu_instructions=31648897 memory_bytes=4433433 cpu_pct_of_budget=31.6489
+[cost-benchmark-cap] participants=10 cpu_instructions=31703718 memory_bytes=4461060 cpu_pct_of_budget=31.7037
 ```
 
 and a markdown row that can be copied directly into the table below. The
@@ -91,12 +91,12 @@ Standard Soroban per-transaction budget: **100,000,000 CPU instructions** and
 
 | Precision participants | CPU instructions | Memory bytes | CPU % of budget |
 |---:|---:|---:|---:|
-| 1 | 1,640,670 | 352,517 | 1.64% |
-| 5 | 8,505,975 | 1,487,683 | 8.51% |
-| 10 | 31,648,897 | 4,433,433 | 31.65% |
-| 15 | 82,371,103 | 9,763,508 | 82.37% |
-| 20 | 172,295,807 | 18,214,658 | 172.30% |
-| 25 | 315,665,956 | 30,523,633 | 315.67% |
+| 1 | 1,656,416 | 360,695 | 1.66% |
+| 5 | 8,544,721 | 1,504,505 | 8.54% |
+| 10 | 31,703,718 | 4,461,060 | 31.70% |
+| 15 | 82,539,801 | 9,801,940 | 82.54% |
+| 20 | 172,625,110 | 18,263,895 | 172.63% |
+| 25 | 315,773,433 | 30,583,675 | 315.77% |
 
 ### Reading the table
 
@@ -159,7 +159,7 @@ admission limit: with `set_max_precision_participants(3)`, the fourth predictor
 is rejected with `PrecisionCapExceeded`. That is what makes the table an upper
 bound on real settlement cost rather than a hypothetical.
 
-## Pagination query limits (Issue #430)
+## Pagination query limits (Issues #430 and #574)
 
 To prevent adversarial over-limit requests from bypassing CPU/memory budgets,
 paginated query functions enforce strict pagination limits:
@@ -186,6 +186,12 @@ Soroban's per-transaction budget. Rejecting over-limit requests prevents callers
 accidentally or maliciously requesting unbounded batches that could fail during
 settlement or cause timeouts.
 
+`contracts/src/tests/pagination_gas_guards.rs` exercises every cursor query at
+`0`, `MAX_PAGE_SIZE + 1`, and `u32::MAX` and asserts the exact
+`PageSizeExceeded` error. It also proves that `MAX_PAGE_SIZE` itself is
+accepted. Validation happens before any storage scan, so adversarial limits
+have constant rejection cost rather than caller-controlled iteration cost.
+
 ## Updating a cost-benchmark ceiling
 
 The `*_CPU_MAX`/`*_MEM_MAX` constants in `contracts/src/tests/cost_benchmarks.rs`
@@ -199,7 +205,7 @@ and in `contracts/BENCHMARKS.md` with the new baseline and the commit/date it
 was captured on, exactly like `docs/wasm-size-budget.md`'s baseline-bump
 procedure for the separate WASM size gate.
 
-## Leaderboard performance analysis (Issue #431)
+## Leaderboard performance analysis (Issues #431 and #575)
 
 Leaderboard operations are benchmarked at `LEADERBOARD_LIMIT` (100 entries) to
 verify bounded CPU cost. See `contracts/src/tests/cost_benchmarks.rs` for the
@@ -247,3 +253,21 @@ At `LEADERBOARD_LIMIT = 100`, the worst-case insertion sort performs at most
 instructions, so leaderboard operations should consume well under 1% of the
 budget. The 50% ceiling assertions in the benchmark tests provide a safety
 margin for host allocator jitter and SDK overhead.
+
+### Benchmark evidence
+
+The executable results are produced by the following named tests in
+[`contracts/src/tests/cost_benchmarks.rs`](../contracts/src/tests/cost_benchmarks.rs):
+
+| Operation at `LEADERBOARD_LIMIT` | Result / guard |
+|---|---|
+| Update | `bench_cost_leaderboard_update_at_limit` records CPU and memory; `verify_leaderboard_update_cost_is_bounded` requires CPU below 50% of the transaction budget |
+| Season reset | `bench_cost_season_reset_at_limit` records CPU and memory; `verify_season_reset_cost_is_bounded` requires CPU below 50% of the transaction budget |
+| Full-page read | `bench_cost_leaderboard_full_page_read_at_limit` records CPU and memory and requires exactly 100 returned entries |
+
+CI runs these tests with `--nocapture` and uploads the complete
+[`cost-benchmarks` artifact](../.github/workflows/ci.yml) for each run. This is
+the authoritative result because host-cost numbers vary with the Soroban SDK
+and runner architecture. The current source baseline cannot be measured
+locally until the unrelated upstream compile failures recorded in
+`SECURITY_REVIEW.md` are repaired; no fabricated CPU numbers are published.

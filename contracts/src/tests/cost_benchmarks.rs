@@ -377,7 +377,7 @@ fn populate_leaderboard(env: &Env, contract_id: &Address) -> soroban_sdk::Vec<Ad
     for _ in 0..LEADERBOARD_LIMIT {
         let user = Address::generate(env);
         env.as_contract(contract_id, || {
-            VirtualTokenContract::_update_stats_win(&env, user.clone()).unwrap();
+            VirtualTokenContract::_update_stats_win(env, user.clone()).unwrap();
         });
         addrs.push_back(user);
     }
