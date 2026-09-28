@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 
 #[test]
@@ -80,7 +81,8 @@ fn test_resolve_precision_closest_guess_wins() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Alice should win the entire pot (100 + 150 + 50 = 300)
     assert_eq!(client.get_pending_winnings(&alice), 300_0000000);
@@ -165,7 +167,8 @@ fn test_resolve_precision_exact_match() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_pending_winnings(&alice), 200_0000000); // Wins entire pot
     assert_eq!(client.get_pending_winnings(&bob), 0);
@@ -203,7 +206,8 @@ fn test_resolve_precision_no_predictions() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Round should be cleared
     assert_eq!(client.get_active_round(), None);
@@ -260,7 +264,8 @@ fn test_resolve_precision_single_prediction() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_pending_winnings(&alice), 100_0000000);
 }
@@ -329,9 +334,9 @@ fn test_resolve_precision_large_differences() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_pending_winnings(&alice), 200_0000000);
     assert_eq!(client.get_pending_winnings(&bob), 0);
 }
-

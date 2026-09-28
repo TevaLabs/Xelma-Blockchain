@@ -10,9 +10,8 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::{
-    BetSide, DataKeyCore, FeeModel, InsuranceEvent, OraclePayload,
-    CANCEL_REASON_FALLBACK_REFUND, CANCEL_REASON_GENERIC, CANCEL_REASON_ORACLE_DEVIATION,
-    CANCEL_REASON_ORACLE_OUTAGE,
+    BetSide, DataKeyCore, FeeModel, InsuranceEvent, OraclePayload, CANCEL_REASON_FALLBACK_REFUND,
+    CANCEL_REASON_GENERIC, CANCEL_REASON_ORACLE_DEVIATION, CANCEL_REASON_ORACLE_OUTAGE,
 };
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -70,11 +69,16 @@ fn resolve_at(
     let round = client
         .get_active_round()
         .expect("active round required to resolve");
+    env.ledger().with_mut(|li| {
+        if li.sequence_number < round.end_ledger {
+            li.sequence_number = round.end_ledger;
+        }
+    });
     client.resolve_round(&OraclePayload {
         price: final_price,
         timestamp: env.ledger().timestamp(),
         round_id: round.start_ledger,
-        nonce: 1u64,
+        nonce: (round.start_ledger as u64) + 1,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
@@ -146,10 +150,7 @@ fn fee_split_50_percent_goes_to_insurance() {
 
     // Total should equal what was originally collected
     let total = ops_treasury + insurance_balance;
-    assert!(
-        total > 0,
-        "total fee split should be conserved"
-    );
+    assert!(total > 0, "total fee split should be conserved");
 }
 
 /// Insurance split bps cannot exceed the maximum (50%).

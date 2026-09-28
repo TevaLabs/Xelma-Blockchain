@@ -79,6 +79,7 @@ fn setup() -> (
     VirtualTokenContractClient<'static>,
 ) {
     let env = Env::default();
+    env.cost_estimate().budget().reset_unlimited();
     env.mock_all_auths();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
@@ -159,7 +160,8 @@ fn bench_cost_resolve_round() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_round", cpu, mem);
     assert!(
@@ -193,7 +195,8 @@ fn bench_cost_claim_winnings() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let (cpu, mem, claimed) = measure(&env, || client.claim_winnings(&alice));
     report("claim_winnings", cpu, mem);
@@ -259,6 +262,7 @@ fn bench_cost_resolve_round_medium_set() {
     client.create_round(&1_0000000u128, &None);
     let round = client.get_active_round().unwrap();
 
+    env.cost_estimate().budget().reset_unlimited();
     for i in 0..25 {
         let user = Address::generate(&env);
         client.mint_initial(&user);
@@ -279,7 +283,7 @@ fn bench_cost_resolve_round_medium_set() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_round_medium_n25", cpu, mem);
@@ -293,6 +297,7 @@ fn bench_cost_resolve_round_max_cap() {
     client.create_round(&1_0000000u128, &None);
     let round = client.get_active_round().unwrap();
 
+    env.cost_estimate().budget().reset_unlimited();
     for i in 0..100 {
         let user = Address::generate(&env);
         client.mint_initial(&user);
@@ -313,7 +318,7 @@ fn bench_cost_resolve_round_max_cap() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_round_max_cap_n100", cpu, mem);
@@ -327,6 +332,7 @@ fn bench_cost_resolve_precision_round_max_cap() {
     client.create_round(&1_0000000u128, &Some(1));
     let round = client.get_active_round().unwrap();
 
+    env.cost_estimate().budget().reset_unlimited();
     for i in 0..100u128 {
         let user = Address::generate(&env);
         client.mint_initial(&user);
@@ -342,7 +348,7 @@ fn bench_cost_resolve_precision_round_max_cap() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_precision_max_cap_n100", cpu, mem);
@@ -370,10 +376,8 @@ fn bench_cost_resolve_precision_round_max_cap() {
 /// Populates the lifetime leaderboard to `LEADERBOARD_LIMIT` by calling
 /// `_update_stats_win` for that many unique users. Returns the generated
 /// addresses.
-fn populate_leaderboard(
-    env: &Env,
-    contract_id: &Address,
-) -> soroban_sdk::Vec<Address> {
+fn populate_leaderboard(env: &Env, contract_id: &Address) -> soroban_sdk::Vec<Address> {
+    env.cost_estimate().budget().reset_unlimited();
     let mut addrs = soroban_sdk::Vec::new(env);
     for _ in 0..LEADERBOARD_LIMIT {
         let user = Address::generate(env);

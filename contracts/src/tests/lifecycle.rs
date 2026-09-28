@@ -3,7 +3,9 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, Round, RoundArchiveStatus, RoundMode};
+use crate::types::{
+    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, Round, RoundArchiveStatus, RoundMode,
+};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -196,7 +198,8 @@ fn test_full_round_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Round should be cleared
     assert_eq!(client.get_active_round(), None);
@@ -283,7 +286,8 @@ fn test_multiple_rounds_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     client.claim_winnings(&alice);
 
     let stats = client.get_user_stats(&alice);
@@ -320,7 +324,8 @@ fn test_multiple_rounds_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let stats = client.get_user_stats(&alice);
     assert_eq!(stats.total_wins, 2);
@@ -348,7 +353,6 @@ fn test_create_round_fails_without_admin_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     // No mocking all auths, so create_round should fail
     let result = client.try_create_round(&1_0000000, &None);
@@ -376,7 +380,6 @@ fn test_place_bet_fails_without_user_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &user,
@@ -424,6 +427,16 @@ fn test_resolve_round_fails_without_oracle_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &oracle,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "update_oracle_heartbeat",
+            args: (0u32,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
     client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
@@ -450,7 +463,8 @@ fn test_resolve_round_fails_without_oracle_auth() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert!(result.is_err());
 }
 
@@ -474,7 +488,6 @@ fn test_claim_winnings_fails_without_user_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &user,
@@ -537,7 +550,8 @@ fn test_round_created_event_includes_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     client.create_round(&1_0000000, &Some(1));
 
@@ -857,7 +871,8 @@ fn test_cross_round_mode_alternation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_active_round(), None);
 
@@ -912,7 +927,8 @@ fn test_cross_round_mode_alternation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_active_round(), None);
 
@@ -921,11 +937,17 @@ fn test_cross_round_mode_alternation() {
         assert!(!env
             .storage()
             .persistent()
-            .has(&DataKeyScoped::PrecisionPosition(round2.round_id, alice.clone())));
+            .has(&DataKeyScoped::PrecisionPosition(
+                round2.round_id,
+                alice.clone()
+            )));
         assert!(!env
             .storage()
             .persistent()
-            .has(&DataKeyScoped::PrecisionPosition(round2.round_id, bob.clone())));
+            .has(&DataKeyScoped::PrecisionPosition(
+                round2.round_id,
+                bob.clone()
+            )));
     });
 
     // Verify archived summary for round 2
@@ -951,7 +973,10 @@ fn test_cross_round_mode_alternation() {
         assert!(!env
             .storage()
             .persistent()
-            .has(&DataKeyScoped::PrecisionPosition(round2.round_id, bob.clone())));
+            .has(&DataKeyScoped::PrecisionPosition(
+                round2.round_id,
+                bob.clone()
+            )));
     });
 
     // Resolve — DOWN wins (price 2.5 < 3.0)
@@ -966,7 +991,8 @@ fn test_cross_round_mode_alternation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_active_round(), None);
 
@@ -1048,7 +1074,7 @@ fn test_round_template_set_get_clear_and_validation() {
     client.clear_round_template();
     assert_eq!(client.get_round_template(), None);
     let result = client.try_clear_round_template();
-    assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
+    assert_eq!(result, Err(Ok(ContractError::NoRoundTemplate)));
 }
 
 /// `create_next_from_template` requires a template to be configured first.
@@ -1065,7 +1091,7 @@ fn test_create_next_from_template_requires_template() {
     client.update_oracle_heartbeat(&0u32);
 
     let result = client.try_create_next_from_template();
-    assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
+    assert_eq!(result, Err(Ok(ContractError::NoRoundTemplate)));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -1131,7 +1157,8 @@ fn test_create_next_from_template_after_settle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert_eq!(client.get_active_round(), None);
 
     let next_round_id = client.create_next_from_template();

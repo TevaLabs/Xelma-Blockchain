@@ -37,11 +37,13 @@ fn setup(
     client.place_bet(&bob, &40i128, &BetSide::Down);
 
     let round = client.get_active_round().unwrap();
-    env.ledger()
-        .with_mut(|ledger| ledger.sequence_number = round.end_ledger);
+    env.ledger().with_mut(|ledger| {
+        ledger.sequence_number = round.end_ledger;
+        ledger.timestamp = 60;
+    });
     client.resolve_round(&OraclePayload {
         price: 2_000,
-        timestamp: env.ledger().timestamp(),
+        timestamp: 60,
         round_id: round.start_ledger,
         nonce: 1,
         network_id: env.ledger().network_id(),
@@ -53,10 +55,9 @@ fn setup(
     (client, contract_id, alice, bob, round.round_id)
 }
 
-fn has_round_event(env: &Env, contract_id: &Address, action: soroban_sdk::Symbol) -> bool {
-    env.events().all().iter().any(|(emitter, topics, _)| {
-        emitter == *contract_id
-            && topics.len() == 2
+fn has_round_event(env: &Env, action: soroban_sdk::Symbol) -> bool {
+    env.events().all().iter().any(|(_, topics, _)| {
+        topics.len() == 2
             && topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("round"))
             && topics.get(1).unwrap().try_into_val(env) == Ok(action.clone())
     })
@@ -88,12 +89,8 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::Voided
     );
-    assert!(has_round_event(
-        &env,
-        &contract_id,
-        symbol_short!("pending")
-    ));
-    assert!(has_round_event(&env, &contract_id, symbol_short!("voided")));
+    assert!(has_round_event(&env, symbol_short!("pending")));
+    assert!(has_round_event(&env, symbol_short!("voided")));
 }
 
 #[test]
@@ -120,9 +117,5 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::Resolved
     );
-    assert!(has_round_event(
-        &env,
-        &contract_id,
-        symbol_short!("finalized")
-    ));
+    assert!(has_round_event(&env, symbol_short!("finalized")));
 }

@@ -53,7 +53,7 @@ echo ""
 
 # ── Build WASM ──────────────────────────────────────────────────────
 echo "[1/5] Building contract WASM …"
-# `wasm32-unknown-unknown` on current Rust toolchains defaults to enabling
+# `wasm32v1-none` on current Rust toolchains defaults to enabling
 # wasm `reference-types`, which the Soroban host rejects at deploy time.
 # `wasm32v1-none` targets the WASM MVP feature baseline Soroban supports.
 # `cargo rustc --crate-type=cdylib` (rather than `cargo build`, which also

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 
 #[test]
@@ -20,7 +21,7 @@ fn test_precision_payout_deterministic_same_inputs() {
 
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000, &Some(1));
 
         env.as_contract(&contract_id, || {
@@ -68,7 +69,8 @@ fn test_precision_payout_deterministic_same_inputs() {
             network_id: env.ledger().network_id(),
             contract_addr: contract_id.clone(),
             confidence: None,
-            attestation: None,        });
+            attestation: None,
+        });
 
         (
             client.get_pending_winnings(&alice),
@@ -154,7 +156,8 @@ fn test_precision_payout_conservation_two_way_tie_remainder() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let alice_payout = client.get_pending_winnings(&alice);
     let bob_payout = client.get_pending_winnings(&bob);
@@ -245,7 +248,8 @@ fn test_precision_payout_conservation_large_tie_set() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let users = [u0, u1, u2, u3, u4, u5, u6, u7, u8, u9];
     let mut sum: i128 = 0;
@@ -260,4 +264,3 @@ fn test_precision_payout_conservation_large_tie_set() {
         "Sum of all payouts must equal total pot exactly"
     );
 }
-

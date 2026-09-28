@@ -42,6 +42,13 @@ fn test_leaderboard_ordered_by_wins() {
     // Must create a round so the leaderboard collector can find active participants.
     client.create_round(&1_0000000u128, &None);
 
+    client.mint_initial(&user_a);
+    client.place_bet(&user_a, &1000i128, &crate::types::BetSide::Up);
+    client.mint_initial(&user_b);
+    client.place_bet(&user_b, &1000i128, &crate::types::BetSide::Up);
+    client.mint_initial(&user_c);
+    client.place_bet(&user_c, &1000i128, &crate::types::BetSide::Up);
+
     // Query wins leaderboard with cursor = None (first page)
     let page = client.get_leaderboard_by_wins(&None, &10);
     assert_eq!(page.0.len(), 3);
@@ -102,6 +109,13 @@ fn test_leaderboard_ordered_by_streak() {
     // Must create a round so the leaderboard collector can find active participants.
     client.create_round(&1_0000000u128, &None);
 
+    client.mint_initial(&user_a);
+    client.place_bet(&user_a, &1000i128, &crate::types::BetSide::Up);
+    client.mint_initial(&user_b);
+    client.place_bet(&user_b, &1000i128, &crate::types::BetSide::Up);
+    client.mint_initial(&user_c);
+    client.place_bet(&user_c, &1000i128, &crate::types::BetSide::Up);
+
     // Query streak leaderboard with cursor = None
     let page = client.get_leaderboard_by_streak(&None, &10);
     assert_eq!(page.0.len(), 3);
@@ -147,6 +161,13 @@ fn test_leaderboard_cursor_pagination() {
     });
 
     client.create_round(&1_0000000u128, &None);
+
+    client.mint_initial(&user_a);
+    client.place_bet(&user_a, &1000i128, &crate::types::BetSide::Up);
+    client.mint_initial(&user_b);
+    client.place_bet(&user_b, &1000i128, &crate::types::BetSide::Up);
+    client.mint_initial(&user_c);
+    client.place_bet(&user_c, &1000i128, &crate::types::BetSide::Up);
 
     // First page: cursor = None, limit = 1 -> should return Bob (5 wins)
     let page0 = client.get_leaderboard_by_wins(&None, &1);
@@ -197,6 +218,11 @@ fn test_leaderboard_deterministic_tie_breaking() {
 
     client.create_round(&1_0000000u128, &None);
 
+    client.mint_initial(&user_a);
+    client.place_bet(&user_a, &1000i128, &crate::types::BetSide::Up);
+    client.mint_initial(&user_b);
+    client.place_bet(&user_b, &1000i128, &crate::types::BetSide::Up);
+
     // Query wins leaderboard with cursor = None
     let page = client.get_leaderboard_by_wins(&None, &10);
     assert_eq!(page.0.len(), 2);
@@ -224,13 +250,15 @@ fn test_leaderboard_limit_capped_at_max_page_size() {
 
     // Create many users with varying wins, all placing bets in the active round.
     // All will be on the participant list and thus visible to the leaderboard.
-    env.as_contract(&contract_id, || {
-        for _ in 0..50 {
-            let u = Address::generate(&env);
+    for _ in 0..50 {
+        let u = Address::generate(&env);
+        client.mint_initial(&u);
+        client.place_bet(&u, &1_0000000i128, &crate::types::BetSide::Up);
+        env.as_contract(&contract_id, || {
             VirtualTokenContract::_update_stats_win(&env, u.clone()).unwrap();
             VirtualTokenContract::_update_stats_win(&env, u.clone()).unwrap();
-        }
-    });
+        });
+    }
 
     // Request with valid limit = 100 (MAX_PAGE_SIZE) should succeed.
     let page = client.get_leaderboard_by_wins(&None, &100);
@@ -312,12 +340,21 @@ fn test_leaderboard_rejects_over_limit_adversarial() {
 
     // Adversarial: request with limit = MAX_PAGE_SIZE + 1 should be rejected
     let result_wins = client.try_get_leaderboard_by_wins(&None, &101);
-    assert!(result_wins.is_err(), "Should reject limit > MAX_PAGE_SIZE (100)");
+    assert!(
+        result_wins.is_err(),
+        "Should reject limit > MAX_PAGE_SIZE (100)"
+    );
 
     let result_streak = client.try_get_leaderboard_by_streak(&None, &1000);
-    assert!(result_streak.is_err(), "Should reject limit > MAX_PAGE_SIZE (100)");
+    assert!(
+        result_streak.is_err(),
+        "Should reject limit > MAX_PAGE_SIZE (100)"
+    );
 
     // Valid request with exactly MAX_PAGE_SIZE should succeed
     let (valid_entries, _) = client.get_leaderboard_by_wins(&None, &100);
-    assert!(valid_entries.len() <= 100, "Should accept limit == MAX_PAGE_SIZE (100)");
+    assert!(
+        valid_entries.len() <= 100,
+        "Should accept limit == MAX_PAGE_SIZE (100)"
+    );
 }

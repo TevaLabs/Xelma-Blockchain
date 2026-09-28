@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 
 #[test]
@@ -67,11 +68,11 @@ fn test_precision_commit_reveal_resolution_payout_with_unrevealed_participants()
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot is 250 (Alice 100 + Bob 150)
     // Alice is the only revealed participant, so she wins the entire pot
     assert_eq!(client.get_pending_winnings(&alice), 250_0000000);
     assert_eq!(client.get_pending_winnings(&bob), 0);
 }
-
