@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::{BetSide, OraclePayload, RoundArchiveStatus};
 use soroban_sdk::testutils::{Address as _, Ledger as _};

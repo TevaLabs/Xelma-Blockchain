@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Stake-Weighted Oracle Committee Module
 //!
 //! Provides cryptoeconomic security for price oracle feeds: feeder registration,
