@@ -38,6 +38,14 @@ fn sign_payload(env: &Env, signing_key: &SigningKey, payload: &OraclePayload) ->
     BytesN::from_array(env, &signature.to_bytes())
 }
 
+fn malformed_signature(env: &Env) -> BytesN<64> {
+    let mut bytes = [0u8; 64];
+    bytes[0] = 0xFF;
+    bytes[31] = 0x7F;
+    bytes[63] = 0x01;
+    BytesN::from_array(env, &bytes)
+}
+
 fn base_payload(
     env: &Env,
     contract_id: &Address,
@@ -158,6 +166,26 @@ fn test_attestation_tampered_price_after_signing_rejected() {
     // bytes themselves are well-formed.
     payload.price = 2_000_0000;
     payload.attestation = Some(signature);
+
+    client.resolve_round(&payload);
+}
+
+#[test]
+#[should_panic]
+fn test_attestation_malformed_signature_bytes_rejected() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup(&env);
+    let (pubkey, _signing_key) = generate_keypair(&env);
+
+    client.set_attestation_key(&Some(pubkey));
+    client.create_round(&1_000_0000, &None);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    let mut payload = base_payload(&env, &contract_id, 0, 1, 1_000_0000);
+    payload.attestation = Some(malformed_signature(&env));
 
     client.resolve_round(&payload);
 }

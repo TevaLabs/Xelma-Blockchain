@@ -143,6 +143,17 @@ Soroban-specific risk considerations:
 - **Oracle inputs:** `OraclePayload` enforces non-zero price, timestamp not in the future, 300-second freshness, and round binding against `Round.start_ledger`. `create_round` guarantees `start_ledger` is unique per round, so the binding identifies exactly one round.
 - **Resource limits:** resolution is O(n) over participants. Precision rounds include an admin-configurable participant cap; operators still need benchmark evidence before raising it near upper bounds.
 
+### Oracle attestation verification boundary
+
+The optional Ed25519 proof layer is a payload-integrity check, not an oracle-quality oracle or consensus mechanism. When the admin configures a signing key using `set_attestation_key(Some(pubkey))`, every settlement attempt must include a valid `OraclePayload.attestation` signature over the domain-separated attestation message built from the payload fields and the contract context. The on-chain check only accepts a signature if the prover key matches the configured public key and the payload fields are exactly those signed.
+
+Valid boundary conditions:
+
+- `attestation: None` is rejected once the key is configured, because a configured key turns the attestation check from optional to mandatory.
+- Any malformed 64-byte signature, any signature signed with a mismatched key, and any signature over a modified payload (price, timestamp, round binding, nonce, network, contract, or confidence) is rejected and aborts settlement.
+- If the admin clears attestation with `set_attestation_key(None)`, the legacy path is restored and settlement will proceed without a cryptographic proof, exactly as the pre-#263 behaviour expected.
+- This boundary protects against relayer tampering and wrong-key usage, but it does not prevent a valid-but-incorrect oracle price from being submitted by a compromised oracle. That risk remains entirely outside the cryptographic proof layer and requires operational controls, monitoring, and emergency pause procedures.
+
 ## Findings
 
 | ID | Severity | Status | Finding | Evidence / code locations | Impact | Mitigation plan / owner |
