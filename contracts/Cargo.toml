@@ -7,7 +7,9 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = { workspace = true }
+# `alloc` pulls in the SDK's bump `#[global_allocator]` + panic handler, which
+# the `no_std` cdylib build needs when linking for wasm32.
+soroban-sdk = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

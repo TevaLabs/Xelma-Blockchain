@@ -562,7 +562,6 @@ export const ContractError = {
   /**
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
-  61: {message:"PendingWinningsNotExpired"},
   63: {message:"InvalidCommitment"},
   64: {message:"InvalidSalt"},
   /**
@@ -618,7 +617,27 @@ export const ContractError = {
   /** Oracle heartbeat failed the configured health policy. */
   85: {message:"OracleHeartbeatUnhealthy"},
   /** Pending winnings have not reached their expiry threshold. */
-  86: {message:"PendingWinningsNotExpired"}
+  86: {message:"PendingWinningsNotExpired"},
+  /** claim_many batch size exceeds its maximum. */
+  87: {message:"ClaimBatchTooLarge"},
+  /** claim_many batch contains a duplicate address. */
+  88: {message:"DuplicateClaimAddress"},
+  /** The dispute window has expired or is not configured. */
+  91: {message:"DisputeWindowExpired"},
+  /** Finalization was attempted before the dispute window elapsed. */
+  92: {message:"ClaimLocked"},
+  /** A round start ledger was reused. */
+  93: {message:"RoundStartLedgerReused"},
+  /** Early cash-out is disabled. */
+  94: {message:"EarlyCashoutDisabled"},
+  /** No active position exists for cash-out. */
+  95: {message:"PositionNotFound"},
+  /** Cash-out was attempted outside the running phase. */
+  96: {message:"InvalidPhaseForCashout"},
+  /** Cash-out is supported only for UpDown rounds. */
+  97: {message:"WrongModeForCashout"},
+  /** The user's active and pending exposure exceeds its configured limit. */
+  98: {message:"PortfolioExposureCapExceeded"}
 }
 
 /**

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 
 #[test]
@@ -80,7 +81,8 @@ fn test_resolve_precision_closest_guess_wins() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Alice should win the entire pot (100 + 150 + 50 = 300)
     assert_eq!(client.get_pending_winnings(&alice), 300_0000000);
@@ -180,7 +182,8 @@ fn test_resolve_precision_tie_splits_pot() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot is 300, split evenly between Alice and Bob (150 each)
     assert_eq!(client.get_pending_winnings(&alice), 150_0000000);
@@ -263,7 +266,8 @@ fn test_resolve_precision_exact_match() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_pending_winnings(&alice), 200_0000000); // Wins entire pot
     assert_eq!(client.get_pending_winnings(&bob), 0);
@@ -301,7 +305,8 @@ fn test_resolve_precision_no_predictions() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Round should be cleared
     assert_eq!(client.get_active_round(), None);
@@ -382,7 +387,8 @@ fn test_resolve_precision_three_way_tie() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot is 400, split 3 ways = 133.33... each
     // With remainder policy: Alice gets 133 + 1 (remainder), Bob and Charlie get 133
@@ -447,7 +453,8 @@ fn test_resolve_precision_single_prediction() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_pending_winnings(&alice), 100_0000000);
 }
@@ -516,7 +523,8 @@ fn test_resolve_precision_large_differences() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_pending_winnings(&alice), 200_0000000);
     assert_eq!(client.get_pending_winnings(&bob), 0);
@@ -598,7 +606,8 @@ fn test_precision_remainder_3way_tie_uneven_pot() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot: 100_0000000, Winner count: 3
     // payout_per_winner = 100_0000000 / 3 = 33_3333333
@@ -716,7 +725,8 @@ fn test_precision_remainder_5way_tie() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot: 103_0000000, Winner count: 5
     // payout_per_winner = 103_0000000 / 5 = 20_6000000
@@ -800,7 +810,8 @@ fn test_precision_no_remainder() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot: 100, Winner count: 2
     // payout_per_winner = 100 / 2 = 50
@@ -832,7 +843,7 @@ fn test_precision_payout_deterministic_same_inputs() {
 
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000, &Some(1));
 
         env.as_contract(&contract_id, || {
@@ -880,7 +891,8 @@ fn test_precision_payout_deterministic_same_inputs() {
             network_id: env.ledger().network_id(),
             contract_addr: contract_id.clone(),
             confidence: None,
-            attestation: None,        });
+            attestation: None,
+        });
 
         (
             client.get_pending_winnings(&alice),
@@ -966,7 +978,8 @@ fn test_precision_payout_conservation_two_way_tie_remainder() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let alice_payout = client.get_pending_winnings(&alice);
     let bob_payout = client.get_pending_winnings(&bob);
@@ -1057,7 +1070,8 @@ fn test_precision_payout_conservation_large_tie_set() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let users = [u0, u1, u2, u3, u4, u5, u6, u7, u8, u9];
     let mut sum: i128 = 0;
@@ -1140,7 +1154,8 @@ fn test_precision_commit_reveal_resolution_payout_with_unrevealed_participants()
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot is 250 (Alice 100 + Bob 150)
     // Alice is the only revealed participant, so she wins the entire pot
@@ -1230,7 +1245,8 @@ fn test_precision_remainder_goes_to_lexicographically_lowest_winner() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot = 200_0000001
     // split = 200_0000001 / 2 = 100_0000000

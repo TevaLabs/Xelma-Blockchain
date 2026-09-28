@@ -27,7 +27,11 @@ pub fn read(env: &Env, user: &Address) -> PortfolioExposure {
     env.storage()
         .persistent()
         .get(&storage_key)
-        .unwrap_or(PortfolioExposure { total: 0, up: 0, down: 0 })
+        .unwrap_or(PortfolioExposure {
+            total: 0,
+            up: 0,
+            down: 0,
+        })
 }
 
 pub fn add_stake(
@@ -51,8 +55,20 @@ pub fn add_stake(
         }
     }
     let (up, down) = match side {
-        Some(BetSide::Up) => (current.up.checked_add(amount).ok_or(ContractError::Overflow)?, current.down),
-        Some(BetSide::Down) => (current.up, current.down.checked_add(amount).ok_or(ContractError::Overflow)?),
+        Some(BetSide::Up) => (
+            current
+                .up
+                .checked_add(amount)
+                .ok_or(ContractError::Overflow)?,
+            current.down,
+        ),
+        Some(BetSide::Down) => (
+            current.up,
+            current
+                .down
+                .checked_add(amount)
+                .ok_or(ContractError::Overflow)?,
+        ),
         None => (current.up, current.down),
     };
     write(env, user, PortfolioExposure { total, up, down });
@@ -71,10 +87,25 @@ pub fn remove_stake(
     if current.total < amount {
         return Ok(());
     }
-    let total = current.total.checked_sub(amount).ok_or(ContractError::Overflow)?;
+    let total = current
+        .total
+        .checked_sub(amount)
+        .ok_or(ContractError::Overflow)?;
     let (up, down) = match side {
-        Some(BetSide::Up) => (current.up.checked_sub(amount).ok_or(ContractError::Overflow)?, current.down),
-        Some(BetSide::Down) => (current.up, current.down.checked_sub(amount).ok_or(ContractError::Overflow)?),
+        Some(BetSide::Up) => (
+            current
+                .up
+                .checked_sub(amount)
+                .ok_or(ContractError::Overflow)?,
+            current.down,
+        ),
+        Some(BetSide::Down) => (
+            current.up,
+            current
+                .down
+                .checked_sub(amount)
+                .ok_or(ContractError::Overflow)?,
+        ),
         None => (current.up, current.down),
     };
     write(env, user, PortfolioExposure { total, up, down });

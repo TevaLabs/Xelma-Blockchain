@@ -12,7 +12,9 @@
 //! through `clear_user_positions` or `clear_round_storage`.
 
 use crate::risk;
-use crate::types::{DataKeyCore, DataKeyScoped, PrecisionCommitment, PrecisionPrediction, UserPosition};
+use crate::types::{
+    DataKeyCore, DataKeyScoped, PrecisionCommitment, PrecisionPrediction, UserPosition,
+};
 use soroban_sdk::{Address, Env, Vec};
 
 /// Removes **all** position storage keys for a single participant,
@@ -28,7 +30,11 @@ use soroban_sdk::{Address, Env, Vec};
 #[inline]
 pub fn clear_user_positions(env: &Env, round_id: u64, user: &Address) {
     let position_key = DataKeyScoped::Position(round_id, user.clone());
-    if let Some(position) = env.storage().persistent().get::<_, UserPosition>(&position_key) {
+    if let Some(position) = env
+        .storage()
+        .persistent()
+        .get::<_, UserPosition>(&position_key)
+    {
         let _ = risk::remove_stake(env, user.clone(), position.amount, Some(position.side));
     } else {
         let prediction_key = DataKeyScoped::PrecisionPosition(round_id, user.clone());
@@ -48,9 +54,7 @@ pub fn clear_user_positions(env: &Env, round_id: u64, user: &Address) {
             let _ = risk::remove_stake(env, user.clone(), amount, None);
         }
     }
-    env.storage()
-        .persistent()
-        .remove(&position_key);
+    env.storage().persistent().remove(&position_key);
     env.storage()
         .persistent()
         .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));

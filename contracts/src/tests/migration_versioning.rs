@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Tests for schema versioning and migration guards.
 
-use crate::common::_migrated_key;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{DataKeyCore, DataKeyScoped};
+use crate::types::DataKeyCore;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env};
 
@@ -46,7 +45,9 @@ fn test_migrate_v1_to_v2_happy_path() {
 
     // Simulate legacy deployment missing schema version (treated as v1).
     env.as_contract(&contract_id, || {
-        env.storage().persistent().remove(&DataKeyCore::SchemaVersion);
+        env.storage()
+            .persistent()
+            .remove(&DataKeyCore::SchemaVersion);
     });
 
     assert_eq!(client.get_schema_version(), 1u32);
@@ -68,7 +69,9 @@ fn test_migration_blocked_when_round_active() {
 
     // Simulate legacy schema.
     env.as_contract(&contract_id, || {
-        env.storage().persistent().remove(&DataKeyCore::SchemaVersion);
+        env.storage()
+            .persistent()
+            .remove(&DataKeyCore::SchemaVersion);
     });
 
     // Create an active round so migration is blocked.
@@ -146,7 +149,9 @@ fn test_dry_run_v1_to_v2_passes_validation() {
 
     // Simulate legacy schema v1.
     env.as_contract(&contract_id, || {
-        env.storage().persistent().remove(&DataKeyCore::SchemaVersion);
+        env.storage()
+            .persistent()
+            .remove(&DataKeyCore::SchemaVersion);
     });
 
     assert_eq!(client.get_schema_version(), 1u32);

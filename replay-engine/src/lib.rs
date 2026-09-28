@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! Deterministic round replay recorder for audits and disputes (Issue #369).
 
+// Shared settlement-math helpers are included verbatim from the contract crate
+// for parity replay; some of them are intentionally not called by the engine.
+#![allow(dead_code)]
+#![allow(clippy::manual_abs_diff)]
+#![allow(clippy::manual_checked_ops)]
+#![allow(clippy::inconsistent_digit_grouping)]
+
 extern crate alloc;
 
 pub mod diagnostics;
