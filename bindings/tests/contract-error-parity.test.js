@@ -95,4 +95,32 @@ describe("Contract Error Parity", () => {
   it("contains formatContractError helper", () => {
     expect(bindingsCode.includes("export function formatContractError")).toBe(true);
   });
+
+  it("has a type-level ContractErrorCode enum in sync with Rust", () => {
+    const enumMatch = bindingsCode.match(/export\s+enum\s+ContractErrorCode\s*\{([\s\S]*?)\n\}/);
+    expect(enumMatch, "ContractErrorCode enum not found in bindings/src/index.ts").toBeTruthy();
+
+    const enumCodes = new Map();
+    const enumEntryRegex = /^\s*(\w+)\s*=\s*(\d+),?\s*$/gm;
+    let enumEntry;
+    while ((enumEntry = enumEntryRegex.exec(enumMatch[1])) !== null) {
+      enumCodes.set(parseInt(enumEntry[2], 10), enumEntry[1]);
+    }
+
+    const missingInEnum = [];
+    for (const [code, name] of rustCodes) {
+      if (enumCodes.get(code) !== name) {
+        missingInEnum.push(`${code}: expected ${name}, got ${enumCodes.get(code) ?? "<missing>"}`);
+      }
+    }
+    expect(missingInEnum).toEqual([]);
+
+    const extraInEnum = [];
+    for (const [code, name] of enumCodes) {
+      if (!rustCodes.has(code)) {
+        extraInEnum.push(`${code}: ${name}`);
+      }
+    }
+    expect(extraInEnum).toEqual([]);
+  });
 });
