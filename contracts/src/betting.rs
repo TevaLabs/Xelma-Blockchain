@@ -10,6 +10,7 @@ use crate::config::{
     _collect_protocol_fee, _read_fee_model, get_early_cashout_bps, get_max_precision_participants,
 };
 use crate::errors::ContractError;
+use crate::risk;
 use crate::settlement::_persist_user_outcome;
 use crate::types::{
     BetSide, DataKeyCore, DataKeyScoped, PrecisionCommitment, PrecisionPrediction, Round,
@@ -365,6 +366,8 @@ pub fn place_bet(
         .ok_or(ContractError::Overflow)?;
     _set_balance(&env, user.clone(), new_balance);
 
+    risk::add_stake(&env, user.clone(), amount, Some(side.clone()))?;
+
     // Write single-user position key
     let position = UserPosition {
         amount,
@@ -503,6 +506,8 @@ pub fn place_precision_prediction(
         .ok_or(ContractError::Overflow)?;
     _set_balance(&env, user.clone(), new_balance);
 
+    risk::add_stake(&env, user.clone(), amount, None)?;
+
     // Write single-user prediction key
     let prediction = PrecisionPrediction {
         user: user.clone(),
@@ -612,6 +617,8 @@ pub fn commit_prediction(
         .checked_sub(amount)
         .ok_or(ContractError::Overflow)?;
     _set_balance(&env, user.clone(), new_balance);
+
+    risk::add_stake(&env, user.clone(), amount, None)?;
 
     // Store commitment
     let commitment = PrecisionCommitment {
@@ -760,8 +767,8 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _enforce_access_control(&env, &user)?;
 
     // Check early cash-out is enabled
-    let penalty_bps = get_early_cashout_bps(env.clone())
-        .ok_or(ContractError::EarlyCashoutDisabled)?;
+    let penalty_bps =
+        get_early_cashout_bps(env.clone()).ok_or(ContractError::EarlyCashoutDisabled)?;
 
     if penalty_bps == 0 || penalty_bps > 10_000 {
         return Err(ContractError::EarlyCashoutDisabled);
@@ -807,9 +814,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // If forfeit rounds down to zero (very small stake relative to penalty),
     // user gets full refund — still remove position from pool.
-    let cashout = stake
-        .checked_sub(forfeit)
-        .ok_or(ContractError::Overflow)?;
+    let cashout = stake.checked_sub(forfeit).ok_or(ContractError::Overflow)?;
 
     // Deduct full stake from the appropriate pool
     match position.side {
@@ -860,6 +865,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // Remove user's position
     env.storage().persistent().remove(&pos_key);
+    risk::remove_stake(&env, user.clone(), stake, Some(position.side.clone()))?;
 
     // Remove user from participant list
     let participants_key = DataKeyScoped::RoundParticipants(round.round_id);
@@ -940,38 +946,23 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
 
     // ─── Epoch budget check ──────────────────────────────────────────────
     const EP_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
-    let epoch_budget: i128 = env
-        .storage()
-        .instance()
-        .get(&EP_BUDGET_KEY)
-        .unwrap_or(0);
+    let epoch_budget: i128 = env.storage().instance().get(&EP_BUDGET_KEY).unwrap_or(0);
     if epoch_budget > 0 {
         let current_epoch = _current_epoch_id(&env);
         const EP_CONSUMED_KEY: Symbol = symbol_short!("EpMintCsm");
         const EP_EPOCH_KEY: Symbol = symbol_short!("EpMintEpc");
-        let stored_epoch: u32 = env
-            .storage()
-            .temporary()
-            .get(&EP_EPOCH_KEY)
-            .unwrap_or(0);
+        let stored_epoch: u32 = env.storage().temporary().get(&EP_EPOCH_KEY).unwrap_or(0);
         let consumed: i128 = if stored_epoch == current_epoch {
-            env.storage()
-                .temporary()
-                .get(&EP_CONSUMED_KEY)
-                .unwrap_or(0)
+            env.storage().temporary().get(&EP_CONSUMED_KEY).unwrap_or(0)
         } else {
             0
         };
         let new_consumed = consumed.checked_add(initial_amount);
         match new_consumed {
             Some(val) if val <= epoch_budget => {
-                env.storage()
-                    .temporary()
-                    .set(&EP_CONSUMED_KEY, &val);
+                env.storage().temporary().set(&EP_CONSUMED_KEY, &val);
                 if stored_epoch != current_epoch {
-                    env.storage()
-                        .temporary()
-                        .set(&EP_EPOCH_KEY, &current_epoch);
+                    env.storage().temporary().set(&EP_EPOCH_KEY, &current_epoch);
                 }
             }
             _ => {

@@ -5,7 +5,10 @@ use super::super::config_helpers::{apply_max_stake, apply_max_user_exposure};
 use super::{emit_result, oracle_payload, setup_contract};
 use crate::errors::ContractError;
 use crate::types::{BetSide, ConfigChangeKind};
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
 
 /// Malicious admin schedules a fee change mid-round via the public timelock API,
 /// hoping to skim the active pot before settlement.
@@ -27,11 +30,9 @@ fn test_fee_gaming_mid_round_schedule_does_not_affect_settlement() {
 
     // Mid-round fee schedule via public API (attacker with admin key)
     client.schedule_protocol_fee_bps(&Some(1_000u32));
-    assert!(
-        client
-            .get_pending_config_change(&ConfigChangeKind::ProtocolFeeBps)
-            .is_some()
-    );
+    assert!(client
+        .get_pending_config_change(&ConfigChangeKind::ProtocolFeeBps)
+        .is_some());
     assert_eq!(client.get_protocol_fee_bps(), None);
 
     env.ledger().with_mut(|li| li.sequence_number = 12);
@@ -81,6 +82,39 @@ fn test_exposure_cap_boundary_attack_blocked() {
         "pass",
         "ExposureCapExceeded",
         "sybil addresses can bypass per-user cap (accepted)",
+        "medium",
+        false,
+    );
+}
+
+/// A user cannot spread exposure across a settled-but-unclaimed round and a
+/// new active round to bypass the configured portfolio limit.
+#[test]
+fn test_cross_round_portfolio_exposure_and_claim_release() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+    let user = Address::generate(&env);
+
+    apply_max_user_exposure(&env, &client, Some(100));
+    client.mint_initial(&user);
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&user, &60, &BetSide::Up);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    client.resolve_round(&oracle_payload(&env, &contract_id, 2_000u128, 0, 1));
+
+    client.create_round(&1_000u128, &None);
+    let result = client.try_place_bet(&user, &41, &BetSide::Down);
+    assert_eq!(result, Err(Ok(ContractError::PortfolioExposureCapExceeded)));
+
+    client.claim_winnings(&user);
+    client.place_bet(&user, &41, &BetSide::Down);
+
+    emit_result(
+        "cross_round_portfolio_exposure",
+        "pass",
+        "PortfolioExposureCapExceeded",
+        "none - portfolio limit spans rounds",
         "medium",
         false,
     );

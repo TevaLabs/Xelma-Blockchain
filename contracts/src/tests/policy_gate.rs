@@ -82,7 +82,7 @@ fn test_policy_gate_admin_config_still_allowed_in_claims_only() {
     let (client, _admin, _oracle) = setup(&env);
 
     client.set_runtime_mode(&1u32); // ClaimsOnly
-    // Admin can still reconfigure — e.g. pause_contract itself is AdminConfig-gated.
+                                    // Admin can still reconfigure — e.g. pause_contract itself is AdminConfig-gated.
     client.pause_contract();
     assert!(client.is_paused());
 }

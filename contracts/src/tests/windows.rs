@@ -56,7 +56,6 @@ fn test_set_windows_fails_without_admin_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     // Attempting to set windows without admin auth
     let result = client.try_set_windows(&10, &20);
@@ -525,7 +524,8 @@ fn test_resolution_only_allowed_after_run_ledgers() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert_eq!(result, Err(Ok(ContractError::RoundNotEnded)));
 
     // Advance to end_ledger
@@ -542,7 +542,8 @@ fn test_resolution_only_allowed_after_run_ledgers() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Round should be cleared
     assert_eq!(client.get_active_round(), None);
@@ -609,7 +610,6 @@ fn test_place_precision_prediction_fails_without_user_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &user,

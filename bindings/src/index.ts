@@ -643,7 +643,9 @@ export const ContractError = {
   /** The insurance fund cannot cover the requested payout. */
   100: {message:"InsuranceInsufficientFund"},
   /** The supplied token amount is invalid. */
-  101: {message:"InvalidAmount"}
+  101: {message:"InvalidAmount"},
+  /** Cross-round portfolio exposure exceeds the configured limit. */
+  102: {message:"PortfolioExposureCapExceeded"}
 }
 
 /**

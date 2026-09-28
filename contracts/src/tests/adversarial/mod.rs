@@ -18,7 +18,7 @@
 //! | Oracle heartbeat griefing | `oracle` | `OracleNotLive` | |
 //! | Oracle nonce replay | `oracle` | `OracleNonceReused` | |
 //! | Cross-round payload replay | `oracle` | `InvalidOracleRound` | |
-//! | Stale oracle timestamp griefing | `oracle` | `StaleOracleData` | |
+//! | Stale oracle timestamp griefing | `oracle` | `OracleTimestampOutsideWindow` | |
 //! | Fee gaming (mid-round schedule) | `economic` | Timelock (pending only) | |
 //! | Exposure cap boundary | `economic` | `ExposureCapExceeded` | |
 //! | Double-claim attack | `lifecycle` | Idempotent zero payout | |

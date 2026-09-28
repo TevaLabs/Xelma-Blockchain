@@ -1,32 +1,31 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
-use alloc::vec::Vec as StdVec;
 use crate::admin::{
     _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
     _require_supported_schema,
 };
 use crate::common::{
-    _accumulate_pending, _emit_action_rejected, _extend_persistent_ttl, _extend_ttl_symbol,
-    _set_balance, balance, payout_add, payout_mul, sort_addresses, DEFAULT_ARCHIVE_RETENTION,
+    _accumulate_pending, _emit_action_rejected, _extend_persistent_ttl, _set_balance, balance,
+    payout_add, payout_mul, sort_addresses, DEFAULT_ARCHIVE_RETENTION,
     DEFAULT_ORACLE_TIMESTAMP_SKEW, MAX_CLAIM_BATCH_SIZE, MAX_ORACLE_OBSERVATIONS,
     SECONDS_PER_LEDGER, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
-use crate::config::{
-    _apply_protocol_fee_precision, _apply_protocol_fee_updown, _read_fee_model,
-};
+use crate::config::{_apply_protocol_fee_precision, _apply_protocol_fee_updown, _read_fee_model};
 use crate::errors::ContractError;
+use crate::risk;
 use crate::settlement_math::{
-    classify_price_direction, compute_deviation_bps, compute_updown_winner_payout,
-    is_one_sided_pool, total_pot_updown, PriceDirection,
+    classify_price_direction, compute_updown_winner_payout, is_one_sided_pool, total_pot_updown,
+    PriceDirection,
 };
 use crate::storage::clear_round_storage;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
-    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord, OraclePayload,
-    OracleQuorumConfig, OneSidedPolicy, PendingWinningsUpdatedAtKey, PrecisionCommitment,
-    PrecisionPayoutPolicy, PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode,
-    TwapSamplesKey, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
+    HbGateConfig, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload,
+    OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy,
+    PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode, TwapSamplesKey,
+    UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
+use alloc::vec::Vec as StdVec;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
 
@@ -97,15 +96,7 @@ fn _remove_pending_dispute(env: &Env, round_id: u64) {
 fn _clear_dispute_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>) {
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
+            crate::storage::clear_user_positions(env, round_id, &user);
         }
     }
     env.storage()
@@ -210,7 +201,9 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
                     }
 
                     participant_stakes.push_back(refund_amount);
-                    total_stake = total_stake.checked_add(refund_amount).unwrap_or(total_stake);
+                    total_stake = total_stake
+                        .checked_add(refund_amount)
+                        .unwrap_or(total_stake);
 
                     if refund_amount > 0 {
                         _accumulate_pending(&env, user.clone(), refund_amount)?;
@@ -244,7 +237,8 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
             }
         }
         if total_coverage > 0 {
-            let distributed = crate::insurance::deduct_insurance_coverage(&env, round_id, total_coverage)?;
+            let distributed =
+                crate::insurance::deduct_insurance_coverage(&env, round_id, total_coverage)?;
             // Distribute coverage proportionally to participants
             if distributed > 0 && total_stake > 0 {
                 for i in 0..participants.len() {
@@ -272,8 +266,8 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
     clear_round_storage(&env, round_id, &participants);
 
     // Clean up participant list and mark round as cancelled
-    let participant_count = participants.len();
-    let total_pot = match round.mode {
+    let _participant_count = participants.len();
+    let _total_pot = match round.mode {
         RoundMode::UpDown => round.pool_up.checked_add(round.pool_down).unwrap_or(0),
         RoundMode::Precision => {
             let mut pot = 0i128;
@@ -385,6 +379,7 @@ pub fn claim_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     // ── Effects ───────────────────────────────────────────────────────────
     // 1. Remove the pending-winnings claim slot first (prevent double-claim).
     env.storage().persistent().remove(&key);
+    risk::remove_pending(&env, user.clone(), pending)?;
     env.storage()
         .persistent()
         .remove(&PendingWinningsUpdatedAtKey(user.clone()));
@@ -480,6 +475,7 @@ pub fn claim_many(env: Env, users: Vec<Address>) -> Result<Vec<i128>, ContractEr
         // ── Effects ───────────────────────────────────────────────────────
         // 1. Remove the pending-winnings claim slot first (prevent double-claim).
         env.storage().persistent().remove(&key);
+        risk::remove_pending(&env, user.clone(), pending)?;
         env.storage()
             .persistent()
             .remove(&PendingWinningsUpdatedAtKey(user.clone()));
@@ -516,22 +512,30 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         _emit_action_rejected(&env, &oracle, symbol_short!("resolve"), e);
     })?;
 
-    // Heartbeat health enforcement (Issue #264) — must come before any
-    // state mutation (nonce consumption) so a stale oracle cannot race
-    // the admin override. An armed one-shot override bypasses the block
-    // and is consumed here; the `hoverride` event is published once the
-    // round id is known.
+    // ─── Oracle heartbeat health gate (Issue #264) ──────────────────────────
+    //
+    // The health gate is opt-in: it only applies while `HbGateConfig.strict_mode`
+    // is enabled (default off), so operators opt into refusing settlement from
+    // an unhealthy oracle. It must run before any state mutation (nonce
+    // consumption) so a stale oracle cannot race the admin override. An armed
+    // one-shot override bypasses the block and is consumed once the round id is
+    // known, where the `hoverride` event is published.
     let hb_config = _load_hb_config(&env);
-    let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
+    let hb_blocked = hb_config.strict_mode && _check_heartbeat_health_blocked(&env, &hb_config);
     let consumed_hb_override = hb_blocked && hb_config.override_armed;
     if hb_blocked && !hb_config.override_armed {
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("oracle"), symbol_short!("hblocked")),
+            (payload.round_id,),
+        );
         _emit_action_rejected(
             &env,
             &oracle,
             symbol_short!("resolve"),
-            ContractError::OracleHeartbeatUnhealthy,
+            ContractError::OracleNotLive,
         );
-        return Err(ContractError::OracleHeartbeatUnhealthy);
+        return Err(ContractError::OracleNotLive);
     }
 
     let round: Round = env
@@ -650,7 +654,15 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
     let lower_bound = round_start.saturating_sub(skew);
     let upper_bound = round_end_estimate.saturating_add(skew);
 
-    if payload.timestamp < lower_bound || payload.timestamp > upper_bound {
+    // The payload must be economically phase-correct: either inside the
+    // round's own window, or close enough to the current ledger time that it
+    // cannot be a stale price replayed from an earlier phase. The absolute
+    // freshness rule above already rejected any future timestamp, so the
+    // near-now branch stays bounded by `[now - skew, now]`.
+    let in_round_window = payload.timestamp >= lower_bound && payload.timestamp <= upper_bound;
+    let near_now = payload.timestamp >= current_time.saturating_sub(skew);
+
+    if !in_round_window && !near_now {
         _emit_action_rejected(
             &env,
             &oracle,
@@ -783,42 +795,6 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         return Err(ContractError::OracleNonceReused);
     }
     env.storage().persistent().set(&nonce_key, &true);
-
-    // ─── Oracle heartbeat health gate (Issue #264) ──────────────────────────
-    //
-    // When `HbGateConfig.strict_mode` is enabled, `resolve_round` verifies
-    // that the oracle heartbeat is live before allowing settlement.
-    let hb_config = crate::admin::_load_hb_config(&env);
-
-    if hb_config.strict_mode && !consumed_hb_override {
-        let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
-
-        if hb_blocked {
-            if hb_config.override_armed {
-                // Consume the one-shot override
-                crate::admin::_consume_hb_override(&env);
-
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hoverride")),
-                    (round.round_id,),
-                );
-            } else {
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hblocked")),
-                    (round.round_id,),
-                );
-                _emit_action_rejected(
-                    &env,
-                    &oracle,
-                    symbol_short!("resolve"),
-                    ContractError::OracleNotLive,
-                );
-                return Err(ContractError::OracleNotLive);
-            }
-        }
-    }
 
     let current_ledger = env.ledger().sequence();
     if current_ledger < round.end_ledger {
@@ -954,13 +930,25 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         .checked_sub(round.start_ledger)
         .ok_or(ContractError::Overflow)?;
     let round_end_estimate = round_start
-        .checked_add((round_duration_ledgers as u64).checked_mul(SECONDS_PER_LEDGER).ok_or(ContractError::Overflow)?)
+        .checked_add(
+            (round_duration_ledgers as u64)
+                .checked_mul(SECONDS_PER_LEDGER)
+                .ok_or(ContractError::Overflow)?,
+        )
         .ok_or(ContractError::Overflow)?;
 
     let lower_bound = round_start.saturating_sub(skew);
     let upper_bound = round_end_estimate.saturating_add(skew);
 
-    if payload.timestamp < lower_bound || payload.timestamp > upper_bound {
+    // The payload must be economically phase-correct: either inside the
+    // round's own window, or close enough to the current ledger time that it
+    // cannot be a stale price replayed from an earlier phase. The absolute
+    // freshness rule above already rejected any future timestamp, so the
+    // near-now branch stays bounded by `[now - skew, now]`.
+    let in_round_window = payload.timestamp >= lower_bound && payload.timestamp <= upper_bound;
+    let near_now = payload.timestamp >= current_time.saturating_sub(skew);
+
+    if !in_round_window && !near_now {
         _emit_action_rejected(
             &env,
             &oracle,
@@ -1365,7 +1353,9 @@ fn _complete_settlement(
 
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage().persistent().remove(&DataKeyCore::UpDownPositions);
+    env.storage()
+        .persistent()
+        .remove(&DataKeyCore::UpDownPositions);
     // A merge left this guarded re-remove of the active round split across
     // two fragments (the `if` keyword and its condition were separated from
     // the body). Rejoined here so the file parses again.
@@ -1558,13 +1548,11 @@ pub fn _apply_one_sided_policy(
             } else if let Some(pos_map) = positions {
                 #[cfg(any(feature = "legacy-map-settlement", test))]
                 {
+                    #[allow(deprecated)]
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                round.pool_up.saturating_add(round.pool_down),
-                0i128,
-            )
+            (round.pool_up.saturating_add(round.pool_down), 0i128)
         }
         OneSidedPolicy::CarryForward => {
             if !participants.is_empty() {
@@ -1572,13 +1560,11 @@ pub fn _apply_one_sided_policy(
             } else if let Some(pos_map) = positions {
                 #[cfg(any(feature = "legacy-map-settlement", test))]
                 {
+                    #[allow(deprecated)]
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                0i128,
-                round.pool_up.saturating_add(round.pool_down),
-            )
+            (0i128, round.pool_up.saturating_add(round.pool_down))
         }
     };
 
@@ -1681,25 +1667,32 @@ pub fn _resolve_updown_mode(
                 .unwrap_or(Map::new(env));
             if !positions.is_empty() {
                 if price_unchanged {
+                    #[allow(deprecated)]
                     _record_refunds_legacy(env, round.round_id, &positions)?;
                 } else if price_went_up {
-                    fee_amount = _record_winnings_legacy(
-                        env,
-                        round.round_id,
-                        &positions,
-                        BetSide::Up,
-                        round.pool_up,
-                        round.pool_down,
-                    )?;
+                    #[allow(deprecated)]
+                    {
+                        fee_amount = _record_winnings_legacy(
+                            env,
+                            round.round_id,
+                            &positions,
+                            BetSide::Up,
+                            round.pool_up,
+                            round.pool_down,
+                        )?;
+                    }
                 } else if price_went_down {
-                    fee_amount = _record_winnings_legacy(
-                        env,
-                        round.round_id,
-                        &positions,
-                        BetSide::Down,
-                        round.pool_down,
-                        round.pool_up,
-                    )?;
+                    #[allow(deprecated)]
+                    {
+                        fee_amount = _record_winnings_legacy(
+                            env,
+                            round.round_id,
+                            &positions,
+                            BetSide::Down,
+                            round.pool_down,
+                            round.pool_up,
+                        )?;
+                    }
                 }
             }
         }
@@ -1913,6 +1906,7 @@ pub fn _resolve_precision_mode(
         if legacy.is_empty() {
             return Ok((0, 0));
         }
+        #[allow(deprecated)]
         return _resolve_precision_legacy(env, round_id, &legacy, final_price);
     }
 
@@ -2667,15 +2661,7 @@ pub fn _refund_under_threshold(
     }
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
+            crate::storage::clear_user_positions(env, round_id, &user);
         }
     }
     env.storage()
@@ -2870,5 +2856,4 @@ pub fn _update_stats_loss(env: &Env, user: Address) -> Result<(), ContractError>
     crate::leaderboard::_update_leaderboards(env, user.clone());
     crate::leaderboard::_update_season_stats_loss(env, user)?;
     Ok(())
-
 }

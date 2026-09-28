@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: MIT
 //! Deterministic round replay recorder for audits and disputes (Issue #369).
 
+// Shares contract sources (settlement_math) whose pre-existing lint debt is
+// unrelated to this change set.
+#![allow(
+    dead_code,
+    clippy::inconsistent_digit_grouping,
+    clippy::manual_abs_diff,
+    clippy::manual_checked_ops,
+    clippy::needless_borrow,
+    clippy::type_complexity,
+    clippy::unnecessary_cast,
+    clippy::useless_vec
+)]
+
 extern crate alloc;
 
 pub mod diagnostics;

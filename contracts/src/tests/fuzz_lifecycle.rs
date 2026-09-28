@@ -15,7 +15,7 @@ extern crate std;
 
 use std::env;
 use std::format;
-use std::string::{String, ToString};
+use std::string::ToString;
 use std::vec;
 use std::vec::Vec;
 
@@ -37,25 +37,56 @@ pub const DEFAULT_FUZZ_SEED: u64 = 561_2026;
 /// early cash-out, multi-feed resolution, and access control.
 #[derive(Debug, Clone)]
 pub enum LifecycleAction {
-    CreateRound { start_price: u128 },
-    MintUser { user_idx: usize },
-    PlaceBet { user_idx: usize, amount: i128, side: BetSide },
-    SetFeeBps { bps: Option<u32> },
-    SetWindows { bet_ledgers: u32, run_ledgers: u32 },
+    CreateRound {
+        start_price: u128,
+    },
+    MintUser {
+        user_idx: usize,
+    },
+    PlaceBet {
+        user_idx: usize,
+        amount: i128,
+        side: BetSide,
+    },
+    SetFeeBps {
+        bps: Option<u32>,
+    },
+    SetWindows {
+        bet_ledgers: u32,
+        run_ledgers: u32,
+    },
     TogglePause,
     CancelRound,
-    ResolveRound { price_up: bool },
-    ClaimWinnings { user_idx: usize },
-    WithdrawFee { amount: i128 },
+    ResolveRound {
+        price_up: bool,
+    },
+    ClaimWinnings {
+        user_idx: usize,
+    },
+    WithdrawFee {
+        amount: i128,
+    },
     PlacePrecisionBet {
         user_idx: usize,
         amount: i128,
         target_price: u128,
     },
-    CommitReveal { user_idx: usize, price: u128, salt_nonce: u64, amount: i128 },
-    CashOutPosition { user_idx: usize },
-    ResolveMulti { price_up: bool },
-    AccessControl { user_idx: usize, deny: bool },
+    CommitReveal {
+        user_idx: usize,
+        price: u128,
+        salt_nonce: u64,
+        amount: i128,
+    },
+    CashOutPosition {
+        user_idx: usize,
+    },
+    ResolveMulti {
+        price_up: bool,
+    },
+    AccessControl {
+        user_idx: usize,
+        deny: bool,
+    },
 }
 
 fn action_generator() -> impl Strategy<Value = LifecycleAction> {
@@ -74,8 +105,12 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
     let nonce = 1u64..=9_999u64;
 
     prop_oneof![
-        start_price.clone().prop_map(|sp| LifecycleAction::CreateRound { start_price: sp }),
-        user_idx.clone().prop_map(|u| LifecycleAction::MintUser { user_idx: u }),
+        start_price
+            .clone()
+            .prop_map(|sp| LifecycleAction::CreateRound { start_price: sp }),
+        user_idx
+            .clone()
+            .prop_map(|u| LifecycleAction::MintUser { user_idx: u }),
         (user_idx.clone(), amount.clone(), any::<bool>()).prop_map(|(u, a, is_up)| {
             LifecycleAction::PlaceBet {
                 user_idx: u,
@@ -84,15 +119,21 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
             }
         }),
         fee_bps.prop_map(|bps| LifecycleAction::SetFeeBps { bps }),
-        (bet_ledgers.clone(), run_extra.clone()).prop_map(|(b, extra)| LifecycleAction::SetWindows {
-            bet_ledgers: b,
-            run_ledgers: b.saturating_add(extra).max(b.saturating_add(1)),
+        (bet_ledgers.clone(), run_extra.clone()).prop_map(|(b, extra)| {
+            LifecycleAction::SetWindows {
+                bet_ledgers: b,
+                run_ledgers: b.saturating_add(extra).max(b.saturating_add(1)),
+            }
         }),
         Just(LifecycleAction::TogglePause),
         Just(LifecycleAction::CancelRound),
         any::<bool>().prop_map(|up| LifecycleAction::ResolveRound { price_up: up }),
-        user_idx.clone().prop_map(|u| LifecycleAction::ClaimWinnings { user_idx: u }),
-        amount.clone().prop_map(|a| LifecycleAction::WithdrawFee { amount: a }),
+        user_idx
+            .clone()
+            .prop_map(|u| LifecycleAction::ClaimWinnings { user_idx: u }),
+        amount
+            .clone()
+            .prop_map(|a| LifecycleAction::WithdrawFee { amount: a }),
         (user_idx.clone(), amount.clone(), target_price.clone()).prop_map(|(u, a, tp)| {
             LifecycleAction::PlacePrecisionBet {
                 user_idx: u,
@@ -108,12 +149,12 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
                 amount: a,
             }
         }),
-        user_idx.clone().prop_map(|u| LifecycleAction::CashOutPosition { user_idx: u }),
+        user_idx
+            .clone()
+            .prop_map(|u| LifecycleAction::CashOutPosition { user_idx: u }),
         any::<bool>().prop_map(|up| LifecycleAction::ResolveMulti { price_up: up }),
-        (user_idx, any::<bool>()).prop_map(|(u, deny)| LifecycleAction::AccessControl {
-            user_idx: u,
-            deny,
-        }),
+        (user_idx, any::<bool>())
+            .prop_map(|(u, deny)| LifecycleAction::AccessControl { user_idx: u, deny }),
     ]
 }
 
@@ -133,7 +174,10 @@ fn salt_from_nonce(env: &Env, nonce: u64) -> BytesN<32> {
     let raw = nonce.to_le_bytes();
     let mut i = 0;
     while i < 32 {
-        bytes[i] = raw[i % 8].wrapping_add(i as u8).wrapping_mul(17).wrapping_add(3);
+        bytes[i] = raw[i % 8]
+            .wrapping_add(i as u8)
+            .wrapping_mul(17)
+            .wrapping_add(3);
         i += 1;
     }
     bytes[0] |= 0xA5;
@@ -208,14 +252,21 @@ fn execute_sequence(seed: u64, mode: &str, actions: &[LifecycleAction]) {
                     total_minted += 1000_0000000;
                 }
             }
-            LifecycleAction::PlaceBet { user_idx, amount, side } => {
+            LifecycleAction::PlaceBet {
+                user_idx,
+                amount,
+                side,
+            } => {
                 let user = &users[*user_idx % users.len()];
                 let _ = client.try_place_bet(user, amount, side);
             }
             LifecycleAction::SetFeeBps { bps } => {
                 let _ = client.try_set_protocol_fee_bps(bps);
             }
-            LifecycleAction::SetWindows { bet_ledgers, run_ledgers } => {
+            LifecycleAction::SetWindows {
+                bet_ledgers,
+                run_ledgers,
+            } => {
                 let _ = client.try_set_windows(bet_ledgers, run_ledgers);
             }
             LifecycleAction::TogglePause => {
@@ -230,7 +281,8 @@ fn execute_sequence(seed: u64, mode: &str, actions: &[LifecycleAction]) {
             }
             LifecycleAction::ResolveRound { price_up } => {
                 if let Some(active) = client.get_active_round() {
-                    env.ledger().with_mut(|li| li.sequence_number = active.end_ledger);
+                    env.ledger()
+                        .with_mut(|li| li.sequence_number = active.end_ledger);
                     let price = if *price_up {
                         active.price_start.saturating_add(1).max(1)
                     } else {
@@ -320,16 +372,13 @@ fn execute_sequence(seed: u64, mode: &str, actions: &[LifecycleAction]) {
                     outlier_threshold_bps: 500,
                 }));
                 if let Some(active) = client.get_active_round() {
-                    env.ledger().with_mut(|li| li.sequence_number = active.end_ledger);
+                    env.ledger()
+                        .with_mut(|li| li.sequence_number = active.end_ledger);
                     let base = active.price_start.max(1);
                     let (p0, p1, p2) = if *price_up {
                         (base, base.saturating_add(1), base.saturating_add(2))
                     } else {
-                        (
-                            base.saturating_sub(1).max(1),
-                            base,
-                            base.saturating_add(1),
-                        )
+                        (base.saturating_sub(1).max(1), base, base.saturating_add(1))
                     };
                     oracle_nonce += 1;
                     let _ = client.try_resolve_round_multi(&MultiFeedPayload {
@@ -376,7 +425,10 @@ fn execute_sequence(seed: u64, mode: &str, actions: &[LifecycleAction]) {
             .iter()
             .map(|p| p.amount)
             .sum();
-        let commit_locked: i128 = open_commit.iter().filter_map(|slot| slot.map(|(_, _, amount)| amount)).sum();
+        let commit_locked: i128 = open_commit
+            .iter()
+            .filter_map(|slot| slot.map(|(_, _, amount)| amount))
+            .sum();
         let active_pot = pool + precision_locked + commit_locked;
         let total_accounted = sum_user_balances + sum_pending_winnings + treasury + active_pot;
 
@@ -384,7 +436,15 @@ fn execute_sequence(seed: u64, mode: &str, actions: &[LifecycleAction]) {
             let diff = format!(
                 "Conservation Leak: accounted={total_accounted}, total_minted={total_minted}, pool={pool}, precision_locked={precision_locked}, commit_locked={commit_locked}, treasury={treasury}"
             );
-            report_fuzz_failure(seed, mode, step_idx, "Asset Conservation", act, &diff, actions);
+            report_fuzz_failure(
+                seed,
+                mode,
+                step_idx,
+                "Asset Conservation",
+                act,
+                &diff,
+                actions,
+            );
         }
 
         for u in &users {
@@ -394,13 +454,29 @@ fn execute_sequence(seed: u64, mode: &str, actions: &[LifecycleAction]) {
                 let diff = format!(
                     "Negative user balance/pending for {u:?}: bal={bal}, pending={pending}"
                 );
-                report_fuzz_failure(seed, mode, step_idx, "Non-Negative Balances", act, &diff, actions);
+                report_fuzz_failure(
+                    seed,
+                    mode,
+                    step_idx,
+                    "Non-Negative Balances",
+                    act,
+                    &diff,
+                    actions,
+                );
             }
         }
 
         if treasury < 0 || active_pot < 0 {
             let diff = format!("Negative treasury or pot: treasury={treasury}, pot={active_pot}");
-            report_fuzz_failure(seed, mode, step_idx, "Treasury Fee Consistency", act, &diff, actions);
+            report_fuzz_failure(
+                seed,
+                mode,
+                step_idx,
+                "Treasury Fee Consistency",
+                act,
+                &diff,
+                actions,
+            );
         }
 
         if client.get_active_round().is_none() {
@@ -408,8 +484,17 @@ fn execute_sequence(seed: u64, mode: &str, actions: &[LifecycleAction]) {
             let bal_before = client.balance(dummy_user);
             let res = client.try_place_bet(dummy_user, &1_0000000i128, &BetSide::Up);
             if res.is_ok() || client.balance(dummy_user) != bal_before {
-                let diff = "Bet accepted or balance modified when no active round exists".to_string();
-                report_fuzz_failure(seed, mode, step_idx, "Round Lifecycle Finality", act, &diff, actions);
+                let diff =
+                    "Bet accepted or balance modified when no active round exists".to_string();
+                report_fuzz_failure(
+                    seed,
+                    mode,
+                    step_idx,
+                    "Round Lifecycle Finality",
+                    act,
+                    &diff,
+                    actions,
+                );
             }
         }
 
@@ -424,7 +509,15 @@ fn execute_sequence(seed: u64, mode: &str, actions: &[LifecycleAction]) {
                     let diff = format!(
                         "Claim returned non-zero ({claimed}) or balance changed on 0 pending winnings"
                     );
-                    report_fuzz_failure(seed, mode, step_idx, "Claim Protection", act, &diff, actions);
+                    report_fuzz_failure(
+                        seed,
+                        mode,
+                        step_idx,
+                        "Claim Protection",
+                        act,
+                        &diff,
+                        actions,
+                    );
                 }
             }
         }
@@ -438,7 +531,11 @@ fn configured_seed_and_length() -> (u64, &'static str, usize) {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_FUZZ_SEED);
-    let mode_static = if mode == "extended" { "extended" } else { "fast" };
+    let mode_static = if mode == "extended" {
+        "extended"
+    } else {
+        "fast"
+    };
     (seed, mode_static, seq_len)
 }
 

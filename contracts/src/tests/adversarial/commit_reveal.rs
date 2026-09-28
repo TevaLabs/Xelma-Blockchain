@@ -131,10 +131,7 @@ fn test_adversarial_salt_grinding_defense() {
     assert_eq!(prediction.unwrap().predicted_price, price);
 
     // Balance unchanged (commit already deducted)
-    assert_eq!(
-        client.balance(&attacker),
-        INITIAL_BALANCE - 100_0000000
-    );
+    assert_eq!(client.balance(&attacker), INITIAL_BALANCE - 100_0000000);
     emit_result(
         "commit_reveal_salt_grind",
         "pass",
@@ -387,11 +384,7 @@ fn test_adversarial_double_commit_rejected() {
     );
 
     // Direct prediction in the same bet window must also be rejected.
-    let result2 = client.try_place_precision_prediction(
-        &attacker,
-        &50_0000000,
-        &2500u128,
-    );
+    let result2 = client.try_place_precision_prediction(&attacker, &50_0000000, &2500u128);
     assert_eq!(
         result2,
         Err(Ok(ContractError::AlreadyBet)),

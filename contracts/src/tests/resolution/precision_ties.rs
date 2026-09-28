@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 
 #[test]
@@ -80,7 +81,8 @@ fn test_resolve_precision_tie_splits_pot() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot is 300, split evenly between Alice and Bob (150 each)
     assert_eq!(client.get_pending_winnings(&alice), 150_0000000);
@@ -173,7 +175,8 @@ fn test_resolve_precision_three_way_tie() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot is 400, split 3 ways = 133.33... each
     // With remainder policy: Alice gets 133 + 1 (remainder), Bob and Charlie get 133
@@ -263,7 +266,8 @@ fn test_precision_remainder_3way_tie_uneven_pot() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot: 100_0000000, Winner count: 3
     // payout_per_winner = 100_0000000 / 3 = 33_3333333
@@ -381,7 +385,8 @@ fn test_precision_remainder_5way_tie() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot: 103_0000000, Winner count: 5
     // payout_per_winner = 103_0000000 / 5 = 20_6000000
@@ -465,7 +470,8 @@ fn test_precision_no_remainder() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot: 100, Winner count: 2
     // payout_per_winner = 100 / 2 = 50
@@ -559,7 +565,8 @@ fn test_precision_remainder_goes_to_lexicographically_lowest_winner() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Total pot = 200_0000001
     // split = 200_0000001 / 2 = 100_0000000
