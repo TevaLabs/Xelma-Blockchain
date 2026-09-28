@@ -38,6 +38,7 @@ mod min_bet;
 mod mode_tests;
 mod one_sided_settlement;
 mod ops_archive_reclaim;
+mod oracle_replay_security;
 mod overflow_tests;
 mod precision_payout_overflow;
 mod pause;
