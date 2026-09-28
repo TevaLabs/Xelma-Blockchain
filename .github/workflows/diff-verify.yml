@@ -1,0 +1,105 @@
+name: Differential Verification — settlement_math
+
+# Security harness for Issues #520 / #362: runs a trusted Rust reference
+# model against the contract's settlement math on identical randomized
+# oracle cases, asserting stroop-exact equality. See docs/DIFF_VERIFY.md
+# and contracts/src/tests/diff_verify.rs.
+
+on:
+  pull_request:
+    paths:
+      - 'contracts/src/settlement_math.rs'
+      - 'contracts/src/settlement.rs'
+      - 'contracts/src/math_common.rs'
+      - 'contracts/src/config.rs'
+      - 'contracts/src/tests/diff_verify.rs'
+      - '.github/workflows/diff-verify.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'contracts/src/settlement_math.rs'
+      - 'contracts/src/settlement.rs'
+      - 'contracts/src/math_common.rs'
+      - 'contracts/src/config.rs'
+      - 'contracts/src/tests/diff_verify.rs'
+      - '.github/workflows/diff-verify.yml'
+  schedule:
+    # 05:00 UTC daily — extended randomized sweep after the 03:00 adversarial run
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Execution mode: fast or extended'
+        required: false
+        default: 'fast'
+      seed:
+        description: 'Base seed for deterministic replay (blank = harness default)'
+        required: false
+
+concurrency:
+  group: diff-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
+
+jobs:
+  diff-verify:
+    name: "Diff Verify (${{ github.event.inputs.mode == 'extended' && 'extended' || 'fast' }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-diff-verify-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-diff-verify-
+
+      - name: Fixed regression cases + randomized fuzz (fast default, 400 tier-A / 100 tier-B cases)
+        if: ${{ github.event.inputs.mode != 'extended' && github.event_name != 'schedule' }}
+        env:
+          DIFF_VERIFY_MODE: fast
+          SEED: ${{ github.event.inputs.seed || '3735928559' }}
+        run: |
+          cargo test --package xelma-contract --lib \
+            tests::diff_verify -- --nocapture --test-threads=1
+
+      - name: Extended sweep (2,000 tier-A / 1,000 tier-B cases)
+        if: ${{ github.event.inputs.mode == 'extended' || github.event_name == 'schedule' }}
+        env:
+          DIFF_VERIFY_MODE: extended
+          SEED: ${{ github.event.inputs.seed || github.run_id }}
+        run: |
+          cargo test --package xelma-contract --lib \
+            tests::diff_verify -- --nocapture --test-threads=1
+
+      - name: Build contract WASM for tier C (WASM binary differential)
+        if: ${{ github.event.inputs.mode != 'extended' && github.event_name != 'schedule' }}
+        run: |
+          cargo rustc --manifest-path=contracts/Cargo.toml \
+            --crate-type=cdylib --target=wasm32v1-none --release --locked
+
+      - name: Tier C — differential against the compiled WASM binary
+        if: ${{ github.event.inputs.mode != 'extended' && github.event_name != 'schedule' }}
+        env:
+          WASM_PATH: ${{ github.workspace }}/target/wasm32v1-none/release/xelma_contract.wasm
+        run: |
+          cargo test --package xelma-contract --lib \
+            tests::diff_verify::differential_tier_c_wasm_binary -- --nocapture
