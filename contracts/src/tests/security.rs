@@ -4,7 +4,7 @@
 use super::config_helpers::{apply_oracle_max_deviation_bps, apply_oracle_stale_threshold};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{DataKeyCore, DataKeyScoped, HbGateConfig, HbGateKey, OraclePayload};
+use crate::types::{DataKeyCore, DataKeyScoped, OraclePayload};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -1026,6 +1026,97 @@ fn test_arm_heartbeat_override_sets_flag() {
     assert!(client.get_hb_override_armed());
 }
 
+#[test]
+fn test_heartbeat_hblocked_event_emitted() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.set_hb_strict_mode(&true);
+    client.create_round(&1_0000000, &None);
+
+    // No heartbeat at all
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+        li.timestamp = 100;
+    });
+
+    let _ = client.try_resolve_round(&OraclePayload {
+        price: 1_2000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    let events = env.events().all();
+    let blocked_event = events.iter().find(|e| {
+        let (_contract, topics, _data) = e;
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hblocked"))
+    });
+    assert!(blocked_event.is_some(), "hblocked event must be emitted");
+}
+
+#[test]
+fn test_arm_hb_override_requires_admin_auth() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (&admin, &oracle).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin, &oracle);
+
+    // No auth — should fail
+    let result = client.try_arm_hb_override();
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_hb_strict_mode_requires_admin_auth() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (&admin, &oracle).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin, &oracle);
+
+    // No auth — should fail
+    let result = client.try_set_hb_strict_mode(&true);
+    assert!(result.is_err());
+}
+
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
 
 #[test]
@@ -1737,621 +1828,6 @@ fn test_missing_confidence_rejected_in_strict_mode() {
         attestation: None,
     });
     assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
-}
-
-// ── Oracle heartbeat health gate tests (Issue #264) ──────────────────────────
-
-/// Helper: create a round with oracle heartbeat, advance to resolvable state.
-fn _setup_heartbeat_gate_test(
-    env: &Env,
-    client: &VirtualTokenContractClient,
-    heartbeat_timestamp: u64,
-    heartbeat_status: u32,
-) {
-    env.ledger().with_mut(|li| {
-        li.timestamp = heartbeat_timestamp;
-    });
-    client.update_oracle_heartbeat(&heartbeat_status);
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12; // past end_ledger
-        li.timestamp = heartbeat_timestamp + 100; // within threshold
-    });
-}
-
-#[test]
-fn test_heartbeat_gate_strict_off_allows_settlement_even_when_stale() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.create_round(&1_0000000, &None);
-
-    // Heartbeat at t=0, status active
-    env.ledger().with_mut(|li| {
-        li.timestamp = 0;
-    });
-    client.update_oracle_heartbeat(&0u32);
-
-    // Advance past end_ledger, but strict mode is OFF (default)
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 4000; // 4000s > 3600s stale threshold
-    });
-
-    // Should still resolve — strict mode is off
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(client.get_active_round(), None);
-}
-
-#[test]
-fn test_heartbeat_gate_strict_on_blocks_when_stale_past_grace() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    // Heartbeat at t=0, active
-    env.ledger().with_mut(|li| {
-        li.timestamp = 0;
-    });
-    client.update_oracle_heartbeat(&0u32);
-
-    // Advance past stale threshold (3600s) + grace (default 0)
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 4000;
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
-}
-
-#[test]
-fn test_heartbeat_gate_strict_on_allows_when_live() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    // Heartbeat at t=100, active
-    env.ledger().with_mut(|li| {
-        li.timestamp = 100;
-    });
-    client.update_oracle_heartbeat(&0u32);
-
-    // Advance to resolvable, timestamp within threshold
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 200;
-    });
-
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(client.get_active_round(), None);
-}
-
-#[test]
-fn test_heartbeat_gate_blocks_offline_status_in_strict_mode() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    // Heartbeat at t=0, offline (status=2)
-    env.ledger().with_mut(|li| {
-        li.timestamp = 0;
-    });
-    client.update_oracle_heartbeat(&2u32);
-
-    // Advance to resolvable (within threshold, but offline always blocks)
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 10;
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
-}
-
-#[test]
-fn test_heartbeat_gate_blocks_no_heartbeat_in_strict_mode() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    // No heartbeat recorded at all
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
-}
-
-#[test]
-fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    // No heartbeat at all — would normally block
-    client.arm_hb_override();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
-
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-
-    assert_eq!(client.get_active_round(), None);
-
-    // Verify override event emitted
-    let events = env.events().all();
-    let override_event = events.iter().find(|e| {
-        let (_contract, topics, _data) = e;
-        topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hoverride"))
-    });
-    assert!(override_event.is_some(), "hoverride event must be emitted");
-
-    // Override is one-shot — must be consumed
-    env.as_contract(&contract_id, || {
-        let config: HbGateConfig = env
-            .storage()
-            .persistent()
-            .get(&HbGateKey::HbGate)
-            .unwrap_or(HbGateConfig {
-                strict_mode: false,
-                override_armed: false,
-                grace_seconds: 0,
-            });
-        assert!(!config.override_armed, "heartbeat override must be cleared after use");
-    });
-}
-
-#[test]
-fn test_heartbeat_gate_override_is_one_shot() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-
-    // First round: arm override, resolve (consumes override)
-    client.create_round(&1_0000000, &None);
-    client.arm_hb_override();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-
-    // Second round: no heartbeat, no override — should block
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 20;
-        li.timestamp = 200;
-    });
-    client.create_round(&1_0000000, &None);
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 32;
-        li.timestamp = 300;
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
-}
-
-#[test]
-fn test_heartbeat_gate_grace_period_allows_stale_within_grace() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    // Set grace period to 600s (10 minutes)
-    client.set_hb_grace_seconds(&600u64);
-
-    client.create_round(&1_0000000, &None);
-
-    // Heartbeat at t=0, active
-    env.ledger().with_mut(|li| {
-        li.timestamp = 0;
-    });
-    client.update_oracle_heartbeat(&0u32);
-
-    // Advance past stale threshold (3600s) but within grace (3600+600=4200)
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 4000; // 4000 < 4200, within grace
-    });
-
-    // Should resolve — within grace period
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(client.get_active_round(), None);
-}
-
-#[test]
-fn test_heartbeat_gate_grace_period_blocks_after_grace_expires() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    client.set_hb_grace_seconds(&600u64);
-
-    client.create_round(&1_0000000, &None);
-
-    // Heartbeat at t=0, active
-    env.ledger().with_mut(|li| {
-        li.timestamp = 0;
-    });
-    client.update_oracle_heartbeat(&0u32);
-
-    // Advance past stale threshold + grace (3600 + 600 = 4200)
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 4300; // 4300 > 4200, beyond grace
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
-}
-
-#[test]
-fn test_heartbeat_gate_degraded_status_allowed_when_current() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    // Heartbeat at t=100, degraded (status=1)
-    env.ledger().with_mut(|li| {
-        li.timestamp = 100;
-    });
-    client.update_oracle_heartbeat(&1u32);
-
-    // Resolve within threshold
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 200;
-    });
-
-    // Degraded but current — should be allowed
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(client.get_active_round(), None);
-}
-
-#[test]
-fn test_heartbeat_gate_degraded_stale_past_grace_blocked() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    // Degraded heartbeat at t=0
-    env.ledger().with_mut(|li| {
-        li.timestamp = 0;
-    });
-    client.update_oracle_heartbeat(&1u32);
-
-    // Advance past stale threshold (no grace configured)
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 4000;
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
-}
-
-#[test]
-fn test_heartbeat_gate_hblocked_event_emitted() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.set_hb_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    // No heartbeat at all
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
-
-    let _ = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-
-    let events = env.events().all();
-    let blocked_event = events.iter().find(|e| {
-        let (_contract, topics, _data) = e;
-        topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hblocked"))
-    });
-    assert!(blocked_event.is_some(), "hblocked event must be emitted");
-}
-
-#[test]
-fn test_heartbeat_gate_arm_override_requires_admin_auth() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &admin,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "initialize",
-            args: (&admin, &oracle).into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
-    client.initialize(&admin, &oracle);
-
-    // No auth — should fail
-    let result = client.try_arm_hb_override();
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_heartbeat_gate_set_strict_mode_requires_admin_auth() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &admin,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "initialize",
-            args: (&admin, &oracle).into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
-    client.initialize(&admin, &oracle);
-
-    // No auth — should fail
-    let result = client.try_set_hb_strict_mode(&true);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_heartbeat_gate_getters_return_defaults() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-    client.initialize(&admin, &oracle);
-
-    // Default values: strict mode OFF, override not armed, grace 0
-    assert!(!client.get_hb_strict_mode());
-    assert!(!client.get_hb_override_armed());
-    assert_eq!(client.get_hb_grace_seconds(), 0);
-}
-
-#[test]
-fn test_heartbeat_gate_set_and_get_grace_seconds() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-    client.initialize(&admin, &oracle);
-
-    client.set_hb_grace_seconds(&300u64);
-    assert_eq!(client.get_hb_grace_seconds(), 300);
-
-    client.set_hb_grace_seconds(&0u64);
-    assert_eq!(client.get_hb_grace_seconds(), 0);
 }
 
 #[test]
