@@ -572,12 +572,7 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
     }
 
     if consumed_hb_override {
-        crate::admin::_consume_hb_override(&env);
-        #[allow(deprecated)]
-        env.events().publish(
-            (symbol_short!("oracle"), symbol_short!("hoverride")),
-            (round.round_id,),
-        );
+        crate::admin::_consume_hb_override(&env, round.round_id);
     }
 
     // Verify timestamp is inside the round-relative economic window.
@@ -796,13 +791,7 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         if hb_blocked {
             if hb_config.override_armed {
                 // Consume the one-shot override
-                crate::admin::_consume_hb_override(&env);
-
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hoverride")),
-                    (round.round_id,),
-                );
+                crate::admin::_consume_hb_override(&env, round.round_id);
             } else {
                 #[allow(deprecated)]
                 env.events().publish(
@@ -976,12 +965,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
         if hb_blocked {
             if hb_config.override_armed {
-                crate::admin::_consume_hb_override(&env);
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("oracle"), symbol_short!("hoverride")),
-                    (round.round_id,),
-                );
+                crate::admin::_consume_hb_override(&env, round.round_id);
             } else {
                 #[allow(deprecated)]
                 env.events().publish(

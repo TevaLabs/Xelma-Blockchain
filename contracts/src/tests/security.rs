@@ -1009,8 +1009,7 @@ fn test_heartbeat_strict_mode_config() {
     assert!(!client.get_hb_strict_mode());
 }
 
-/// Arming the heartbeat override sets the one-shot flag. The contract does not
-/// emit a separate arm event; consumption emits `("oracle", "hoverride")`.
+/// Arming the heartbeat override sets the one-shot flag and emits its lifecycle event.
 #[test]
 fn test_arm_heartbeat_override_sets_flag() {
     let env = Env::default();
@@ -1023,7 +1022,48 @@ fn test_arm_heartbeat_override_sets_flag() {
 
     assert!(!client.get_hb_override_armed());
     client.arm_hb_override();
+
+    let events = env.events().all();
+    assert!(events.iter().any(|event| {
+        let (_contract, topics, _data) = event;
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_armed"))
+    }));
     assert!(client.get_hb_override_armed());
+}
+
+#[test]
+fn test_unauthorized_caller_cannot_arm_heartbeat_override() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (&admin, &oracle).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin, &oracle);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &attacker,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "arm_hb_override",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_arm_hb_override().is_err());
+    assert!(!client.get_hb_override_armed());
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
