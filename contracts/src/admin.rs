@@ -623,6 +623,12 @@ pub fn arm_hb_override(env: Env) -> Result<(), ContractError> {
     let mut config = _load_hb_config(&env);
     config.override_armed = true;
     _save_hb_config(&env, &config);
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("oracle"), symbol_short!("hb_armed")),
+        (admin,),
+    );
     Ok(())
 }
 
@@ -660,12 +666,18 @@ pub fn get_hb_grace_seconds(env: Env) -> u64 {
 
 /// Consumes the heartbeat override if armed (called from settlement).
 /// Returns true if the override was consumed.
-pub fn _consume_hb_override(env: &Env) -> bool {
+pub fn _consume_hb_override(env: &Env, round_id: u64) -> bool {
     let config = _load_hb_config(env);
     if config.override_armed {
         let mut new_config = config.clone();
         new_config.override_armed = false;
         _save_hb_config(env, &new_config);
+
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("oracle"), symbol_short!("hoverride")),
+            (round_id,),
+        );
         true
     } else {
         false
