@@ -15,6 +15,7 @@ fn test_leaderboard_ordered_by_wins() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user_a = Address::generate(&env);
     let user_b = Address::generate(&env);
@@ -41,6 +42,13 @@ fn test_leaderboard_ordered_by_wins() {
 
     // Must create a round so the leaderboard collector can find active participants.
     client.create_round(&1_0000000u128, &None);
+
+    // The collector enumerates active-round participants, so each user must
+    // actually bet in the round to appear on the leaderboard.
+    for user in [&user_a, &user_b, &user_c] {
+        client.mint_initial(user);
+        client.place_bet(user, &10, &crate::types::BetSide::Up);
+    }
 
     // Query wins leaderboard with cursor = None (first page)
     let page = client.get_leaderboard_by_wins(&None, &10);
@@ -71,6 +79,7 @@ fn test_leaderboard_ordered_by_streak() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user_a = Address::generate(&env);
     let user_b = Address::generate(&env);
@@ -102,6 +111,13 @@ fn test_leaderboard_ordered_by_streak() {
     // Must create a round so the leaderboard collector can find active participants.
     client.create_round(&1_0000000u128, &None);
 
+    // The collector enumerates active-round participants, so each user must
+    // actually bet in the round to appear on the leaderboard.
+    for user in [&user_a, &user_b, &user_c] {
+        client.mint_initial(user);
+        client.place_bet(user, &10, &crate::types::BetSide::Up);
+    }
+
     // Query streak leaderboard with cursor = None
     let page = client.get_leaderboard_by_streak(&None, &10);
     assert_eq!(page.0.len(), 3);
@@ -128,6 +144,7 @@ fn test_leaderboard_cursor_pagination() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user_a = Address::generate(&env);
     let user_b = Address::generate(&env);
@@ -147,6 +164,11 @@ fn test_leaderboard_cursor_pagination() {
     });
 
     client.create_round(&1_0000000u128, &None);
+    // Participants of the active round are what the collector enumerates.
+    for user in [&user_a, &user_b, &user_c] {
+        client.mint_initial(user);
+        client.place_bet(user, &10, &crate::types::BetSide::Up);
+    }
 
     // First page: cursor = None, limit = 1 -> should return Bob (5 wins)
     let page0 = client.get_leaderboard_by_wins(&None, &1);
@@ -164,8 +186,9 @@ fn test_leaderboard_cursor_pagination() {
     let page2 = client.get_leaderboard_by_wins(&page1.1, &1);
     assert_eq!(page2.0.len(), 1);
     assert_eq!(page2.0.get(0).unwrap().user, user_c);
-    // Last page: next_cursor should be None (exhausted)
-    assert!(page2.1.is_none());
+    // next_cursor is the last address included in the page (see the query
+    // contract), so the exhausted list is detected on the following call.
+    assert_eq!(page2.1, Some(user_c));
 
     // Fourth page: using last cursor -> empty
     let page3 = client.get_leaderboard_by_wins(&page2.1, &1);
@@ -183,6 +206,7 @@ fn test_leaderboard_deterministic_tie_breaking() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user_a = Address::generate(&env);
     let user_b = Address::generate(&env);
@@ -196,6 +220,11 @@ fn test_leaderboard_deterministic_tie_breaking() {
     });
 
     client.create_round(&1_0000000u128, &None);
+    // Participants of the active round are what the collector enumerates.
+    for user in [&user_a, &user_b] {
+        client.mint_initial(user);
+        client.place_bet(user, &10, &crate::types::BetSide::Up);
+    }
 
     // Query wins leaderboard with cursor = None
     let page = client.get_leaderboard_by_wins(&None, &10);
@@ -218,19 +247,27 @@ fn test_leaderboard_limit_capped_at_max_page_size() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     // Create a round so we can place bets (participants appear on the leaderboard).
     client.create_round(&1_0000000u128, &None);
 
     // Create many users with varying wins, all placing bets in the active round.
     // All will be on the participant list and thus visible to the leaderboard.
-    env.as_contract(&contract_id, || {
-        for _ in 0..50 {
-            let u = Address::generate(&env);
+    let mut users: std::vec::Vec<Address> = std::vec::Vec::new();
+    for _ in 0..50 {
+        let u = Address::generate(&env);
+        env.as_contract(&contract_id, || {
             VirtualTokenContract::_update_stats_win(&env, u.clone()).unwrap();
             VirtualTokenContract::_update_stats_win(&env, u.clone()).unwrap();
-        }
-    });
+        });
+        users.push(u);
+    }
+    // Each user must bet in the active round to be collected by the leaderboard.
+    for u in users.iter() {
+        client.mint_initial(u);
+        client.place_bet(u, &10, &crate::types::BetSide::Up);
+    }
 
     // Request with valid limit = 100 (MAX_PAGE_SIZE) should succeed.
     let page = client.get_leaderboard_by_wins(&None, &100);
@@ -252,6 +289,7 @@ fn test_leaderboard_empty_when_no_users() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     // No round created, no users → empty leaderboard
     let page = client.get_leaderboard_by_wins(&None, &10);
@@ -273,6 +311,7 @@ fn test_leaderboard_zero_limit_is_empty() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     client.create_round(&1_0000000u128, &None);
 
@@ -299,6 +338,7 @@ fn test_leaderboard_rejects_over_limit_adversarial() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     client.create_round(&1_0000000u128, &None);
 

@@ -60,6 +60,7 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
         li.sequence_number = 100;
         li.timestamp = 1_000_000;
     });
+    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
 
     // Alice bets Up, Bob bets Down.
@@ -69,8 +70,9 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
     // Advance past bet window and run window.
     env.ledger().with_mut(|li| {
         li.sequence_number = 130;
-        li.timestamp = 1_000_700;
+        li.timestamp = 1_000_150;
     });
+    client.update_oracle_heartbeat(&0u32);
 
     let round = client.get_active_round().expect("round should exist");
     let payload = crate::types::OraclePayload {
@@ -96,6 +98,9 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
 
     // --- CEI assertion: claim should succeed ---
     let claimed = client.claim_winnings(&alice);
+    // Capture the event log right away: the host's visible events are scoped to
+    // the most recent top-level invocation.
+    let events = env.events().all();
     assert_eq!(claimed, pending_before, "claimed amount must equal pending");
 
     // Effect 1: pending winnings slot is now cleared.
@@ -114,7 +119,6 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
     );
 
     // Structured event verification: (user, amount_claimed, balance_before, balance_after)
-    let events = env.events().all();
     let claim_event = events
         .iter()
         .rev()
@@ -127,10 +131,13 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
         .expect("claim_winnings event must be present");
 
     let (_contract, _topics, data) = claim_event;
-    #[allow(clippy::type_complexity)]
-    let parsed: Result<(Address, i128, i128, i128), _> = data.try_into_val(&env);
-    let (ev_user, ev_amount, ev_balance_before, ev_balance_after) =
-        parsed.expect("event data must parse as (Address, i128, i128, i128)");
+    // Payload: (user, claimed_amount, balance_before, balance_after)
+    let fields: soroban_sdk::Vec<soroban_sdk::Val> = data.try_into_val(&env).unwrap();
+    assert_eq!(fields.len(), 4u32);
+    let ev_user: Address = fields.get(0).unwrap().try_into_val(&env).unwrap();
+    let ev_amount: i128 = fields.get(1).unwrap().try_into_val(&env).unwrap();
+    let ev_balance_before: i128 = fields.get(2).unwrap().try_into_val(&env).unwrap();
+    let ev_balance_after: i128 = fields.get(3).unwrap().try_into_val(&env).unwrap();
     assert_eq!(ev_user, alice);
     assert_eq!(ev_amount, pending_before);
     assert_eq!(ev_balance_before, balance_before_claim);
@@ -234,14 +241,17 @@ fn test_claim_winnings_respects_runtime_mode() {
         li.sequence_number = 100;
         li.timestamp = 1_000_000;
     });
+    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
     client.place_bet(&alice, &500_0000000, &BetSide::Up);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 130;
-        li.timestamp = 1_000_700;
+        li.timestamp = 1_000_150;
     });
+    client.update_oracle_heartbeat(&0u32);
     let round = client.get_active_round().expect("round should exist");
+    client.update_oracle_heartbeat(&0u32);
     client.resolve_round(&crate::types::OraclePayload {
         price: 2_0000000,
         timestamp: env.ledger().timestamp(),
@@ -269,13 +279,16 @@ fn test_claim_winnings_respects_runtime_mode() {
         li.sequence_number = 200;
         li.timestamp = 2_000_000;
     });
+    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
     client.place_bet(&alice, &500_0000000, &BetSide::Up);
     env.ledger().with_mut(|li| {
         li.sequence_number = 230;
-        li.timestamp = 2_000_700;
+        li.timestamp = 2_000_150;
     });
+    client.update_oracle_heartbeat(&0u32);
     let round2 = client.get_active_round().unwrap();
+    client.update_oracle_heartbeat(&0u32);
     client.resolve_round(&crate::types::OraclePayload {
         price: 2_0000000,
         timestamp: env.ledger().timestamp(),
@@ -307,13 +320,15 @@ fn test_claim_winnings_respects_runtime_mode() {
         li.sequence_number = 300;
         li.timestamp = 3_000_000;
     });
+    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
     client.place_bet(&alice, &500_0000000, &BetSide::Up);
     env.ledger().with_mut(|li| {
         li.sequence_number = 330;
-        li.timestamp = 3_000_700;
+        li.timestamp = 3_000_150;
     });
     let round3 = client.get_active_round().unwrap();
+    client.update_oracle_heartbeat(&0u32);
     client.resolve_round(&crate::types::OraclePayload {
         price: 2_0000000,
         timestamp: env.ledger().timestamp(),

@@ -23,7 +23,6 @@ fn test_create_round() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     // Create a round
     let start_price: u128 = 1_5000000; // 1.5 XLM in stroops
@@ -55,7 +54,6 @@ fn test_create_round_does_not_clear_live_positions() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&user);
     client.create_round(&1_0000000, &None);
     client.place_bet(&user, &100_0000000, &BetSide::Up);
@@ -81,7 +79,6 @@ fn test_create_round_while_active_fails() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     // Create first round successfully
     let start_price: u128 = 1_5000000;
@@ -251,6 +248,7 @@ fn test_multiple_rounds_lifecycle() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
+    // The oracle heartbeat must be live before resolve_round is accepted.
     client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
 
@@ -353,7 +351,6 @@ fn test_create_round_fails_without_admin_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     // No mocking all auths, so create_round should fail
     let result = client.try_create_round(&1_0000000, &None);
@@ -381,7 +378,6 @@ fn test_place_bet_fails_without_user_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &user,
@@ -429,7 +425,6 @@ fn test_resolve_round_fails_without_oracle_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
@@ -480,7 +475,6 @@ fn test_claim_winnings_fails_without_user_auth() {
         },
     }]);
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &user,
@@ -640,7 +634,6 @@ fn test_cancel_round_refunds_updown_participants() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
     client.mint_initial(&bob);
 
@@ -672,7 +665,6 @@ fn test_cancel_round_refunds_precision_participants() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
     client.mint_initial(&bob);
 
@@ -698,7 +690,6 @@ fn test_cancel_round_marks_round_cancelled() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
 
     let round_id = client.get_active_round().unwrap().round_id;
@@ -719,7 +710,6 @@ fn test_cancel_round_no_active_round_fails() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     // No active round
     let result = client.try_cancel_round(&0u32);
@@ -737,7 +727,6 @@ fn test_cancel_round_emits_event() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
     client.cancel_round(&42u32);
 
@@ -765,7 +754,6 @@ fn test_cancelled_round_allows_new_round() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
     client.cancel_round(&0u32);
 
@@ -795,7 +783,6 @@ fn test_cancel_round_full_refund_equals_pool() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
     client.mint_initial(&bob);
     client.mint_initial(&charlie);
@@ -1032,7 +1019,6 @@ fn test_round_template_set_get_clear_and_validation() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     assert_eq!(client.get_round_template(), None);
 
@@ -1081,10 +1067,11 @@ fn test_create_next_from_template_requires_template() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     let result = client.try_create_next_from_template();
-    assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
+    // With no template configured the contract reports NoRoundTemplate before
+    // it looks for a settlement commitment.
+    assert_eq!(result, Err(Ok(ContractError::NoRoundTemplate)));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -1101,7 +1088,6 @@ fn test_create_next_from_template_overlap_impossible() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     client.set_round_template(&3_0000000u128, &Some(0));
     client.create_round(&1_0000000u128, &None);
@@ -1203,7 +1189,6 @@ fn test_create_next_from_template_after_cancel() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     client.set_round_template(&4_0000000u128, &None);
 
@@ -1241,7 +1226,6 @@ fn test_create_next_from_template_after_clear_fails() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
 
     client.set_round_template(&1_0000000u128, &None);
     client.create_round(&1_0000000u128, &None);
@@ -1249,6 +1233,8 @@ fn test_create_next_from_template_after_clear_fails() {
     client.clear_round_template();
 
     let result = client.try_create_next_from_template();
-    assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
+    // With no template configured the contract reports NoRoundTemplate before
+    // it looks for a settlement commitment.
+    assert_eq!(result, Err(Ok(ContractError::NoRoundTemplate)));
     assert_eq!(client.get_active_round(), None);
 }

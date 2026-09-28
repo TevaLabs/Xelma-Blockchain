@@ -21,14 +21,25 @@ fn test_simulate_payout_updown_with_fees_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     client.mint_initial(&alice);
     client.mint_initial(&bob);
 
-    // Set protocol fee to 1% (100 bps)
-    client.set_protocol_fee_bps(&Some(100));
+    // Set protocol fee to 1% (100 bps) under the FeeOnPot model. The public
+    // setter is timelocked, so tests write the keys directly (same convention
+    // as `tests/conservation.rs` and `tests/fee_model.rs`).
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&crate::types::DataKeyCore::ProtocolFeeBps, &100u32);
+        env.storage().persistent().set(
+            &crate::types::DataKeyCore::FeeModel,
+            &crate::types::FeeModel::FeeOnPot,
+        );
+    });
 
     client.create_round(&10000, &Some(0)); // UpDown mode
 
@@ -105,6 +116,7 @@ fn test_simulate_payout_updown_one_sided_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -172,6 +184,7 @@ fn test_simulate_payout_updown_tie_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -231,6 +244,7 @@ fn test_simulate_payout_precision_equal_policy_matches_resolve() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     // 0 = Equal (default)
     client.set_precision_payout_policy(&0u32);

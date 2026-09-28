@@ -13,6 +13,7 @@ fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Addres
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     (client, contract_id, admin, oracle)
 }
@@ -175,6 +176,13 @@ fn test_reset_season_archives_scopes_queries_and_preserves_lifetime_history() {
 
     // Lifetime history is never wiped by the reset: it reflects every win
     // across both seasons combined (Bob=5, Alice=3+1=4).
+    // The lifetime leaderboard enumerates active-round participants, so both
+    // users must bet in an open round to appear.
+    client.create_round(&1_0000000u128, &None);
+    for user in [&alice, &bob] {
+        client.mint_initial(user);
+        client.place_bet(user, &10, &crate::types::BetSide::Up);
+    }
     let (items, _cursor) = client.get_leaderboard_by_wins(&None, &10);
     assert_eq!(items.len(), 2);
     assert_eq!(items.get(0).unwrap().user, bob);

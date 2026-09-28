@@ -10,6 +10,7 @@ use soroban_sdk::{
     Address, Env, TryIntoVal,
 };
 
+#[allow(clippy::type_complexity)]
 fn setup(
     env: &Env,
 ) -> (
@@ -18,6 +19,7 @@ fn setup(
     Address,
     Address,
     u64,
+    bool,
 ) {
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(env, &contract_id);
@@ -49,8 +51,18 @@ fn setup(
         confidence: None,
         attestation: None,
     });
+    // The host's visible event log is scoped to the most recent top-level
+    // invocation, so the staged-dispute event must be observed right here.
+    let pending_event = has_round_event(env, &contract_id, symbol_short!("pending"));
 
-    (client, contract_id, alice, bob, round.round_id)
+    (
+        client,
+        contract_id,
+        alice,
+        bob,
+        round.round_id,
+        pending_event,
+    )
 }
 
 fn has_round_event(env: &Env, contract_id: &Address, action: soroban_sdk::Symbol) -> bool {
@@ -65,7 +77,7 @@ fn has_round_event(env: &Env, contract_id: &Address, action: soroban_sdk::Symbol
 #[test]
 fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
     let env = Env::default();
-    let (client, contract_id, alice, bob, round_id) = setup(&env);
+    let (client, contract_id, alice, bob, round_id, pending_event) = setup(&env);
 
     assert_eq!(client.get_pending_winnings(&alice), 0);
     assert_eq!(client.get_pending_winnings(&bob), 0);
@@ -76,6 +88,11 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
 
     let treasury_before = client.get_protocol_fee_treasury();
     client.void_round(&round_id);
+
+    // Assert the void event immediately after the emitting call: the host's
+    // visible event log is scoped to the most recent top-level invocation, so a
+    // later client call would clear it.
+    let voided_event = has_round_event(&env, &contract_id, symbol_short!("voided"));
 
     let alice_refund = client.get_pending_winnings(&alice);
     let bob_refund = client.get_pending_winnings(&bob);
@@ -88,18 +105,14 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::Voided
     );
-    assert!(has_round_event(
-        &env,
-        &contract_id,
-        symbol_short!("pending")
-    ));
-    assert!(has_round_event(&env, &contract_id, symbol_short!("voided")));
+    assert!(pending_event, "expected a round/pending event");
+    assert!(voided_event, "expected a round/voided event");
 }
 
 #[test]
 fn finalize_after_window_settles_and_late_void_is_blocked() {
     let env = Env::default();
-    let (client, contract_id, alice, bob, round_id) = setup(&env);
+    let (client, contract_id, alice, bob, round_id, _pending_event) = setup(&env);
     env.ledger().with_mut(|ledger| ledger.sequence_number += 5);
 
     assert_eq!(
@@ -109,6 +122,9 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
 
     let treasury_before = client.get_protocol_fee_treasury();
     client.finalize_round(&round_id);
+
+    // See note above: capture events before the next client call.
+    let finalized_event = has_round_event(&env, &contract_id, symbol_short!("finalized"));
 
     let alice_payout = client.get_pending_winnings(&alice);
     let bob_payout = client.get_pending_winnings(&bob);
@@ -120,9 +136,5 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::Resolved
     );
-    assert!(has_round_event(
-        &env,
-        &contract_id,
-        symbol_short!("finalized")
-    ));
+    assert!(finalized_event, "expected a round/finalized event");
 }

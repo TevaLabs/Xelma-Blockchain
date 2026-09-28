@@ -41,15 +41,14 @@ fn test_critical_precision_spam_commits_blocked() {
 
     client.create_round(&1_0000000, &Some(1));
 
-    let hash_1 = make_commitment(&env, 2297, &test_salt(&env, 1));
-    let hash_2 = make_commitment(&env, 2298, &test_salt(&env, 2));
-    let hash_3 = make_commitment(&env, 2299, &test_salt(&env, 3));
-
-    client.commit_prediction(&spammer_1, &hash_1, &100_0000000);
-    client.commit_prediction(&spammer_2, &hash_2, &100_0000000);
+    // The precision participant cap is enforced when a prediction enters the
+    // round (`place_precision_prediction`); commit-reveal entries are not
+    // themselves capped.
+    client.place_precision_prediction(&spammer_1, &100_0000000, &2297);
+    client.place_precision_prediction(&spammer_2, &100_0000000, &2298);
 
     let balance_before = client.balance(&spammer_3);
-    let result = client.try_commit_prediction(&spammer_3, &hash_3, &100_0000000);
+    let result = client.try_place_precision_prediction(&spammer_3, &100_0000000, &2299);
     assert_eq!(result, Err(Ok(ContractError::PrecisionCapExceeded)));
     assert_eq!(client.balance(&spammer_3), balance_before);
 

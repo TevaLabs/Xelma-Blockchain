@@ -839,8 +839,13 @@ fn _find_cursor_position(sorted: &Vec<Address>, cursor: &Option<Address>) -> u32
     sorted.len()
 }
 
-/// Finds the index of the first entry in a sorted leaderboard Vec whose user
-/// address is strictly greater than `cursor`. Returns 0 when `cursor` is `None`.
+/// Finds the index of the entry that follows `cursor` in a leaderboard page.
+/// Returns 0 when `cursor` is `None`.
+///
+/// The leaderboard is ordered by a metric (wins or streak) descending with the
+/// address only as a tiebreaker, so the cursor must be resolved by *position*:
+/// an address-ordered comparison would resume at an arbitrary point of the
+/// metric-ordered list and re-serve entries from earlier pages.
 fn _find_cursor_in_leaderboard(sorted: &Vec<LeaderboardEntry>, cursor: &Option<Address>) -> u32 {
     let cursor_addr = match cursor {
         Some(a) => a,
@@ -849,8 +854,8 @@ fn _find_cursor_in_leaderboard(sorted: &Vec<LeaderboardEntry>, cursor: &Option<A
 
     for i in 0..sorted.len() {
         if let Some(entry) = sorted.get(i) {
-            if &entry.user > cursor_addr {
-                return i;
+            if &entry.user == cursor_addr {
+                return i.saturating_add(1);
             }
         }
     }
