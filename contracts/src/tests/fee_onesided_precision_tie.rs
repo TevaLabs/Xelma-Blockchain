@@ -199,7 +199,8 @@ fn settle_combination(model: FeeModel, bps: Option<u32>, shape: Shape) {
         "{label}: negative pending or treasury alice={alice_pending} bob={bob_pending} charlie={charlie_pending} treasury={treasury}"
     );
     assert_eq!(
-        treasury, fee,
+        treasury,
+        fee,
         "{label}: treasury {treasury} != expected fee {fee} (pot={} winner_stakes={})",
         shape.pot(),
         shape.winner_stakes()
@@ -218,14 +219,20 @@ fn settle_combination(model: FeeModel, bps: Option<u32>, shape: Shape) {
     if shape.one_sided() {
         assert_eq!(alice_pending, ALICE, "{label}: one-sided alice refund");
         assert_eq!(bob_pending, BOB, "{label}: one-sided bob refund");
-        assert_eq!(charlie_pending, 0, "{label}: one-sided charlie was not in the round");
+        assert_eq!(
+            charlie_pending, 0,
+            "{label}: one-sided charlie was not in the round"
+        );
     }
     if matches!(shape, Shape::PrecisionTieTwo | Shape::PrecisionTieThree) {
         assert!(alice_pending > 0, "{label}: tied alice received nothing");
         assert!(bob_pending > 0, "{label}: tied bob received nothing");
     }
     if matches!(shape, Shape::PrecisionTieThree) {
-        assert!(charlie_pending > 0, "{label}: tied charlie received nothing");
+        assert!(
+            charlie_pending > 0,
+            "{label}: tied charlie received nothing"
+        );
     }
 }
 

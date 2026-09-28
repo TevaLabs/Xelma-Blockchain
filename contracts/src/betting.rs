@@ -170,18 +170,21 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
     // be settled unambiguously at all, so it is refused at creation instead.
     // Retry once the ledger has advanced.
     let start_ledger = env.ledger().sequence();
-    if env
+    _extend_persistent_ttl(&env, &DataKeyCore::LastStartLedger);
+    if let Some(prev_start) = env
         .storage()
         .persistent()
-        .has(&DataKeyScoped::RoundStartLedger(start_ledger))
+        .get::<_, u32>(&DataKeyCore::LastStartLedger)
     {
-        _emit_action_rejected(
-            &env,
-            &admin,
-            symbol_short!("create"),
-            ContractError::RoundStartLedgerReused,
-        );
-        return Err(ContractError::RoundStartLedgerReused);
+        if prev_start == start_ledger {
+            _emit_action_rejected(
+                &env,
+                &admin,
+                symbol_short!("create"),
+                ContractError::RoundStartLedgerReused,
+            );
+            return Err(ContractError::RoundStartLedgerReused);
+        }
     }
 
     // Generate unique round ID
@@ -226,9 +229,10 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
     _extend_persistent_ttl(&env, &DataKeyCore::ActiveRound);
 
     // Claim this ledger sequence for this round, so no later round can reuse it.
-    let start_ledger_key = DataKeyScoped::RoundStartLedger(start_ledger);
-    env.storage().persistent().set(&start_ledger_key, &round_id);
-    _extend_persistent_ttl(&env, &start_ledger_key);
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::LastStartLedger, &start_ledger);
+    _extend_persistent_ttl(&env, &DataKeyCore::LastStartLedger);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -760,8 +764,8 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _enforce_access_control(&env, &user)?;
 
     // Check early cash-out is enabled
-    let penalty_bps = get_early_cashout_bps(env.clone())
-        .ok_or(ContractError::EarlyCashoutDisabled)?;
+    let penalty_bps =
+        get_early_cashout_bps(env.clone()).ok_or(ContractError::EarlyCashoutDisabled)?;
 
     if penalty_bps == 0 || penalty_bps > 10_000 {
         return Err(ContractError::EarlyCashoutDisabled);
@@ -807,9 +811,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // If forfeit rounds down to zero (very small stake relative to penalty),
     // user gets full refund — still remove position from pool.
-    let cashout = stake
-        .checked_sub(forfeit)
-        .ok_or(ContractError::Overflow)?;
+    let cashout = stake.checked_sub(forfeit).ok_or(ContractError::Overflow)?;
 
     // Deduct full stake from the appropriate pool
     match position.side {
@@ -940,38 +942,23 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
 
     // ─── Epoch budget check ──────────────────────────────────────────────
     const EP_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
-    let epoch_budget: i128 = env
-        .storage()
-        .instance()
-        .get(&EP_BUDGET_KEY)
-        .unwrap_or(0);
+    let epoch_budget: i128 = env.storage().instance().get(&EP_BUDGET_KEY).unwrap_or(0);
     if epoch_budget > 0 {
         let current_epoch = _current_epoch_id(&env);
         const EP_CONSUMED_KEY: Symbol = symbol_short!("EpMintCsm");
         const EP_EPOCH_KEY: Symbol = symbol_short!("EpMintEpc");
-        let stored_epoch: u32 = env
-            .storage()
-            .temporary()
-            .get(&EP_EPOCH_KEY)
-            .unwrap_or(0);
+        let stored_epoch: u32 = env.storage().temporary().get(&EP_EPOCH_KEY).unwrap_or(0);
         let consumed: i128 = if stored_epoch == current_epoch {
-            env.storage()
-                .temporary()
-                .get(&EP_CONSUMED_KEY)
-                .unwrap_or(0)
+            env.storage().temporary().get(&EP_CONSUMED_KEY).unwrap_or(0)
         } else {
             0
         };
         let new_consumed = consumed.checked_add(initial_amount);
         match new_consumed {
             Some(val) if val <= epoch_budget => {
-                env.storage()
-                    .temporary()
-                    .set(&EP_CONSUMED_KEY, &val);
+                env.storage().temporary().set(&EP_CONSUMED_KEY, &val);
                 if stored_epoch != current_epoch {
-                    env.storage()
-                        .temporary()
-                        .set(&EP_EPOCH_KEY, &current_epoch);
+                    env.storage().temporary().set(&EP_EPOCH_KEY, &current_epoch);
                 }
             }
             _ => {

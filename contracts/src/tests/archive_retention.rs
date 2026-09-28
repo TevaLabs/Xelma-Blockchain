@@ -36,17 +36,18 @@ fn create_and_resolve_round(
 
     env.ledger().with_mut(|li| {
         li.sequence_number = start_ledger + 100;
-        li.timestamp = 2000;
+        li.timestamp = 1060;
     });
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
-        timestamp: 1800,
+        timestamp: 1060,
         round_id: start_ledger,
         nonce,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 }
 
 #[test]
@@ -302,11 +303,11 @@ fn test_user_archived_participation_returns_none_after_prune() {
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 100;
-        li.timestamp = 2000;
+        li.timestamp = 1060;
     });
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
-        timestamp: 1800,
+        timestamp: 1060,
         round_id: 0,
         nonce: 0,
         network_id: env.ledger().network_id(),
@@ -331,7 +332,10 @@ fn test_user_archived_participation_returns_none_after_prune() {
 
     // Round 2 still has its outcome
     let outcome2 = client.get_user_archived_participation(&user, &1);
-    assert!(outcome2.is_some(), "outcome should exist for retained round");
+    assert!(
+        outcome2.is_some(),
+        "outcome should exist for retained round"
+    );
 }
 
 /// Verifies that when a cancelled round is pruned, its `CancelledRound` marker
@@ -359,11 +363,10 @@ fn test_prune_cleans_cancelled_round_marker() {
 
     // CancelledRound marker exists before prune
     env.as_contract(&contract_id_obj, || {
-        assert!(
-            env.storage()
-                .persistent()
-                .has(&DataKeyScoped::CancelledRound(0u64))
-        );
+        assert!(env
+            .storage()
+            .persistent()
+            .has(&DataKeyScoped::CancelledRound(0u64)));
     });
 
     // Create and cancel round 2 — this should prune round 1

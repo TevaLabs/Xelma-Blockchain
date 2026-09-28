@@ -37,9 +37,12 @@ fn cursor_queries_reject_zero_and_over_limit_before_scanning_storage() {
 #[test]
 fn cursor_queries_accept_exactly_max_page_size() {
     let env = Env::default();
+    let contract_id = env.register(crate::VirtualTokenContract, ());
 
-    assert!(get_precision_predictions_cursor(env.clone(), None, MAX_PAGE_SIZE).is_ok());
-    assert!(get_updown_positions_cursor(env.clone(), None, MAX_PAGE_SIZE).is_ok());
-    assert!(get_leaderboard_by_wins(env.clone(), None, MAX_PAGE_SIZE).is_ok());
-    assert!(get_leaderboard_by_streak(env, None, MAX_PAGE_SIZE).is_ok());
+    env.as_contract(&contract_id, || {
+        assert!(get_precision_predictions_cursor(env.clone(), None, MAX_PAGE_SIZE).is_ok());
+        assert!(get_updown_positions_cursor(env.clone(), None, MAX_PAGE_SIZE).is_ok());
+        assert!(get_leaderboard_by_wins(env.clone(), None, MAX_PAGE_SIZE).is_ok());
+        assert!(get_leaderboard_by_streak(env.clone(), None, MAX_PAGE_SIZE).is_ok());
+    });
 }

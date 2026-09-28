@@ -57,7 +57,7 @@ use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events as _, Ledger as _},
-    Address, Bytes, BytesN, Env, TryFromVal,
+    Address, Bytes, BytesN, Env, TryFromVal, TryIntoVal,
 };
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
@@ -244,7 +244,8 @@ fn test_commit_reveal_e2e_full_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_active_round(), None);
 
@@ -640,7 +641,8 @@ fn test_commit_reveal_e2e_two_way_tie_splits_pot_evenly() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let total_pot = bet_a + bet_b;
     let payout_a = client.get_pending_winnings(&user_a);
@@ -778,7 +780,8 @@ fn test_commit_reveal_e2e_all_unrevealed_refunds_conservatively() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_pending_winnings(&alice), ALICE_BET);
     assert_eq!(client.get_pending_winnings(&bob), BOB_BET);
@@ -840,7 +843,8 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let total_pot = ALICE_BET + BOB_BET;
     assert_eq!(client.get_pending_winnings(&alice), total_pot);
@@ -848,16 +852,9 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
 
     let forfeits = env.events().all().iter().filter(|(_, topics, data)| {
         topics.len() == 2
-            && topics
-                .get(0)
-                .and_then(|topic| soroban_sdk::Symbol::try_from_val(&env, &topic).ok())
-                == Some(symbol_short!("forfeit"))
-            && topics
-                .get(1)
-                .and_then(|topic| soroban_sdk::Symbol::try_from_val(&env, &topic).ok())
-                == Some(symbol_short!("predict"))
-            && <(Address, u64, i128)>::try_from_val(&env, data)
-                == Ok((bob.clone(), 1u64, BOB_BET))
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("forfeit"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("predict"))
+            && data.try_into_val(&env) == Ok((bob.clone(), round.round_id, BOB_BET))
     });
     assert_eq!(
         forfeits.count(),

@@ -330,6 +330,7 @@ jobs:
           WASM_PATH: ${{ github.workspace }}/target/wasm32v1-none/release/xelma_contract.wasm
         run: npm run test:vitest
 
+  # Authoritative E2E smoke job (issue #543)
   e2e-smoke:
     name: E2E Smoke (local Soroban RPC)
     runs-on: ubuntu-latest

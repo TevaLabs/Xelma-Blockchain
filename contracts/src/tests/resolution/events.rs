@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 
 #[test]
@@ -36,7 +37,8 @@ fn test_round_resolved_event_emitted() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Verify resolved event was emitted
     let events = env.events().all();
@@ -91,7 +93,8 @@ fn test_updown_resolution_emits_participant_payout_outcomes() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let outcomes = payout_outcome_events(&env);
 
@@ -154,7 +157,8 @@ fn test_unchanged_price_resolution_emits_refund_outcomes() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let outcomes = payout_outcome_events(&env);
 
@@ -220,7 +224,8 @@ fn test_precision_resolution_emits_participant_payout_outcomes() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let outcomes = payout_outcome_events(&env);
 
@@ -312,7 +317,8 @@ fn test_claim_winnings_event_emitted() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Claim winnings
     client.claim_winnings(&user);
@@ -387,4 +393,3 @@ fn test_no_claim_event_when_no_winnings() {
 //   on-chain until reveal) — this convention is documented in
 //   `docs/EVENT_SCHEMA.md` and matches the contract implementation note
 //   in `_resolve_precision_mode`.
-
