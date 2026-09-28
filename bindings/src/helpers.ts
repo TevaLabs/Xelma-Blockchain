@@ -70,6 +70,17 @@ export class NoRoundTemplateError extends XelmaError {
   }
 }
 
+export class AccessDeniedError extends XelmaError {
+  constructor() {
+    super(
+      "Participant is blocked by the active access-control policy",
+      79,
+      "AccessDenied",
+    );
+    this.name = "AccessDeniedError";
+  }
+}
+
 // ─── Error Mapping ─────────────────────────────────────────────
 
 const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
@@ -80,6 +91,7 @@ const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
   28: StakeExceedsMaxError,
   29: ExposureCapExceededError,
   65: NoRoundTemplateError,
+  79: AccessDeniedError,
 };
 
 /**

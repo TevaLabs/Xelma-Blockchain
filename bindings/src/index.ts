@@ -227,6 +227,22 @@ round_id: u32;
   timestamp: u64;
 }
 
+export interface MultiFeedPayload {
+  contract_addr: string;
+  network_id: Buffer;
+  nonce: u64;
+  prices: Array<u128>;
+  round_id: u32;
+  sources: Array<u32>;
+  timestamp: u64;
+}
+
+export interface OracleQuorumConfig {
+  min_observations: u32;
+  outlier_threshold_bps: u32;
+  quorum_threshold: u32;
+}
+
 /**
  * Identifies which critical risk setting is pending timelocked activation.
  */
@@ -536,6 +552,10 @@ export const ContractError = {
    */
   54: {message:"NoPendingRotation"},
   /**
+   * Oracle rotation delay has not elapsed
+   */
+  55: {message:"RotationDelayNotElapsed"},
+  /**
    * Invalid archive retention limit
    */
   62: {message:"InvalidArchiveRetention"},
@@ -543,25 +563,87 @@ export const ContractError = {
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
   63: {message:"InvalidCommitment"},
-  /**
-   * Reveal salt fails minimum entropy rules (all-zero or constant-byte)
-   */
   64: {message:"InvalidSalt"},
   /**
-   * Epoch mint budget has been fully consumed
-   */
-  66: {message:"EpochBudgetExceeded"}
-   * create_next_from_template called with no round template configured
+   * No round template is configured
    */
   65: {message:"NoRoundTemplate"},
   /**
+   * Oracle timestamp is outside the round-relative economic window
+   */
+  66: {message:"OracleTimestampOutsideWindow"},
+  /**
+   * Epoch mint budget has been fully consumed
+   */
+  67: {message:"EpochBudgetExceeded"},
+  /**
    * Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
    */
-  66: {message:"OracleNotLive"},
+  68: {message:"OracleNotLive"},
   /**
    * Invalid precision payout policy
    */
-  67: {message:"InvalidPayoutPolicy"}
+  69: {message:"InvalidPayoutPolicy"},
+  /** Stake is below the configured minimum bet. */
+  70: {message:"BelowMinBet"},
+  /** Too few oracle observations survived quorum validation. */
+  71: {message:"InsufficientOracleQuorum"},
+  /** Multi-feed payload has too few observations. */
+  72: {message:"TooFewObservations"},
+  /** Oracle observation was rejected as an outlier. */
+  73: {message:"OracleOutlierRejected"},
+  /** Multi-feed payload contains a duplicate source. */
+  74: {message:"DuplicateOracleSource"},
+  /** Multi-feed observations are in an invalid order. */
+  75: {message:"InvalidObservationOrder"},
+  /** Data key is not allowed for batch TTL touch. */
+  76: {message:"UnsupportedDataKeyForTtlTouch"},
+  /** Pending winnings entry was not found. */
+  77: {message:"PendingWinningsNotFound"},
+  /** Pending winnings expiry is not configured. */
+  78: {message:"ExpiryNotConfigured"},
+  /** Participant is blocked by the active access-control policy. */
+  79: {message:"AccessDenied"},
+  /** Governance proposal was not found. */
+  80: {message:"ProposalNotFound"},
+  /** Governance proposal has expired. */
+  81: {message:"ProposalExpired"},
+  /** Governance proposal is in an invalid state. */
+  82: {message:"GovInvalidState"},
+  /** Caller is unauthorized by the governance policy. */
+  83: {message:"GovUnauthorized"},
+  /** Action is invalid in the current round lifecycle phase. */
+  84: {message:"IllegalPhaseTransition"},
+  /** Oracle heartbeat failed the configured health policy. */
+  85: {message:"OracleHeartbeatUnhealthy"},
+  /** Pending winnings have not reached their expiry threshold. */
+  86: {message:"PendingWinningsNotExpired"},
+  /** claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE. */
+  87: {message:"ClaimBatchTooLarge"},
+  /** claim_many batch contains a duplicate address. */
+  88: {message:"DuplicateClaimAddress"},
+  /** The dispute window for voiding the round has expired. */
+  91: {message:"DisputeWindowExpired"},
+  /** The round cannot be finalized before its dispute window elapses. */
+  92: {message:"ClaimLocked"},
+  /** The current ledger already identifies another round. */
+  93: {message:"RoundStartLedgerReused"},
+  /** A pagination limit is zero or exceeds MAX_PAGE_SIZE. */
+  94: {message:"PageSizeExceeded"},
+  /** Early cash-out is disabled. */
+  95: {message:"EarlyCashoutDisabled"},
+  /** The user has no active position to cash out. */
+  96: {message:"PositionNotFound"},
+  /** Early cash-out is unavailable in the current round phase. */
+  97: {message:"InvalidPhaseForCashout"},
+  /** Early cash-out is only available for Up/Down rounds. */
+  98: {message:"WrongModeForCashout"},
+  /** An insurance payout split does not match the covered balance. */
+  99: {message:"InsuranceInvalidSplit"},
+  /** The insurance fund cannot cover the requested payout. */
+  100: {message:"InsuranceInsufficientFund"},
+  /** The supplied token amount is invalid. */
+  101: {message:"InvalidAmount"}
 }
 
 /**
@@ -729,6 +811,28 @@ export interface Client {
    * Mode 1 (Precision/Legends): Closest guess wins full pot; ties split evenly
    */
   resolve_round: ({payload}: {payload: OraclePayload}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a resolve_round_multi transaction.
+   * Resolves the round using multi-feed oracle payload with median calculation and outlier rejection.
+   */
+  resolve_round_multi: ({payload}: {payload: MultiFeedPayload}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate an early cash-out transaction.
+   * Allows an UpDown bettor to exit during the running phase with a penalty fee.
+   */
+  cash_out_early: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Sets multi-feed oracle quorum configuration (admin only).
+   */
+  set_oracle_quorum_config: ({cfg}: {cfg: OracleQuorumConfig}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Gets multi-feed oracle quorum configuration if configured.
+   */
+  get_oracle_quorum_config: (options?: MethodOptions) => Promise<AssembledTransaction<Option<OracleQuorumConfig>>>
 
   /**
    * Construct and simulate a set_max_stake transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.

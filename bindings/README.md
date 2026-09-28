@@ -63,10 +63,10 @@ suitable for wallet UX.
 import { decodeContractError, formatContractError } from "bindings"
 
 // Structured result for programmatic handling
-const decoded = decodeContractError(4)
+const decoded = decodeContractError(79)
 if (decoded) {
   console.log(`Error ${decoded.code}: ${decoded.variant} — ${decoded.message}`)
-  // => "Error 4: UnauthorizedAdmin — UnauthorizedAdmin"
+  // => "Error 79: AccessDenied — AccessDenied"
 }
 
 // One-liner for display in a wallet or bot

@@ -12,7 +12,7 @@
 #
 # Exit codes:
 #   0  OK     — HEALTHY (0) or NO_ACTIVE_ROUND (4)
-#   1  WARN   — ORACLE_STALE (2) or ROUND_STALE (3)
+#   1  WARN   — ORACLE_STALE (2), ROUND_STALE (3), or CLAIMS_ONLY (6)
 #   2  CRIT   — PAUSED (1) or MULTIPLE_ISSUES (5)
 #   3  UNKNOWN — CLI not found / contract unreachable / parse failure
 #
@@ -53,6 +53,7 @@ declare -A STATUS_LABEL=(
   [3]="ROUND_STALE"
   [4]="NO_ACTIVE_ROUND"
   [5]="MULTIPLE_ISSUES"
+  [6]="CLAIMS_ONLY"
 )
 
 declare -A STATUS_SEVERITY=(
@@ -62,6 +63,7 @@ declare -A STATUS_SEVERITY=(
   [3]="WARN"
   [4]="OK"
   [5]="CRIT"
+  [6]="WARN"
 )
 
 declare -A ORACLE_STATUS_LABEL=(

@@ -259,6 +259,24 @@ resolve_with_oracle() {
   invoke "$ORACLE_ID" resolve_round --payload "$payload"
 }
 
+resolve_with_oracle_multi() {
+  local round_start_ledger="$1" nonce="${2:-1}"
+  local ts
+  ts=$(( $(date +%s) - 10 ))
+  local payload
+  payload="$(jq -nc \
+    --argjson prices '["16500000", "16480000", "16520000"]' \
+    --argjson sources '[0, 1, 2]' \
+    --argjson timestamp "$ts" \
+    --argjson round_id "$round_start_ledger" \
+    --argjson nonce "$nonce" \
+    --arg network_id "$NETWORK_ID_HEX" \
+    --arg contract_addr "$CONTRACT_ID" \
+    '{prices: $prices, sources: $sources, timestamp: $timestamp, round_id: $round_id, nonce: $nonce, network_id: $network_id, contract_addr: $contract_addr}')"
+  echo "multi-feed oracle payload: $payload"
+  invoke "$ORACLE_ID" resolve_round_multi --payload "$payload"
+}
+
 cleanup() {
   local exit_code=$?
   if [[ $exit_code -ne 0 ]]; then

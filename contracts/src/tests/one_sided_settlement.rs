@@ -54,6 +54,7 @@ fn test_one_sided_up_market() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Capture events before subsequent contract calls reset the log
@@ -105,6 +106,7 @@ fn test_one_sided_down_market() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     });
 
     let events = env.events().all();
@@ -141,6 +143,7 @@ fn test_empty_market() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     });
 
     assert_eq!(client.get_active_round(), None);
@@ -181,6 +184,7 @@ fn test_emitted_events_and_metadata() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     });
 
     let events = env.events().all();
@@ -226,6 +230,7 @@ fn test_refund_behavior_value_preservation() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Claim pending winnings
@@ -284,6 +289,7 @@ fn test_repeated_settlement_attempts() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     };
 
     client.resolve_round(&payload);
@@ -325,6 +331,7 @@ fn test_rounding_and_value_conservation() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+    attestation: None,
     });
 
     let alice_refund = client.get_pending_winnings(&alice);

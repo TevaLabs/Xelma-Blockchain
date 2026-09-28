@@ -41,6 +41,7 @@ Environment variables: `NETWORK`, `SOURCE_ID` (overridden by CLI flags).
 | 0    | OK       | 4 (NO_ACTIVE_ROUND)| No active round; oracle is live. Idle is healthy.    |
 | 1    | WARN     | 2 (ORACLE_STALE)   | Oracle heartbeat is stale or offline.                |
 | 1    | WARN     | 3 (ROUND_STALE)    | Round past end-ledger but unresolved.                |
+| 1    | WARN     | 6 (CLAIMS_ONLY)    | Protocol in ClaimsOnly mode (emergency restriction).  |
 | 2    | CRIT     | 1 (PAUSED)         | Contract is emergency-paused.                        |
 | 2    | CRIT     | 5 (MULTIPLE_ISSUES)| Two or more issues detected simultaneously.          |
 | 3    | UNKNOWN  | —                  | CLI missing, contract unreachable, or parse failure. |

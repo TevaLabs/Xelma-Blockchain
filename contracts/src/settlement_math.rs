@@ -121,13 +121,15 @@ pub fn compute_precision_fee(
         return Ok((total_pot, 0));
     }
     let bps_value = fee_bps.unwrap();
+    // Precision fee/pot arithmetic is payout arithmetic (Issue #405):
+    // overflow must surface as `PayoutOverflow`, not a generic `Overflow`.
     let fee_amount = total_pot
         .checked_mul(bps_value as i128)
-        .ok_or(ContractError::Overflow)?
+        .ok_or(ContractError::PayoutOverflow)?
         / BPS_DENOMINATOR;
     let distributable = total_pot
         .checked_sub(fee_amount)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
     Ok((distributable, fee_amount))
 }
 
@@ -285,9 +287,11 @@ pub fn split_pot_among_winners(
     let mut payouts = Vec::new();
     for i in 0..winner_count {
         let payout = if i == 0 {
+            // Payout split arithmetic (Issue #405): overflow must map to
+            // `PayoutOverflow`.
             per_winner
                 .checked_add(remainder)
-                .ok_or(ContractError::Overflow)?
+                .ok_or(ContractError::PayoutOverflow)?
         } else {
             per_winner
         };
@@ -309,9 +313,11 @@ pub fn split_pot_stake_weighted(
 
     let mut total_winner_stake: i128 = 0;
     for &stake in winner_stakes {
+        // Payout split arithmetic (Issue #405): overflow must map to
+        // `PayoutOverflow`.
         total_winner_stake = total_winner_stake
             .checked_add(stake)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
     }
 
     if total_winner_stake == 0 {
@@ -324,19 +330,21 @@ pub fn split_pot_stake_weighted(
     for &stake in winner_stakes {
         let payout = payout_mul(stake, distributable)? / total_winner_stake;
         payouts.push(payout);
+        // Payout arithmetic (Issue #405): overflow must map to
+        // `PayoutOverflow`.
         total_allocated = total_allocated
             .checked_add(payout)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
     }
 
     let remainder = distributable
         .checked_sub(total_allocated)
-        .ok_or(ContractError::Overflow)?;
+        .ok_or(ContractError::PayoutOverflow)?;
 
     if remainder > 0 && !payouts.is_empty() {
         payouts[0] = payouts[0]
             .checked_add(remainder)
-            .ok_or(ContractError::Overflow)?;
+            .ok_or(ContractError::PayoutOverflow)?;
     }
 
     Ok(payouts)

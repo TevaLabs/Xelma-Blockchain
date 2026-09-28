@@ -22,6 +22,8 @@ fn resolve_active_round(
         nonce,
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
+        confidence: None,
+        attestation: None,
     });
     round_id
 }
@@ -278,7 +280,7 @@ fn test_archived_participation_offset_past_end_is_empty() {
 }
 
 #[test]
-fn test_archived_participation_zero_limit_is_empty() {
+fn test_archived_participation_zero_limit_is_rejected() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
@@ -294,12 +296,13 @@ fn test_archived_participation_zero_limit_is_empty() {
     client.place_bet(&user, &10_0000000, &BetSide::Up);
     resolve_active_round(&client, &env, 2_0000000, 1);
 
-    let page = client.get_user_archive_history(&user, &0, &0);
-    assert_eq!(page.len(), 0);
+    // Zero limit should be rejected with PageSizeExceeded error
+    let result = client.try_get_user_archive_history(&user, &0, &0);
+    assert!(result.is_err());
 }
 
 #[test]
-fn test_archived_participation_limit_is_capped() {
+fn test_archived_participation_over_limit_rejected() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
@@ -317,7 +320,12 @@ fn test_archived_participation_limit_is_capped() {
         resolve_active_round(&client, &env, 2_0000000 + i as u128, i as u64 + 1);
     }
 
-    let page = client.get_user_archive_history(&user, &0, &1_000_000);
+    // Over-limit request (1_000_000 > MAX_PAGE_SIZE=100) should be rejected
+    let result = client.try_get_user_archive_history(&user, &0, &1_000_000);
+    assert!(result.is_err(), "Should reject limit > MAX_PAGE_SIZE (100)");
+
+    // Valid request with MAX_PAGE_SIZE should succeed
+    let page = client.get_user_archive_history(&user, &0, &100);
     assert_eq!(page.len(), 3);
 }
 

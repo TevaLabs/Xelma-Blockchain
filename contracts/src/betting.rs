@@ -56,6 +56,58 @@ fn salt_has_minimum_entropy(salt: &BytesN<32>) -> bool {
     saw_nonzero && saw_different
 }
 
+fn _user_round_exposure(env: &Env, round_id: u64, user: &Address) -> i128 {
+    let mut exposure = 0_i128;
+
+    if let Some(position) = env
+        .storage()
+        .persistent()
+        .get::<_, UserPosition>(&DataKeyScoped::Position(round_id, user.clone()))
+    {
+        exposure = exposure.saturating_add(position.amount);
+    }
+
+    if let Some(prediction) = env
+        .storage()
+        .persistent()
+        .get::<_, PrecisionPrediction>(&DataKeyScoped::PrecisionPosition(round_id, user.clone()))
+    {
+        exposure = exposure.saturating_add(prediction.amount);
+    }
+
+    if let Some(commitment) = env
+        .storage()
+        .persistent()
+        .get::<_, PrecisionCommitment>(&DataKeyScoped::PrecisionCommitment(round_id, user.clone()))
+    {
+        exposure = exposure.saturating_add(commitment.amount);
+    }
+
+    exposure
+}
+
+fn _enforce_user_round_exposure(
+    env: &Env,
+    round_id: u64,
+    user: &Address,
+    additional_amount: i128,
+) -> Result<(), ContractError> {
+    if let Some(max_exposure) = env
+        .storage()
+        .persistent()
+        .get::<_, i128>(&DataKeyCore::MaxUserRoundExposure)
+    {
+        let current_exposure = _user_round_exposure(env, round_id, user);
+        let next_exposure = current_exposure
+            .checked_add(additional_amount)
+            .ok_or(ContractError::Overflow)?;
+        if next_exposure > max_exposure {
+            return Err(ContractError::ExposureCapExceeded);
+        }
+    }
+    Ok(())
+}
+
 /// Creates a new prediction round (admin only)
 pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
@@ -108,6 +160,30 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
         .get(&DataKeyCore::RunWindowLedgers)
         .unwrap_or(DEFAULT_RUN_WINDOW_LEDGERS);
 
+    // Oracle payloads bind to `Round.start_ledger` (`OraclePayload.round_id`),
+    // so a ledger sequence may back at most one round. A round created,
+    // cancelled, and replaced within a single ledger would otherwise share a
+    // `start_ledger` with its predecessor, making a payload signed for the
+    // earlier round valid for the later one. The per-round nonce guard does not
+    // cover this: consumed nonces are keyed by the monotonic `Round.round_id`,
+    // which differs between the two rounds. Such a replacement round could not
+    // be settled unambiguously at all, so it is refused at creation instead.
+    // Retry once the ledger has advanced.
+    let start_ledger = env.ledger().sequence();
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKeyScoped::RoundStartLedger(start_ledger))
+    {
+        _emit_action_rejected(
+            &env,
+            &admin,
+            symbol_short!("create"),
+            ContractError::RoundStartLedgerReused,
+        );
+        return Err(ContractError::RoundStartLedgerReused);
+    }
+
     // Generate unique round ID
     _extend_persistent_ttl(&env, &DataKeyCore::LastRoundId);
     let last_round_id: u64 = env
@@ -123,7 +199,6 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
         .set(&DataKeyCore::LastRoundId, &round_id);
     _extend_persistent_ttl(&env, &DataKeyCore::LastRoundId);
 
-    let start_ledger = env.ledger().sequence();
     let bet_end_ledger = start_ledger
         .checked_add(bet_ledgers)
         .ok_or(ContractError::Overflow)?;
@@ -149,6 +224,11 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
         .persistent()
         .set(&DataKeyCore::ActiveRound, &round);
     _extend_persistent_ttl(&env, &DataKeyCore::ActiveRound);
+
+    // Claim this ledger sequence for this round, so no later round can reuse it.
+    let start_ledger_key = DataKeyScoped::RoundStartLedger(start_ledger);
+    env.storage().persistent().set(&start_ledger_key, &round_id);
+    _extend_persistent_ttl(&env, &start_ledger_key);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -247,16 +327,7 @@ pub fn place_bet(
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    // Enforce per-user round exposure cap
-    if let Some(max_exposure) = env
-        .storage()
-        .persistent()
-        .get::<_, i128>(&DataKeyCore::MaxUserRoundExposure)
-    {
-        if amount > max_exposure {
-            return Err(ContractError::ExposureCapExceeded);
-        }
-    }
+    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
 
     // Verify round is in Up/Down mode
     if round.mode != RoundMode::UpDown {
@@ -383,16 +454,7 @@ pub fn place_precision_prediction(
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    // Enforce per-user round exposure cap
-    if let Some(max_exposure) = env
-        .storage()
-        .persistent()
-        .get::<_, i128>(&DataKeyCore::MaxUserRoundExposure)
-    {
-        if amount > max_exposure {
-            return Err(ContractError::ExposureCapExceeded);
-        }
-    }
+    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
 
     // Verify round is in Precision mode
     if round.mode != RoundMode::Precision {
@@ -486,7 +548,7 @@ pub fn commit_prediction(
     // Reject clearly invalid commitment placeholders early (before balance
     // reads / deductions) so griefing commits cannot lock liquidity.
     if is_zero_bytes32(&env, &hash) {
-        return Err(ContractError::InvalidPrice);
+        return Err(ContractError::InvalidCommitment);
     }
 
     if amount <= 0 {
@@ -512,16 +574,7 @@ pub fn commit_prediction(
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    // Enforce per-user round exposure cap
-    if let Some(max_exposure) = env
-        .storage()
-        .persistent()
-        .get::<_, i128>(&DataKeyCore::MaxUserRoundExposure)
-    {
-        if amount > max_exposure {
-            return Err(ContractError::ExposureCapExceeded);
-        }
-    }
+    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
 
     // Verify round is in Precision mode
     if round.mode != RoundMode::Precision {
@@ -602,7 +655,7 @@ pub fn reveal_prediction(
     // Enforce salt entropy before any storage reads so malformed reveals fail
     // fast with an explicit error (not HashMismatch after a wasted lookup).
     if !salt_has_minimum_entropy(&salt) {
-        return Err(ContractError::InvalidPrice);
+        return Err(ContractError::InvalidSalt);
     }
 
     // Single read of the active round
@@ -689,11 +742,17 @@ pub fn reveal_prediction(
 /// - The forfeited amount is credited to the protocol fee treasury.
 /// - The user receives `cashout` as pending winnings.
 ///
+/// **Invariants & Conservation**:
+/// - `cashout + forfeit == stake`: The user's entire position stake removed from the
+///   active pool is fully accounted for — `cashout` is credited to the user's
+///   pending winnings and `forfeit` is retained as a protocol fee.
+///
 /// **Restrictions**:
 /// - Only during the Running phase (`bet_end_ledger ≤ ledger < end_ledger`).
 /// - Only for UpDown rounds (not Precision).
 /// - User must have an active position in the current round.
 /// - Feature must be enabled via `EarlyCashoutBps`.
+/// - Blocked when contract is paused or not in Normal mode.
 pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     user.require_auth();
@@ -702,7 +761,11 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // Check early cash-out is enabled
     let penalty_bps = get_early_cashout_bps(env.clone())
-        .ok_or(ContractError::RoundEnded)?;
+        .ok_or(ContractError::EarlyCashoutDisabled)?;
+
+    if penalty_bps == 0 || penalty_bps > 10_000 {
+        return Err(ContractError::EarlyCashoutDisabled);
+    }
 
     // Single read of the active round
     let mut round: Round = env
@@ -713,13 +776,13 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // Only UpDown rounds supported
     if round.mode != RoundMode::UpDown {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::WrongModeForCashout);
     }
 
     // Must be in Running phase (betting closed, round not yet ended)
     let current_ledger = env.ledger().sequence();
     if current_ledger < round.bet_end_ledger || current_ledger >= round.end_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::InvalidPhaseForCashout);
     }
 
     // Retrieve user's position
@@ -728,7 +791,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
         .storage()
         .persistent()
         .get(&pos_key)
-        .ok_or(ContractError::CommitmentNotFound)?;
+        .ok_or(ContractError::PositionNotFound)?;
 
     let stake = position.amount;
     if stake <= 0 {

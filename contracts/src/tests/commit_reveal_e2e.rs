@@ -36,8 +36,9 @@
 //! `env.events().all()` only returns events from the *current* ledger.
 //!
 //! Per-event topic coverage (the precise shape of `mint/initial`,
-//! `round/created`, `commit/predict`, `reveal/predict`, `round/summary`,
-//! `claim/winnings` payloads) lives in dedicated test modules:
+//! `round/created`, `commit/predict`, `reveal/predict`, `forfeit/predict`,
+//! `round/summary`, `claim/winnings` payloads) lives in dedicated test
+//! modules:
 //!
 //! - [`contracts/src/tests/event_coverage.rs`] — one test per event topic,
 //!   each asserting the full data payload.
@@ -54,8 +55,9 @@
 
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
-    Address, Bytes, BytesN, Env,
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger as _},
+    Address, Bytes, BytesN, Env, TryFromVal,
 };
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
@@ -687,12 +689,16 @@ fn test_commit_reveal_e2e_zero_commitment_hash_is_rejected() {
 
     let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
     let result = client.try_commit_prediction(&user, &zero_hash, &ALICE_BET);
-    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidCommitment)));
+    assert_eq!(ContractError::InvalidCommitment as u32, 63);
     assert_eq!(client.balance(&user), INITIAL_BALANCE);
 }
 
 #[test]
 fn test_commit_reveal_e2e_weak_salt_is_rejected() {
+    // Grinding defense: obvious low-entropy placeholders cannot be opened.
+    // Non-trivial entropy cannot be proven on-chain, so production clients
+    // must still generate salts with a CSPRNG as documented in PROTOCOL_SPEC.
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(VirtualTokenContract, ());
@@ -718,14 +724,15 @@ fn test_commit_reveal_e2e_weak_salt_is_rejected() {
     let zero_salt = BytesN::from_array(&env, &[0u8; 32]);
     assert_eq!(
         client.try_reveal_prediction(&user, &price, &zero_salt),
-        Err(Ok(ContractError::InvalidPrice))
+        Err(Ok(ContractError::InvalidSalt))
     );
 
     let constant_salt = BytesN::from_array(&env, &[0xABu8; 32]);
     assert_eq!(
         client.try_reveal_prediction(&user, &price, &constant_salt),
-        Err(Ok(ContractError::InvalidPrice))
+        Err(Ok(ContractError::InvalidSalt))
     );
+    assert_eq!(ContractError::InvalidSalt as u32, 64);
 
     // Correct entropy salt still reveals successfully.
     client.reveal_prediction(&user, &price, &good_salt);
@@ -838,6 +845,25 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
     let total_pot = ALICE_BET + BOB_BET;
     assert_eq!(client.get_pending_winnings(&alice), total_pot);
     assert_eq!(client.get_pending_winnings(&bob), 0);
+
+    let forfeits = env.events().all().iter().filter(|(_, topics, data)| {
+        topics.len() == 2
+            && topics
+                .get(0)
+                .and_then(|topic| soroban_sdk::Symbol::try_from_val(&env, &topic).ok())
+                == Some(symbol_short!("forfeit"))
+            && topics
+                .get(1)
+                .and_then(|topic| soroban_sdk::Symbol::try_from_val(&env, &topic).ok())
+                == Some(symbol_short!("predict"))
+            && <(Address, u64, i128)>::try_from_val(&env, data)
+                == Ok((bob.clone(), 1u64, BOB_BET))
+    });
+    assert_eq!(
+        forfeits.count(),
+        1,
+        "Bob must emit exactly one forfeit event"
+    );
 
     client.claim_winnings(&alice);
     assert_eq!(

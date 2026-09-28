@@ -108,22 +108,22 @@ impl ReferenceModel {
             return false;
         }
 
-        if let Some(ref mut round) = self.active_round {
-            if !round.active {
-                return false;
+        match self.active_round {
+            Some(ref round) if !round.active => false,
+            Some(_) => {
+                self.withdraw(user, amount);
+                self.total_pool = self.total_pool.saturating_add(amount);
+                let round = self.active_round.as_mut().unwrap();
+                if side_is_up {
+                    round.pool_up += amount;
+                    *round.bets_up.entry(user.clone()).or_default() += amount;
+                } else {
+                    round.pool_down += amount;
+                    *round.bets_down.entry(user.clone()).or_default() += amount;
+                }
+                true
             }
-            self.withdraw(user, amount);
-            self.total_pool = self.total_pool.saturating_add(amount);
-            if side_is_up {
-                round.pool_up += amount;
-                *round.bets_up.entry(user.clone()).or_default() += amount;
-            } else {
-                round.pool_down += amount;
-                *round.bets_down.entry(user.clone()).or_default() += amount;
-            }
-            true
-        } else {
-            false
+            None => false,
         }
     }
 

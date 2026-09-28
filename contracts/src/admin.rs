@@ -372,7 +372,7 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
 
 /// Loads the deviation guardrail config, returning the `StartPrice` default if unset (Issue #266).
 pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
-    let key = DeviationConfigKey::Config;
+    let key = DeviationConfigKey::DevCfg;
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -390,7 +390,7 @@ pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
 }
 
 fn _save_deviation_config(env: &Env, config: &DeviationConfig) {
-    let key = DeviationConfigKey::Config;
+    let key = DeviationConfigKey::DevCfg;
     env.storage().persistent().set(&key, config);
     env.storage().persistent().extend_ttl(
         &key,
@@ -459,7 +459,7 @@ pub fn get_deviation_window_samples(env: Env) -> u32 {
 
 /// Loads the attestation config, returning `key: None` (disabled) if unset (Issue #263).
 pub fn _load_attestation_config(env: &Env) -> AttestationConfig {
-    let key = AttestationConfigKey::Config;
+    let key = AttestationConfigKey::Attest;
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -488,7 +488,7 @@ pub fn set_attestation_key(env: Env, key: Option<BytesN<32>>) -> Result<(), Cont
         _emit_action_rejected(&env, &admin, symbol_short!("attkey"), e);
     })?;
 
-    let storage_key = AttestationConfigKey::Config;
+    let storage_key = AttestationConfigKey::Attest;
     env.storage()
         .persistent()
         .set(&storage_key, &AttestationConfig { key: key.clone() });
@@ -521,6 +521,9 @@ pub fn set_oracle_min_confidence_bps(env: Env, min_bps: Option<u32>) -> Result<(
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("omin_cnf"), e);
+    })?;
     if let Some(bps) = min_bps {
         if bps > 10_000 {
             return Err(ContractError::WindowOutOfRange);
@@ -550,6 +553,9 @@ pub fn set_oracle_strict_mode(env: Env, enabled: bool) -> Result<(), ContractErr
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("ostrict"), e);
+    })?;
     env.storage()
         .persistent()
         .set(&DataKeyCore::OracleStrictMode, &enabled);
@@ -583,6 +589,9 @@ pub fn set_hb_strict_mode(env: Env, enabled: bool) -> Result<(), ContractError> 
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("hbstrict"), e);
+    })?;
     let mut config = _load_hb_config(&env);
     config.strict_mode = enabled;
     _save_hb_config(&env, &config);
@@ -635,6 +644,9 @@ pub fn set_hb_grace_seconds(env: Env, seconds: u64) -> Result<(), ContractError>
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("hbgrace"), e);
+    })?;
     let mut config = _load_hb_config(&env);
     config.grace_seconds = seconds;
     _save_hb_config(&env, &config);
@@ -662,7 +674,7 @@ pub fn _consume_hb_override(env: &Env) -> bool {
 
 /// Loads the heartbeat gate config, returning defaults if unset.
 pub fn _load_hb_config(env: &Env) -> HbGateConfig {
-    let key = HbGateKey::Config;
+    let key = HbGateKey::HbGate;
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(
             &key,
@@ -682,7 +694,7 @@ pub fn _load_hb_config(env: &Env) -> HbGateConfig {
 
 /// Saves the heartbeat gate config to persistent storage.
 pub fn _save_hb_config(env: &Env, config: &HbGateConfig) {
-    let key = HbGateKey::Config;
+    let key = HbGateKey::HbGate;
     env.storage().persistent().set(&key, config);
     env.storage().persistent().extend_ttl(
         &key,
@@ -815,9 +827,18 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
     };
 
     let schema_version = _schema_version(&env).unwrap_or(1);
+    let mode = _current_mode(&env);
+    let is_claims_only = mode == RuntimeMode::ClaimsOnly;
+    let access_restricted = crate::access_control::is_access_control_enabled(env.clone());
 
+    // Every non-`Normal` runtime mode counts as a degradation so that a
+    // ClaimsOnly incident can never mask a stale oracle or stale round
+    // (see "Status precedence" in docs/STATUS_CODES.md).
     let mut issues: u32 = 0;
     if paused {
+        issues += 1;
+    }
+    if is_claims_only {
         issues += 1;
     }
     if !oracle_live {
@@ -831,12 +852,16 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         1u32 // PAUSED
     } else if issues > 1 {
         5u32 // MULTIPLE_ISSUES
+    } else if is_claims_only {
+        6u32 // CLAIMS_ONLY
     } else if !oracle_live {
         2u32 // ORACLE_STALE
     } else if has_active_round && active_round_phase == 3 {
         3u32 // ROUND_STALE
     } else if !has_active_round {
         4u32 // NO_ACTIVE_ROUND
+    } else if access_restricted {
+        7u32 // ACCESS_RESTRICTED
     } else {
         0u32 // HEALTHY
     };
@@ -864,7 +889,7 @@ pub fn get_oracle_stale_threshold(env: Env) -> u64 {
 }
 
 /// Reads the current [`RuntimeMode`], defaulting to `Normal` if unset.
-fn _current_mode(env: &Env) -> RuntimeMode {
+pub(crate) fn _current_mode(env: &Env) -> RuntimeMode {
     let key = DataKeyCore::Paused;
     _extend_persistent_ttl(env, &key);
     env.storage()
@@ -900,18 +925,30 @@ fn _current_mode(env: &Env) -> RuntimeMode {
 ///
 /// - `RoundMutation`: `place_bet`, `place_precision_prediction`,
 ///   `predict_price`, `commit_prediction`, `reveal_prediction`,
-///   `mint_initial`.
+///   `mint_initial`, `apply_scheduled_changes` (activating a timelocked
+///   config change is treated as mutation-adjacent — it is deliberately
+///   blocked in `ClaimsOnly` too, unlike the rest of the config surface, so
+///   an incident freezes pending config activations along with new bets).
+///   `cancel_config_change` is *not* in this class — cancelling a pending
+///   change is `AdminConfig` below, so an operator can always back out a
+///   scheduled change even while `ClaimsOnly`.
 /// - `Claim`: `claim_winnings`.
 /// - `Settlement`: `resolve_round`, `cancel_round`.
-/// - `AdminConfig`: `pause_contract`, `unpause_contract`, `set_runtime_mode`,
-///   `migrate_schema_v1_to_v2`, `migrate_schema_v2_to_v3`,
+/// - Mode-transition controls — `pause_contract`, `unpause_contract`,
+///   `set_runtime_mode` — call `_set_mode` directly and are **not** routed
+///   through `_policy_gate` at all: they must stay callable in every mode,
+///   `FullyPaused` included, or there would be no way to escape an incident.
+///   (They are still `Some(admin)`-authenticated and blocked by
+///   `GovUnauthorized` when a governance approver is configured — just not by
+///   the runtime-mode gate.) Do not add a `_policy_gate` call to these.
+/// - `AdminConfig`: `migrate_schema_v1_to_v2`, `migrate_schema_v2_to_v3`,
 ///   `set_oracle_max_deviation_bps`, `arm_oracle_deviation_override`,
 ///   `set_oracle_min_confidence_bps`, `set_oracle_strict_mode`,
 ///   `set_hb_strict_mode`, `arm_hb_override`, `set_hb_grace_seconds`,
 ///   `propose_oracle_rotation`, `accept_oracle_rotation`,
 ///   `cancel_oracle_rotation`, `set_windows`, `set_max_stake`,
 ///   `set_max_user_exposure`, `set_max_pending_winnings`, `set_min_bet`,
-///   `schedule_*` variants, `apply_scheduled_changes`, `cancel_config_change`,
+///   `schedule_*` variants, `cancel_config_change`,
 ///   `set_protocol_fee_bps`, `withdraw_protocol_fee`, `set_min_participants`,
 ///   `set_max_precision_participants`, `set_mint_limit`,
 ///   `set_archive_retention`, `set_close_buffer_ledgers`,
@@ -1173,10 +1210,13 @@ pub fn _require_supported_schema(env: &Env) -> Result<u32, ContractError> {
 ///
 /// # Errors
 /// - `AdminNotSet` — contract not initialized.
-/// - `ContractPaused` — contract is fully paused.
+/// - `ContractPaused` — contract is fully paused (allowed in `ClaimsOnly`).
+/// - `ExpiryNotConfigured` — expiry is disabled (`0`, the default).
+/// - `PendingWinningsNotFound` — the user has no pending winnings (or no
+///   last-credited ledger is recorded for them).
 /// - `PendingWinningsNotExpired` — entry exists but hasn't reached the expiry threshold.
-/// - `NoActiveRound` — used as a generic "no pending winnings" signal when
-///   the entry doesn't exist or expiry is disabled (0).
+///
+/// Operator playbook: `docs/OPS_ARCHIVE_RECLAIM_PLAYBOOK.md`.
 pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env

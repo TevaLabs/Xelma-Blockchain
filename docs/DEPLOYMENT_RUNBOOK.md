@@ -87,7 +87,45 @@ The output artifact is located at: `target/wasm32v1-none/release/xelma_contract.
 - If only a specific role or oracle flow breaks: disable the affected workflow, communicate the issue, and patch before reopening the system.
 - If the issue is limited to a non-critical UI or indexer problem: keep the contract paused or isolated until downstream systems are updated.
 
-## 6. Post-deployment
+## 7. Operator Playbook: Archive Retention & Expired Pending Winnings Reclaim
+
+The full playbook, with commands, events, failure modes and linked
+entrypoints, is in
+[OPS_ARCHIVE_RECLAIM_PLAYBOOK.md](OPS_ARCHIVE_RECLAIM_PLAYBOOK.md). Quick reference:
+
+### 7.1 Archive retention (automatic FIFO prune)
+
+* There is no manual prune entrypoint. Pruning happens on each archive write
+  (resolve / cancel / fallback / void) once more than `archive_retention`
+  rounds are archived.
+* Set the depth (admin, immediate, `1..=10000`, default `128`):
+  ```bash
+  stellar contract invoke --id <CONTRACT_ID> --source <ADMIN> --network <NETWORK> -- set_archive_retention --limit 256
+  ```
+* Watch `("archive", "pruned")` with `(round_id, retention_limit)`. Lowering the
+  limit prunes the whole backlog on the **next** archive write.
+* Failure modes: `#23 WindowOutOfRange` (limit out of range), `#22 ContractPaused` (FullyPaused).
+
+### 7.2 Reclaiming expired pending winnings
+
+* Enable the expiry through the config timelock (disabled by default):
+  ```bash
+  stellar contract invoke ... -- schedule_pending_winnings_expiry --ledgers 518400
+  # after activation_ledger (get_pending_config_change), in Normal mode:
+  stellar contract invoke ... -- apply_scheduled_changes --kind PendingWinningsExpiry
+  ```
+* Reclaim one user at a time (admin). Funds move to the **admin's** balance:
+  ```bash
+  stellar contract invoke ... -- reclaim_expired_pending_winnings --user <G...>
+  ```
+* Watch `("claim", "expired")` with `(user, amount, admin)`.
+* Failure modes: `#78 ExpiryNotConfigured`, `#77 PendingWinningsNotFound`,
+  `#86 PendingWinningsNotExpired` (any new credit resets the timer),
+  `#22 ContractPaused` (FullyPaused; ClaimsOnly is allowed).
+
+---
+
+## 8. Post-deployment
 
 - [ ] Confirm the admin and oracle addresses match the intended identities.
 - [ ] Verify the deployed artifact hash and network ID.

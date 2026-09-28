@@ -1,0 +1,27 @@
+name: Nightly Extended Fuzzing
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  fuzz-extended:
+    name: Run Extended Fuzz Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+      - name: Run Extended Fuzz Tests
+        run: FUZZ_MODE=extended cargo test --package xelma-contract --lib tests::fuzz_lifecycle -- --nocapture
+      - name: Archive Fuzz Logs & Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-extended-logs
+          path: |
+            target/fuzz_*.log
+            target/debug/deps/fuzz_*
+          if-no-files-found: ignore

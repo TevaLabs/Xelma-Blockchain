@@ -4,11 +4,14 @@
 use super::config_helpers::{apply_max_stake, apply_max_user_exposure, apply_windows};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKey, OraclePayload, RoundMode};
+use crate::types::{
+    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, PrecisionCommitment, PrecisionPrediction,
+    RoundMode, UserPosition,
+};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, BytesN, Env, TryIntoVal,
+    Address, BytesN, Env, TryIntoVal, Vec,
 };
 
 /// Salt satisfying on-chain minimum entropy (non-zero, non-constant).
@@ -910,6 +913,108 @@ fn test_precision_prediction_exposure_cap_exceeded_fails() {
 }
 
 #[test]
+fn test_updown_bet_counts_precision_commitment_toward_exposure_cap() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user);
+    apply_max_user_exposure(&env, &client, Some(100_0000000i128));
+    client.create_round(&1_0000000, &Some(0));
+
+    let round = client.get_active_round().unwrap();
+    let commitment = PrecisionCommitment {
+        hash: BytesN::from_array(&env, &[9u8; 32]),
+        amount: 75_0000000,
+        revealed: false,
+    };
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::PrecisionCommitment(round.round_id, user.clone()), &commitment);
+    });
+
+    let result = client.try_place_bet(&user, &30_0000000, &BetSide::Up);
+    assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
+}
+
+#[test]
+fn test_precision_prediction_counts_updown_position_toward_exposure_cap() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user);
+    apply_max_user_exposure(&env, &client, Some(100_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    let round = client.get_active_round().unwrap();
+    let position = UserPosition {
+        amount: 75_0000000,
+        side: BetSide::Up,
+    };
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Position(round.round_id, user.clone()), &position);
+    });
+
+    let result = client.try_place_precision_prediction(&user, &30_0000000, &2297u128);
+    assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
+}
+
+#[test]
+fn test_commit_prediction_counts_precision_prediction_toward_exposure_cap() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user);
+    apply_max_user_exposure(&env, &client, Some(100_0000000i128));
+    client.create_round(&1_0000000, &Some(1));
+
+    let round = client.get_active_round().unwrap();
+    let prediction = PrecisionPrediction {
+        user: user.clone(),
+        predicted_price: 2297,
+        amount: 75_0000000,
+    };
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::PrecisionPosition(round.round_id, user.clone()), &prediction);
+    });
+
+    let result = client.try_commit_prediction(
+        &user,
+        &BytesN::from_array(&env, &[11u8; 32]),
+        &30_0000000,
+    );
+    assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
+}
+
+#[test]
 fn test_caps_disabled_precision_prediction_succeeds() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
@@ -1652,6 +1757,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // --- Step 2: Run an UpDown round (mode switch) ---
@@ -1669,13 +1775,14 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // --- Step 3: Verify no stale Precision data leaks into UpDown round ---
     // Use as_contract to check raw storage
     env.as_contract(&contract_id, || {
         // Stale PrecisionPosition from the first round should be cleared
-        let stale_pred_key = DataKey::PrecisionPosition(precision_round_id, alice.clone());
+        let stale_pred_key = DataKeyScoped::PrecisionPosition(precision_round_id, alice.clone());
         let has_stale_pred = env.storage().persistent().has(&stale_pred_key);
         assert!(
             !has_stale_pred,
@@ -1685,7 +1792,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
 
         // Stale PrecisionCommitment from the first round should be cleared
         let stale_commit_key =
-            DataKey::PrecisionCommitment(precision_round_id, alice.clone());
+            DataKeyScoped::PrecisionCommitment(precision_round_id, alice.clone());
         let has_stale_commit = env.storage().persistent().has(&stale_commit_key);
         assert!(
             !has_stale_commit,
@@ -1694,7 +1801,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         );
 
         // Stale Position from the UpDown round should be cleared
-        let stale_pos_key = DataKey::Position(updown_round_id, alice.clone());
+        let stale_pos_key = DataKeyScoped::Position(updown_round_id, alice.clone());
         let has_stale_pos = env.storage().persistent().has(&stale_pos_key);
         assert!(
             !has_stale_pos,
@@ -1703,10 +1810,10 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         );
 
         // Legacy keys should also be cleared
-        let has_legacy_updown = env.storage().persistent().has(&DataKey::UpDownPositions);
+        let has_legacy_updown = env.storage().persistent().has(&DataKeyCore::UpDownPositions);
         assert!(!has_legacy_updown, "Legacy UpDownPositions should be cleared");
 
-        let has_legacy_precision = env.storage().persistent().has(&DataKey::PrecisionPositions);
+        let has_legacy_precision = env.storage().persistent().has(&DataKeyCore::PrecisionPositions);
         assert!(
             !has_legacy_precision,
             "Legacy PrecisionPositions should be cleared"
@@ -1742,6 +1849,7 @@ fn test_alternation_precision_after_updown_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // --- Step 2: Run a Precision round (mode switch) ---
@@ -1758,11 +1866,12 @@ fn test_alternation_precision_after_updown_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // --- Step 3: Verify no stale UpDown data leaks into Precision round ---
     env.as_contract(&contract_id, || {
-        let stale_pos_key = DataKey::Position(updown_round_id, alice.clone());
+        let stale_pos_key = DataKeyScoped::Position(updown_round_id, alice.clone());
         let has_stale_pos = env.storage().persistent().has(&stale_pos_key);
         assert!(
             !has_stale_pos,
@@ -1770,7 +1879,7 @@ fn test_alternation_precision_after_updown_no_stale_data() {
             updown_round_id
         );
 
-        let stale_pred_key = DataKey::PrecisionPosition(precision_round_id, alice.clone());
+        let stale_pred_key = DataKeyScoped::PrecisionPosition(precision_round_id, alice.clone());
         let has_stale_pred = env.storage().persistent().has(&stale_pred_key);
         assert!(
             !has_stale_pred,
@@ -1803,18 +1912,18 @@ fn test_alternation_cancel_clears_both_modes() {
 
     // Verify all position keys are cleared after cancellation
     env.as_contract(&contract_id, || {
-        let pred_key = DataKey::PrecisionPosition(round_id, alice.clone());
+        let pred_key = DataKeyScoped::PrecisionPosition(round_id, alice.clone());
         assert!(!env.storage().persistent().has(&pred_key));
 
-        let commit_key = DataKey::PrecisionCommitment(round_id, alice.clone());
+        let commit_key = DataKeyScoped::PrecisionCommitment(round_id, alice.clone());
         assert!(!env.storage().persistent().has(&commit_key));
 
         // Cross-mode key should also be absent (never set, but verify no phantom data)
-        let pos_key = DataKey::Position(round_id, alice.clone());
+        let pos_key = DataKeyScoped::Position(round_id, alice.clone());
         assert!(!env.storage().persistent().has(&pos_key));
 
         // Round participants should be cleared
-        let participants_key = DataKey::RoundParticipants(round_id);
+        let participants_key = DataKeyScoped::RoundParticipants(round_id);
         assert!(!env.storage().persistent().has(&participants_key));
     });
 }
@@ -1848,6 +1957,7 @@ fn test_alternation_three_round_cycle_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Round 2: UpDown
@@ -1863,6 +1973,7 @@ fn test_alternation_three_round_cycle_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Round 3: Precision again
@@ -1878,16 +1989,17 @@ fn test_alternation_three_round_cycle_no_stale_data() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
+    attestation: None,
     });
 
     // Verify NO stale data from any round
     env.as_contract(&contract_id, || {
         for i in 0..round_ids.len() {
             if let Some(rid) = round_ids.get(i) {
-                let pos_key = DataKey::Position(rid, alice.clone());
-                let pred_key = DataKey::PrecisionPosition(rid, alice.clone());
-                let commit_key = DataKey::PrecisionCommitment(rid, alice.clone());
-                let participants_key = DataKey::RoundParticipants(rid);
+                let pos_key = DataKeyScoped::Position(rid, alice.clone());
+                let pred_key = DataKeyScoped::PrecisionPosition(rid, alice.clone());
+                let commit_key = DataKeyScoped::PrecisionCommitment(rid, alice.clone());
+                let participants_key = DataKeyScoped::RoundParticipants(rid);
 
                 assert!(
                     !env.storage().persistent().has(&pos_key),

@@ -22,7 +22,11 @@ fn test_critical_sybil_faucet_abuse_mint_limit() {
     assert_eq!(client.mint_initial(&sybil_2), 1000_0000000);
 
     let blocked = client.try_mint_initial(&sybil_3);
-    assert_eq!(blocked, Err(Ok(ContractError::MintLimitExceeded)));
+    let blocked_err = blocked.unwrap().unwrap_err();
+    assert_eq!(
+        blocked_err,
+        soroban_sdk::Error::from_contract_error(ContractError::MintLimitExceeded as u32)
+    );
     assert_eq!(client.balance(&sybil_3), 0);
 
     emit_result(
@@ -52,7 +56,11 @@ fn test_sybil_faucet_abuse_epoch_budget() {
     client.mint_initial(&sybil_2);
 
     let blocked = client.try_mint_initial(&sybil_3);
-    assert_eq!(blocked, Err(Ok(ContractError::EpochBudgetExceeded)));
+    let blocked_err = blocked.unwrap().unwrap_err();
+    assert_eq!(
+        blocked_err,
+        soroban_sdk::Error::from_contract_error(ContractError::EpochBudgetExceeded as u32)
+    );
 
     emit_result(
         "sybil_faucet_epoch_budget",

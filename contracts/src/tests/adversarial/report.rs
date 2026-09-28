@@ -2,6 +2,7 @@
 //! Inventory test — verifies the full scenario catalog is registered.
 
 use super::ADVERSARIAL_SEED;
+use std::eprintln;
 
 /// Scenario count gate: Issue #372 requires ≥8 named attack scenarios.
 /// Individual scenario tests emit structured `ADVERSARIAL_RESULT:` lines;
