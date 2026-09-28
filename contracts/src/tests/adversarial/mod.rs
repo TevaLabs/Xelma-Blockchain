@@ -27,6 +27,7 @@
 //! Run locally: `./scripts/run_adversarial_suite.sh`
 //! Deterministic seed: [`ADVERSARIAL_SEED`]
 
+mod commit_reveal_grinding;
 mod economic;
 mod lifecycle;
 mod oracle;

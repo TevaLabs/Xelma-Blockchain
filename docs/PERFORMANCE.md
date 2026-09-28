@@ -38,6 +38,11 @@ The exact numbers depend on the Soroban SDK version and host runtime. Regenerate
 | `season_reset_at_limit` | _regenerate_ | _regenerate_ |
 | `leaderboard_full_page_read` | _regenerate_ | _regenerate_ |
 
+> For the Precision participant cap, see
+> [Precision participant cap vs CPU budget](#precision-participant-cap-vs-cpu-budget-issue-516)
+> below — settlement cost there is linear in participants and crosses the
+> per-transaction budget well before the shipped default cap.
+
 ## Regression policy
 
 Every benchmark asserts the measured CPU instructions and memory bytes stay within the standard Soroban per-transaction resource budget. Treat any benchmark failure as a hard regression. If a passing run still shows a spike of more than 20% versus the last published table, call it out in the pull request and either optimize the path or document the reason for the higher cost.
@@ -52,6 +57,107 @@ that tripped a `*_CPU_MAX`/`*_MEM_MAX` assertion are always reviewable from the
 workflow run's Artifacts section, not just the truncated job log. When you
 touch a benchmark-sensitive path, download that artifact from your PR's CI
 run and paste the relevant rows into this file's table in the same change.
+
+## Precision participant cap vs CPU budget (Issue #516)
+
+Precision rounds enforce a configurable participant cap
+(`set_max_precision_participants`, default **1,000**, hard ceiling **10,000**).
+Resolution (`_resolve_precision_mode`) iterates every participant, so the cap
+is the knob that decides whether a Precision round can still be settled inside
+one on-chain transaction. The table below is the measured cost of
+`resolve_round` for a Precision round at each participant count.
+
+### Regeneration command
+
+```text
+cargo test --package xelma-contract precision_cap -- --nocapture
+```
+
+Each step prints a machine-readable line:
+
+```text
+[cost-benchmark-cap] participants=10 cpu_instructions=31648897 memory_bytes=4433433 cpu_pct_of_budget=31.6489
+```
+
+and a markdown row that can be copied directly into the table below. The
+`rust-test` job in `.github/workflows/ci.yml` already runs the full
+`cost_benchmarks` suite with `--nocapture` and uploads the output as the
+`cost-benchmarks` artifact, so this table can be refreshed from any CI run.
+
+### Measured cap vs CPU cost
+
+Standard Soroban per-transaction budget: **100,000,000 CPU instructions** and
+**104,857,600 memory bytes**.
+
+| Precision participants | CPU instructions | Memory bytes | CPU % of budget |
+|---:|---:|---:|---:|
+| 1 | 1,640,670 | 352,517 | 1.64% |
+| 5 | 8,505,975 | 1,487,683 | 8.51% |
+| 10 | 31,648,897 | 4,433,433 | 31.65% |
+| 15 | 82,371,103 | 9,763,508 | 82.37% |
+| 20 | 172,295,807 | 18,214,658 | 172.30% |
+| 25 | 315,665,956 | 30,523,633 | 315.67% |
+
+### Reading the table
+
+Settlement cost is **linear in participants**, at roughly **13.1M CPU
+instructions per participant** (`bench_cost_precision_cap_cpu_sweep` measures
+this slope directly). Consequences:
+
+- The per-transaction CPU budget is exhausted at **≈15–20 participants**.
+  Resolution at 20 participants needs 1.7× the budget, at 25 it needs 3.2×.
+- A round that exceeds the budget does not fail gracefully — `resolve_round`
+  aborts with `Budget ExceededLimit` and the round stays unsettled until an
+  operator intervenes.
+- Memory crosses its 100 MiB budget at roughly the same point as CPU.
+
+### Recommended cap
+
+| Setting | Value | Rationale |
+|---|---:|---|
+| Protocol default (`DEFAULT_MAX_PRECISION_PARTICIPANTS`) | 1,000 | Unchanged by this issue — see the gap below. |
+| Hard ceiling (`MAX_PRECISION_PARTICIPANTS_LIMIT`) | 10,000 | Unchanged; a range check, not a safety guarantee. |
+| **Recommended operating cap** | **7** | Largest cap whose measured settlement cost stays inside one transaction with margin (~15% of the CPU budget at 7 participants). |
+
+`verify_precision_cap_is_within_cpu_budget` in
+`contracts/src/tests/cost_benchmarks.rs` pins this recommendation to the
+measured curve: it re-derives the per-participant slope, computes the largest
+affordable cap, and fails if the documented recommendation exceeds it or if
+settling at it breaches the CPU or memory budget. If settlement cost ever
+changes, the test fails rather than letting this table go stale.
+
+### Known gap: the default cap exceeds the CPU budget
+
+> **The shipped default cap of 1,000 participants cannot settle within a single
+> on-chain transaction at the measured ~13.1M CPU per participant** — it would
+> need roughly 13× the per-transaction CPU budget. Extrapolating the table, the
+> default cap should be around **7**.
+
+This is a **known, pre-existing risk, not a regression introduced by this
+issue.** The default of 1,000 predates these measurements. What this change
+adds is the evidence: the cap↔CPU relationship is now measured, published, and
+guarded by a test.
+
+Lowering `DEFAULT_MAX_PRECISION_PARTICIPANTS` is an **economic and protocol
+change** — it changes how many people a Precision round can admit — so it is
+deliberately left out of this documentation-focused change. Operators who need
+to settle large Precision rounds today should call
+`set_max_precision_participants` with a value at or below the recommended cap
+of 7. Raising the cap back toward 1,000 requires first making settlement
+sub-linear (or otherwise dramatically cheaper) in participant count.
+
+### Regression policy for this path
+
+`bench_cost_precision_cap_cpu_sweep` measures rather than gates each step
+(because the measured cost is intentionally above budget at the upper end of
+the sampled range — that is the finding). It does assert that cost never
+*decreases* as participants grow, so a change that makes settlement cheaper is
+always visible in the published table.
+
+`verify_precision_cap_bounds_actual_participation` asserts the cap is a real
+admission limit: with `set_max_precision_participants(3)`, the fourth predictor
+is rejected with `PrecisionCapExceeded`. That is what makes the table an upper
+bound on real settlement cost rather than a hypothetical.
 
 ## Pagination query limits (Issue #430)
 

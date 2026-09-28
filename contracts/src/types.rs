@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -998,13 +998,22 @@ pub enum AmendmentStatus {
 /// Amendment proposal for parameter changes with timelock and veto window (Issue #363).
 /// Represents a proposed change to a protocol parameter that must pass through a
 /// governance lifecycle: optional veto window, timelock, then activation.
+// `new_value` is a `ConfigChangePayload` rather than a raw `Val`: the
+// `#[contracttype]` derive requires the field type to round-trip through `ScVal`
+// *and* to implement `SorobanArbitrary` for test builds, and `Val`/`ScVal`
+// satisfy neither. `ConfigChangePayload` is already the canonical
+// "governable parameter value" enum used by the timelocked config-change path,
+// so reusing it keeps a single representation of a proposed value on-chain.
+//
+// `PartialEq` is intentionally omitted: no caller compares whole `Amendment`
+// values — governance only inspects the `status` field.
 #[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Amendment {
     pub id: u64,
     pub proposer: Address,
     pub parameter_name: Symbol,
-    pub new_value: Val,
+    pub new_value: ConfigChangePayload,
     pub created_at_ledger: u32,
     pub veto_deadline_ledger: u32,
     pub activation_deadline_ledger: u32,
