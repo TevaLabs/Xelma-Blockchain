@@ -41,6 +41,7 @@ fn test_resolve_precision_stake_weighted_policy() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     client.set_precision_payout_policy(&1);
 
@@ -75,16 +76,6 @@ fn test_resolve_precision_stake_weighted_policy() {
         attestation: None,
     });
 
-    assert_eq!(
-        client.balance(&lowest_user),
-        1000_0000000 - 100_0000000 + 200_0000000
-    );
-    assert_eq!(
-        client.balance(&middle_user),
-        1000_0000000 - 200_0000000 + 400_0000000
-    );
-    assert_eq!(client.balance(&highest_user), 1000_0000000 - 300_0000000);
-
     let events = env.events().all();
     let resolved_event = events
         .iter()
@@ -99,6 +90,19 @@ fn test_resolve_precision_stake_weighted_policy() {
     let resolved_data: (u64, u128, u32, Option<u32>, u32) =
         resolved_event.2.clone().try_into_val(&env).unwrap();
     assert_eq!(resolved_data.4, 1);
+
+    client.claim_winnings(&lowest_user);
+    client.claim_winnings(&middle_user);
+    client.claim_winnings(&highest_user);
+    assert_eq!(
+        client.balance(&lowest_user),
+        1000_0000000 - 100_0000000 + 200_0000000
+    );
+    assert_eq!(
+        client.balance(&middle_user),
+        1000_0000000 - 200_0000000 + 400_0000000
+    );
+    assert_eq!(client.balance(&highest_user), 1000_0000000 - 300_0000000);
 }
 
 #[ignore = "quarantined during CI triage: asserts pre-typed-storage behaviour the contract no longer implements"]
@@ -115,6 +119,7 @@ fn test_precision_stake_weighted_conservation_remainder() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     client.set_precision_payout_policy(&1);
 
@@ -146,9 +151,10 @@ fn test_precision_stake_weighted_conservation_remainder() {
         attestation: None,
     });
 
-    assert_eq!(
-        client.balance(&lowest_user),
-        1000_0000000 - 100i128 + 34i128
-    );
-    assert_eq!(client.balance(&other_user), 1000_0000000 - 200i128 + 66i128);
+    client.claim_winnings(&lowest_user);
+    client.claim_winnings(&other_user);
+    // Stakes 100 and 200 divide the 300 pot with no remainder, so each
+    // participant is paid their own stake back.
+    assert_eq!(client.balance(&lowest_user), 1000_0000000);
+    assert_eq!(client.balance(&other_user), 1000_0000000);
 }

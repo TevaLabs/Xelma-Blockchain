@@ -191,6 +191,8 @@ fn test_claim_winnings_clears_tracking_key() {
 
     // Advance past bet window (6) + into run window so resolve works
     env.ledger().with_mut(|li| li.sequence_number = 19);
+    // Settlement requires a healthy oracle heartbeat.
+    client.update_oracle_heartbeat(&0u32);
 
     client.resolve_round(&OraclePayload {
         price: 1_2000000,

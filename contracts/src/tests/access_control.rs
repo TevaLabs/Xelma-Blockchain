@@ -284,7 +284,7 @@ fn test_denylist_blocks_cashout() {
 }
 
 /// `test_protocol_health_reports_access_mode` — enabling allowlist mode is
-/// surfaced as the informational `ACCESS_RESTRICTED` (6) status code when the
+/// surfaced as the informational `ACCESS_RESTRICTED` (7) status code when the
 /// rest of the protocol is otherwise healthy.
 #[ignore = "quarantined during CI triage: asserts pre-typed-storage behaviour the contract no longer implements"]
 #[test]

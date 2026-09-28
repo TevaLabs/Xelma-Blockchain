@@ -15,6 +15,9 @@ Benchmarks live in [`src/tests/cost_benchmarks.rs`](src/tests/cost_benchmarks.rs
 | precision submit    | `bench_cost_precision_submit`  |
 | `resolve_round`     | `bench_cost_resolve_round`     |
 | `claim_winnings`    | `bench_cost_claim_winnings`    |
+| leaderboard update  | `bench_cost_leaderboard_update_at_limit` |
+| season reset        | `bench_cost_season_reset_at_limit`       |
+| leaderboard read    | `bench_cost_leaderboard_full_page_read_at_limit` |
 
 ## Running locally
 
@@ -45,13 +48,24 @@ To tighten the guardrail toward true regression detection:
    `baseline × tolerance` (a 15–25% tolerance absorbs allocator/host jitter).
 4. Update this table in the same PR that changes the constants.
 
-| Path             | Baseline CPU | Baseline MEM | Captured on |
-| ---------------- | ------------ | ------------ | ----------- |
-| create_round     | _record_     | _record_     | _date/sha_  |
-| place_bet        | _record_     | _record_     | _date/sha_  |
-| precision submit | _record_     | _record_     | _date/sha_  |
-| resolve_round    | _record_     | _record_     | _date/sha_  |
-| claim_winnings   | _record_     | _record_     | _date/sha_  |
+| Path                    | Baseline CPU | Baseline MEM | Captured on |
+| ----------------------- | ------------ | ------------ | ----------- |
+| create_round            | _record_     | _record_     | _date/sha_  |
+| place_bet               | _record_     | _record_     | _date/sha_  |
+| precision submit        | _record_     | _record_     | _date/sha_  |
+| resolve_round           | _record_     | _record_     | _date/sha_  |
+| claim_winnings          | _record_     | _record_     | _date/sha_  |
+| leaderboard update      | _record_     | _record_     | _date/sha_  |
+| season reset            | _record_     | _record_     | _date/sha_  |
+| leaderboard read        | _record_     | _record_     | _date/sha_  |
+
+The three leaderboard rows are generated at the hard cap of 100 entries by
+`bench_cost_leaderboard_update_at_limit`, `bench_cost_season_reset_at_limit`,
+and `bench_cost_leaderboard_full_page_read_at_limit`. Their companion guard
+tests require update and reset CPU consumption to remain below 50% of the
+Soroban transaction budget. CI publishes the untruncated measurements in its
+`cost-benchmarks` artifact; copy those values here only from a green run on the
+same SDK version.
 
 ## CI integration
 

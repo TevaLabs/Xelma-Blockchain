@@ -283,8 +283,40 @@ fn test_leaderboard_zero_limit_is_empty() {
         VirtualTokenContract::_update_stats_win(&env, user.clone()).unwrap();
     });
 
-    // limit = 0 → empty page
-    let page = client.get_leaderboard_by_wins(&None, &0);
-    assert_eq!(page.0.len(), 0);
-    assert!(page.1.is_none());
+    // limit = 0 → should be rejected with PageSizeExceeded error
+    let result = client.try_get_leaderboard_by_wins(&None, &0);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_leaderboard_rejects_over_limit_adversarial() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    client.create_round(&1_0000000u128, &None);
+
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+    client.place_bet(&user, &10_0000000i128, &crate::types::BetSide::Up);
+
+    env.as_contract(&contract_id, || {
+        VirtualTokenContract::_update_stats_win(&env, user.clone()).unwrap();
+    });
+
+    // Adversarial: request with limit = MAX_PAGE_SIZE + 1 should be rejected
+    let result_wins = client.try_get_leaderboard_by_wins(&None, &101);
+    assert!(result_wins.is_err(), "Should reject limit > MAX_PAGE_SIZE (100)");
+
+    let result_streak = client.try_get_leaderboard_by_streak(&None, &1000);
+    assert!(result_streak.is_err(), "Should reject limit > MAX_PAGE_SIZE (100)");
+
+    // Valid request with exactly MAX_PAGE_SIZE should succeed
+    let (valid_entries, _) = client.get_leaderboard_by_wins(&None, &100);
+    assert!(valid_entries.len() <= 100, "Should accept limit == MAX_PAGE_SIZE (100)");
 }

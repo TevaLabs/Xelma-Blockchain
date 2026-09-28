@@ -8,9 +8,11 @@ const __dirname = path.dirname(__filename);
 
 const errorsPath = path.resolve(__dirname, "../../contracts/src/errors.rs");
 const bindingsPath = path.resolve(__dirname, "../src/index.ts");
+const docsPath = path.resolve(__dirname, "../../docs/CONTRACT_ERRORS.md");
 
 const errorsCode = fs.readFileSync(errorsPath, "utf8");
 const bindingsCode = fs.readFileSync(bindingsPath, "utf8");
+const docsCode = fs.readFileSync(docsPath, "utf8");
 
 const rustVariants = [];
 for (const line of errorsCode.split("\n")) {
@@ -33,6 +35,13 @@ while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
 }
 
 const rustCodes = new Map(rustVariants.map(v => [v.code, v.name]));
+const docsCodes = new Map();
+for (const line of docsCode.split("\n")) {
+  const match = line.match(/^\|\s*(\d+)\s*\|\s*`?(\w+)`?\s*\|/);
+  if (match) {
+    docsCodes.set(parseInt(match[1], 10), match[2]);
+  }
+}
 
 describe("Contract Error Parity", () => {
   it("maps AccessDenied to its stable contract code", () => {
@@ -72,6 +81,13 @@ describe("Contract Error Parity", () => {
     expect(nameMismatches).toEqual([]);
   });
 
+  it("keeps the documented registry identical to Rust", () => {
+    const byCode = ([left], [right]) => left - right;
+    expect([...docsCodes.entries()].sort(byCode)).toEqual(
+      [...rustCodes.entries()].sort(byCode)
+    );
+  });
+
   it("contains decodeContractError helper", () => {
     expect(bindingsCode.includes("export function decodeContractError")).toBe(true);
   });
@@ -80,4 +96,3 @@ describe("Contract Error Parity", () => {
     expect(bindingsCode.includes("export function formatContractError")).toBe(true);
   });
 });
-

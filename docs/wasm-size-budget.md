@@ -4,13 +4,13 @@
 Stored in `.wasm-size-baseline` at the repo root (plain integer, bytes).
 
 ### Budget policy
-CI allows up to **+10%** growth above baseline before failing.
+CI allows up to **+5%** growth above baseline before failing.
 
 ### How CI checks it
 The `wasm-size-gate` job in `.github/workflows/ci.yml`:
 1. Builds `xelma_contract.wasm` in release mode
 2. Runs `scripts/check_wasm_size.sh` against that artifact, which compares
-   size against `.wasm-size-baseline` + 10%, prints a size report, and fails
+   size against `.wasm-size-baseline` + 5%, prints a size report, and fails
    with an actionable error if the budget is exceeded
 
 ### Checking it locally

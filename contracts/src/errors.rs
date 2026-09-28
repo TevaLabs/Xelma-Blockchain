@@ -129,4 +129,6 @@ pub enum ContractError {
     /// sequence would make a payload signed for the earlier round valid for
     /// the later one. Retry once the ledger has advanced.
     RoundStartLedgerReused = 93,
+    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
+    PageSizeExceeded = 94,
 }
