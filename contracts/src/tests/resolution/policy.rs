@@ -88,6 +88,7 @@ fn test_resolve_precision_stake_weighted_policy() {
     assert_eq!(client.balance(&highest_user), 1000_0000000 - 300_0000000);
     assert_eq!(client.get_pending_winnings(&highest_user), 0);
 
+    let events = env.events().all();
     let resolved_event = events
         .iter()
         .find(|e| {
@@ -101,6 +102,19 @@ fn test_resolve_precision_stake_weighted_policy() {
     let resolved_data: (u64, u128, u32, Option<u32>, u32) =
         resolved_event.2.clone().try_into_val(&env).unwrap();
     assert_eq!(resolved_data.4, 1);
+
+    client.claim_winnings(&lowest_user);
+    client.claim_winnings(&middle_user);
+    client.claim_winnings(&highest_user);
+    assert_eq!(
+        client.balance(&lowest_user),
+        1000_0000000 - 100_0000000 + 200_0000000
+    );
+    assert_eq!(
+        client.balance(&middle_user),
+        1000_0000000 - 200_0000000 + 400_0000000
+    );
+    assert_eq!(client.balance(&highest_user), 1000_0000000 - 300_0000000);
 }
 
 #[test]
@@ -158,4 +172,10 @@ fn test_precision_stake_weighted_conservation_remainder() {
     assert_eq!(lowest_pending + other_pending, 300i128);
     assert_eq!(client.balance(&lowest_user), 1000_0000000 - 100);
     assert_eq!(client.balance(&other_user), 1000_0000000 - 200);
+    client.claim_winnings(&lowest_user);
+    client.claim_winnings(&other_user);
+    // Stakes 100 and 200 divide the 300 pot with no remainder, so each
+    // participant is paid their own stake back.
+    assert_eq!(client.balance(&lowest_user), 1000_0000000);
+    assert_eq!(client.balance(&other_user), 1000_0000000);
 }

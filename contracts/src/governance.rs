@@ -498,7 +498,7 @@ pub fn propose_amendment(
     env: Env,
     proposer: Address,
     parameter_name: soroban_sdk::Symbol,
-    new_value: soroban_sdk::Val,
+    new_value: soroban_sdk::Bytes,
 ) -> Result<u64, ContractError> {
     _require_supported_schema(&env)?;
     proposer.require_auth();

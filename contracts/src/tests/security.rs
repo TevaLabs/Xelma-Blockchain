@@ -1016,8 +1016,10 @@ fn test_heartbeat_strict_mode_config() {
 /// (`hb_arm_ovr`, 10 chars) exceeds the 9-char `symbol_short!` limit — the
 /// test cannot compile or pass against the shipped entrypoint surface.
 #[cfg(any())]
+/// Arming the heartbeat override sets the one-shot flag. The contract does not
+/// emit a separate arm event; consumption emits `("oracle", "hoverride")`.
 #[test]
-fn test_arm_heartbeat_override_emits_event() {
+fn test_arm_heartbeat_override_sets_flag() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let admin = Address::generate(&env);
@@ -1036,6 +1038,9 @@ fn test_arm_heartbeat_override_emits_event() {
             && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hb_arm_ovr"))
     });
     assert!(arm_event.is_some(), "hb_arm_ovr event must be emitted on arm");
+    assert!(!client.get_hb_override_armed());
+    client.arm_hb_override();
+    assert!(client.get_hb_override_armed());
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
@@ -2010,7 +2015,7 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
         let config: HbGateConfig = env
             .storage()
             .persistent()
-            .get(&HbGateKey::Config)
+            .get(&HbGateKey::HbGate)
             .unwrap_or(HbGateConfig {
                 strict_mode: false,
                 override_armed: false,

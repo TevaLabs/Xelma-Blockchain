@@ -10,6 +10,7 @@
 //! | # | Attack | Defense | Test |
 //! |---|--------|---------|------|
 //! | 1 | **Salt grinding** — try many low-entropy salts to bypass entropy check | `InvalidSalt` rejects zero/constant salts | `test_adversarial_salt_grinding_defense` |
+//! | 1 | **Salt grinding** — try zero, constant, and two-byte salts | `InvalidSalt` rejects zero/constant salts; two-byte salts are residual risk | `test_adversarial_salt_grinding_defense` |
 //! | 2 | **Commit-and-grief non-reveal** — commit large bet, never reveal to force forfeiture | Unrevealed commitments forfeit to pot (refunded to revealer); all-unrevealed paths refund | `test_adversarial_commit_and_grief_non_reveal` |
 //! | 3 | **Cross-round commitment replay** — reuse a hash from a prior round in a new round | `CommitmentNotFound` (each round stores its own commitment key) | `test_adversarial_cross_round_commitment_replay` |
 //! | 4 | **Double-commit griefing** — commit twice in the same round to manipulate odds | `AlreadyBet` rejects second commitment per user | `test_adversarial_double_commit_rejected` |
@@ -24,6 +25,14 @@ use soroban_sdk::xdr::ToXdr;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
 use crate::types::{OraclePayload, RoundMode};
+use super::emit_result;
+use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::xdr::ToXdr;
+use soroban_sdk::{Address, Bytes, BytesN, Env};
+
+use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
+use crate::errors::ContractError;
+use crate::types::OraclePayload;
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -80,6 +89,13 @@ fn setup(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address) {
 /// by a CSPRNG. A client could technically use a high-entropy-but-predictable
 /// sequence (e.g. sequential counters). This is a residual risk because the
 /// contract cannot verify off-chain randomness source quality.
+/// **Protocol defense:** The contract rejects all-zero and constant-byte salts
+/// with `InvalidSalt` before comparing the commitment hash.
+///
+/// **Residual risk:** Any salt with at least two distinct bytes passes the
+/// on-chain floor, including a single non-zero byte followed by zeros. The
+/// contract cannot tell a CSPRNG salt from a predictable counter. Wallets
+/// must sample salts off-chain.
 #[test]
 fn test_adversarial_salt_grinding_defense() {
     let env = Env::default();
@@ -122,6 +138,16 @@ fn test_adversarial_salt_grinding_defense() {
             "sequential pattern salt must be rejected"
         );
     }
+    // Two distinct bytes pass the entropy floor. The reveal then fails only
+    // because the preimage does not match the committed hash.
+    let mut raw = [0u8; 32];
+    raw[0] = 1;
+    let low_entropy = BytesN::from_array(&env, &raw);
+    assert_eq!(
+        client.try_reveal_prediction(&attacker, &price, &low_entropy),
+        Err(Ok(ContractError::HashMismatch)),
+        "two-byte salt is not rejected by the entropy floor"
+    );
 
     // ── Valid high-entropy salt still works ──
     client.reveal_prediction(&attacker, &price, &good_salt);
@@ -133,6 +159,14 @@ fn test_adversarial_salt_grinding_defense() {
     assert_eq!(
         client.balance(&attacker),
         INITIAL_BALANCE - 100_0000000
+    );
+    emit_result(
+        "commit_reveal_salt_grind",
+        "pass",
+        "InvalidSalt",
+        "two-distinct-byte salts still reach hash verification",
+        "low",
+        false,
     );
 }
 
@@ -239,6 +273,14 @@ fn test_adversarial_commit_and_grief_non_reveal() {
         INITIAL_BALANCE * 2,
         "conservation invariant must hold after grief resolution"
     );
+    emit_result(
+        "commit_reveal_selective_reveal_grief",
+        "pass",
+        "unrevealed stake forfeited to pot",
+        "honest users wait until resolution to recover",
+        "low",
+        false,
+    );
 }
 
 // ─── Scenario 3: Cross-round commitment replay ─────────────────────────────
@@ -316,6 +358,14 @@ fn test_adversarial_cross_round_commitment_replay() {
         Err(Ok(ContractError::CommitmentNotFound)),
         "cross-round replay must be rejected — no commitment exists in round 2"
     );
+    emit_result(
+        "commit_reveal_cross_round_replay",
+        "pass",
+        "CommitmentNotFound",
+        "none",
+        "low",
+        false,
+    );
 }
 
 // ─── Scenario 4: Double-commit griefing ────────────────────────────────────
@@ -371,6 +421,7 @@ fn test_adversarial_double_commit_rejected() {
     assert_eq!(prediction.amount, 100_0000000);
 
     // ── Attempt to also use the direct prediction path (bypass) ──
+    // Direct prediction in the same bet window must also be rejected.
     let result2 = client.try_place_precision_prediction(
         &attacker,
         &50_0000000,
@@ -380,5 +431,48 @@ fn test_adversarial_double_commit_rejected() {
         result2,
         Err(Ok(ContractError::AlreadyBet)),
         "commit-then-direct-prediction bypass must also be rejected"
+    );
+
+    // The first commitment can still be revealed.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+    client.reveal_prediction(&attacker, &price1, &salt1);
+    let prediction = client.get_user_precision_prediction(&attacker).unwrap();
+    assert_eq!(prediction.predicted_price, price1);
+    assert_eq!(prediction.amount, 100_0000000);
+    emit_result(
+        "commit_reveal_double_commit",
+        "pass",
+        "AlreadyBet",
+        "none",
+        "low",
+        false,
+    );
+}
+
+/// Zero-hash grind: the all-zero commitment is rejected before stake is locked.
+/// Defense: `InvalidCommitment` before any balance write. Residual risk: none
+/// for the all-zero placeholder; non-zero hashes are still accepted.
+#[test]
+fn grind_zero_commitment_rejected_before_stake_lock() {
+    let env = Env::default();
+    let (client, _contract_id, _oracle) = setup(&env);
+    let attacker = Address::generate(&env);
+    client.mint_initial(&attacker);
+    let before = client.balance(&attacker);
+    let zero = BytesN::from_array(&env, &[0u8; 32]);
+    assert_eq!(
+        client.try_commit_prediction(&attacker, &zero, &100_0000000),
+        Err(Ok(ContractError::InvalidCommitment))
+    );
+    assert_eq!(client.balance(&attacker), before);
+    emit_result(
+        "commit_reveal_zero_hash_grind",
+        "pass",
+        "InvalidCommitment",
+        "stake is not locked",
+        "low",
+        false,
     );
 }

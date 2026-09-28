@@ -320,4 +320,6 @@ fn test_leaderboard_rejects_over_limit_adversarial() {
     // Valid request with exactly MAX_PAGE_SIZE should succeed
     let valid_result = client.try_get_leaderboard_by_wins(&None, &100);
     assert!(valid_result.is_ok(), "Should accept limit == MAX_PAGE_SIZE (100)");
+    let (valid_entries, _) = client.get_leaderboard_by_wins(&None, &100);
+    assert!(valid_entries.len() <= 100, "Should accept limit == MAX_PAGE_SIZE (100)");
 }
