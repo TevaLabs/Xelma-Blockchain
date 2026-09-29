@@ -17,6 +17,7 @@ mod config_helpers;
 mod conservation;
 mod cost_benchmarks;
 mod deviation_reference;
+mod diff_verify;
 mod dispute_window;
 mod drill;
 mod drill_chaos_migration;
