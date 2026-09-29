@@ -36,6 +36,7 @@ mod market_snapshot;
 mod migration_versioning;
 mod min_bet;
 mod mode_tests;
+mod multi_feed_oracle_resolution;
 mod one_sided_settlement;
 mod ops_archive_reclaim;
 mod overflow_tests;
