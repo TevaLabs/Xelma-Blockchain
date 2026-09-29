@@ -5,8 +5,9 @@ use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
 use crate::types::{DataKeyCore, GovAction, GovProposalStatus};
 use soroban_sdk::{
+    symbol_short,
     testutils::{Address as _, Events as _, Ledger as _},
-    Address, Env,
+    Address, Env, TryIntoVal,
 };
 
 fn setup_governance_env() -> (
@@ -223,17 +224,46 @@ fn test_protected_action_role_transfers() {
 fn test_audit_event_emission() {
     let (env, client, admin, approver, _oracle, _user) = setup_governance_env();
 
+    // `env.events().all()` returns the events emitted since the previous call
+    // (a per-invocation window), so each governance transition must be sampled
+    // immediately after it happens to prove its audit event was emitted.
+    let mut gov_topics: std::vec::Vec<(soroban_sdk::Symbol, soroban_sdk::Symbol)> =
+        std::vec::Vec::new();
+
+    let sample = |env: &Env, out: &mut std::vec::Vec<(soroban_sdk::Symbol, soroban_sdk::Symbol)>| {
+        for (_contract, topics, _data) in env.events().all().iter() {
+            let topics: std::vec::Vec<soroban_sdk::Symbol> =
+                topics.iter().collect::<std::vec::Vec<_>>()
+                    .iter()
+                    .map(|t| t.try_into_val(env).unwrap())
+                    .collect();
+            if topics.len() == 2 {
+                out.push((topics[0].clone(), topics[1].clone()));
+            }
+        }
+    };
+
+    sample(&env, &mut gov_topics); // gov/appr_set from setup
     let pid = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &None);
+    sample(&env, &mut gov_topics); // gov/proposed
     client.approve_gov_proposal(&approver, &pid);
+    sample(&env, &mut gov_topics); // gov/approved
     client.execute_gov_proposal(&admin, &pid);
+    sample(&env, &mut gov_topics); // mode/transition + gov/executed
 
-    let events = env.events().all();
-    let gov_events: std::vec::Vec<_> = events
-        .into_iter()
-        .filter(|e| e.0 == client.address)
-        .collect();
-
-    assert!(gov_events.len() >= 3);
+    for expected in [
+        (symbol_short!("gov"), symbol_short!("appr_set")),
+        (symbol_short!("gov"), symbol_short!("proposed")),
+        (symbol_short!("gov"), symbol_short!("approved")),
+        (symbol_short!("gov"), symbol_short!("executed")),
+    ] {
+        assert!(
+            gov_topics.contains(&expected),
+            "missing audit event {:?} in {:?}",
+            expected,
+            gov_topics
+        );
+    }
 }
 
 fn seed_protocol_fee_treasury(
