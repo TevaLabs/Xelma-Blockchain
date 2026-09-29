@@ -2,7 +2,7 @@
 //! Dual-Approval Governance Mechanism for Critical Administrative Actions (Issue #272).
 //! On-Chain Constitution for Parameter Governance (Issue #363).
 
-use crate::admin::{_require_supported_schema, _set_mode};
+use crate::admin::{_ensure_not_paused, _require_supported_schema, _set_mode};
 use crate::common::{
     _emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_PROPOSAL_TTL_LEDGERS,
 };
@@ -286,6 +286,21 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
         GovProposalStatus::Approved => {}
     }
 
+    // Emergency mode transitions must remain available while fully paused, but
+    // every other protected action follows the same gate as direct admin config.
+    if !matches!(&proposal.action, GovAction::PauseProtocol | GovAction::UnpauseProtocol) {
+        _ensure_not_paused(&env).inspect_err(|&e| {
+            _emit_action_rejected(&env, &executor, symbol_short!("execute"), e);
+        })?;
+    }
+
+    // Checks-Effects-Interactions: consume the proposal before applying its
+    // action. A failed action atomically rolls this write back for retry, while
+    // a successful action cannot be re-entered or cancelled mid-execution.
+    proposal.status = GovProposalStatus::Executed;
+    env.storage().persistent().set(&p_key, &proposal);
+    _extend_persistent_ttl(&env, &p_key);
+
     // Execute the action payload
     match &proposal.action {
         GovAction::PauseProtocol => {
@@ -335,10 +350,6 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
             crate::insurance::set_insurance_coverage_bps(env.clone(), *bps)?;
         }
     }
-
-    proposal.status = GovProposalStatus::Executed;
-    env.storage().persistent().set(&p_key, &proposal);
-    _extend_persistent_ttl(&env, &p_key);
 
     #[allow(deprecated)]
     env.events().publish(

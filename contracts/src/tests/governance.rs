@@ -3,10 +3,11 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{GovAction, GovProposalStatus};
+use crate::types::{DataKeyCore, GovAction, GovProposalStatus};
 use soroban_sdk::{
+    symbol_short,
     testutils::{Address as _, Events as _, Ledger as _},
-    Address, Env,
+    Address, Env, TryIntoVal,
 };
 
 fn setup_governance_env() -> (
@@ -198,6 +199,11 @@ fn test_protected_action_fee_update_and_withdrawal() {
     client.approve_gov_proposal(&approver, &pid2);
     let exec_fail = client.try_execute_gov_proposal(&admin, &pid2);
     assert_eq!(exec_fail, Err(Ok(ContractError::InvalidBetAmount)));
+    assert_eq!(
+        client.get_gov_proposal(&pid2).unwrap().status,
+        GovProposalStatus::Approved,
+        "a reverted action must not consume the approval"
+    );
 }
 
 #[test]
@@ -218,15 +224,211 @@ fn test_protected_action_role_transfers() {
 fn test_audit_event_emission() {
     let (env, client, admin, approver, _oracle, _user) = setup_governance_env();
 
+    // `env.events().all()` returns the events emitted since the previous call
+    // (a per-invocation window), so each governance transition must be sampled
+    // immediately after it happens to prove its audit event was emitted.
+    let mut gov_topics: std::vec::Vec<(soroban_sdk::Symbol, soroban_sdk::Symbol)> =
+        std::vec::Vec::new();
+
+    let sample = |env: &Env, out: &mut std::vec::Vec<(soroban_sdk::Symbol, soroban_sdk::Symbol)>| {
+        for (_contract, topics, _data) in env.events().all().iter() {
+            let topics: std::vec::Vec<soroban_sdk::Symbol> =
+                topics.iter().collect::<std::vec::Vec<_>>()
+                    .iter()
+                    .map(|t| t.try_into_val(env).unwrap())
+                    .collect();
+            if topics.len() == 2 {
+                out.push((topics[0].clone(), topics[1].clone()));
+            }
+        }
+    };
+
+    sample(&env, &mut gov_topics); // gov/appr_set from setup
     let pid = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &None);
+    sample(&env, &mut gov_topics); // gov/proposed
     client.approve_gov_proposal(&approver, &pid);
+    sample(&env, &mut gov_topics); // gov/approved
     client.execute_gov_proposal(&admin, &pid);
+    sample(&env, &mut gov_topics); // mode/transition + gov/executed
 
-    let events = env.events().all();
-    let gov_events: std::vec::Vec<_> = events
-        .into_iter()
-        .filter(|e| e.0 == client.address)
-        .collect();
+    for expected in [
+        (symbol_short!("gov"), symbol_short!("appr_set")),
+        (symbol_short!("gov"), symbol_short!("proposed")),
+        (symbol_short!("gov"), symbol_short!("approved")),
+        (symbol_short!("gov"), symbol_short!("executed")),
+    ] {
+        assert!(
+            gov_topics.contains(&expected),
+            "missing audit event {:?} in {:?}",
+            expected,
+            gov_topics
+        );
+    }
+}
 
-    assert!(gov_events.len() >= 3);
+fn seed_protocol_fee_treasury(
+    env: &Env,
+    client: &VirtualTokenContractClient<'static>,
+    amount: i128,
+) {
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::ProtocolFeeTreasury, &amount);
+    });
+}
+
+#[test]
+fn test_governance_fee_withdraw_double_execute_impossible() {
+    let (env, client, admin, approver, _oracle, recipient) = setup_governance_env();
+    let amount = 1_000_0000000i128;
+    seed_protocol_fee_treasury(&env, &client, 5_000_0000000);
+
+    let proposal_id = client.propose_gov_action(
+        &admin,
+        &GovAction::WithdrawProtocolFee(recipient.clone(), amount),
+        &None,
+    );
+    client.approve_gov_proposal(&approver, &proposal_id);
+    client.execute_gov_proposal(&admin, &proposal_id);
+
+    assert_eq!(client.get_protocol_fee_treasury(), 4_000_0000000);
+    assert_eq!(client.balance(&recipient), amount);
+
+    let second_execute = client.try_execute_gov_proposal(&approver, &proposal_id);
+    assert_eq!(second_execute, Err(Ok(ContractError::GovInvalidState)));
+    assert_eq!(client.get_protocol_fee_treasury(), 4_000_0000000);
+    assert_eq!(client.balance(&recipient), amount);
+    assert_eq!(
+        client.get_gov_proposal(&proposal_id).unwrap().status,
+        GovProposalStatus::Executed
+    );
+}
+
+#[test]
+fn test_cancel_after_approved_fee_withdraw_blocks_execution() {
+    let (env, client, admin, approver, _oracle, recipient) = setup_governance_env();
+    let amount = 750_0000000i128;
+    seed_protocol_fee_treasury(&env, &client, 5_000_0000000);
+
+    let proposal_id = client.propose_gov_action(
+        &admin,
+        &GovAction::WithdrawProtocolFee(recipient.clone(), amount),
+        &None,
+    );
+    client.approve_gov_proposal(&approver, &proposal_id);
+    client.cancel_gov_proposal(&admin, &proposal_id);
+
+    let execute = client.try_execute_gov_proposal(&admin, &proposal_id);
+    assert_eq!(execute, Err(Ok(ContractError::GovInvalidState)));
+    let reapprove = client.try_approve_gov_proposal(&approver, &proposal_id);
+    assert_eq!(reapprove, Err(Ok(ContractError::GovInvalidState)));
+    assert_eq!(client.get_protocol_fee_treasury(), 5_000_0000000);
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(
+        client.get_gov_proposal(&proposal_id).unwrap().status,
+        GovProposalStatus::Cancelled
+    );
+}
+
+#[test]
+fn test_cancel_execute_race_execution_winner_is_terminal() {
+    let (env, client, admin, approver, _oracle, recipient) = setup_governance_env();
+    let amount = 250_0000000i128;
+    seed_protocol_fee_treasury(&env, &client, 5_000_0000000);
+
+    let proposal_id = client.propose_gov_action(
+        &admin,
+        &GovAction::WithdrawProtocolFee(recipient.clone(), amount),
+        &None,
+    );
+    client.approve_gov_proposal(&approver, &proposal_id);
+    client.execute_gov_proposal(&admin, &proposal_id);
+
+    let cancel = client.try_cancel_gov_proposal(&approver, &proposal_id);
+    assert_eq!(cancel, Err(Ok(ContractError::GovInvalidState)));
+    assert_eq!(client.get_protocol_fee_treasury(), 4_750_0000000);
+    assert_eq!(client.balance(&recipient), amount);
+}
+
+#[test]
+fn test_expired_approved_fee_withdraw_is_rejected() {
+    let (env, client, admin, approver, _oracle, recipient) = setup_governance_env();
+    let amount = 300_0000000i128;
+    seed_protocol_fee_treasury(&env, &client, 5_000_0000000);
+
+    let proposal_id = client.propose_gov_action(
+        &admin,
+        &GovAction::WithdrawProtocolFee(recipient.clone(), amount),
+        &Some(10),
+    );
+    client.approve_gov_proposal(&approver, &proposal_id);
+
+    env.ledger().with_mut(|ledger| {
+        ledger.sequence_number += 11;
+    });
+
+    let execute = client.try_execute_gov_proposal(&admin, &proposal_id);
+    assert_eq!(execute, Err(Ok(ContractError::ProposalExpired)));
+    assert_eq!(client.get_protocol_fee_treasury(), 5_000_0000000);
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(
+        client.get_gov_proposal(&proposal_id).unwrap().status,
+        GovProposalStatus::Expired
+    );
+}
+
+#[test]
+fn test_pause_rules_are_respected_by_governance_execute() {
+    let (env, client, admin, approver, _oracle, recipient) = setup_governance_env();
+    let amount = 100_0000000i128;
+    seed_protocol_fee_treasury(&env, &client, 5_000_0000000);
+
+    let pause_id = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &None);
+    client.approve_gov_proposal(&approver, &pause_id);
+    client.execute_gov_proposal(&admin, &pause_id);
+    assert!(client.is_paused());
+
+    let withdraw_id = client.propose_gov_action(
+        &admin,
+        &GovAction::WithdrawProtocolFee(recipient.clone(), amount),
+        &None,
+    );
+    client.approve_gov_proposal(&approver, &withdraw_id);
+    let execute_withdraw = client.try_execute_gov_proposal(&admin, &withdraw_id);
+    assert_eq!(execute_withdraw, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(client.get_protocol_fee_treasury(), 5_000_0000000);
+    assert_eq!(client.balance(&recipient), 0);
+    assert_eq!(
+        client.get_gov_proposal(&withdraw_id).unwrap().status,
+        GovProposalStatus::Approved,
+        "a pause rejection must not consume the proposal"
+    );
+
+    let fee_update_id =
+        client.propose_gov_action(&admin, &GovAction::SetProtocolFeeBps(Some(500)), &None);
+    client.approve_gov_proposal(&approver, &fee_update_id);
+    let execute_fee_update = client.try_execute_gov_proposal(&admin, &fee_update_id);
+    assert_eq!(execute_fee_update, Err(Ok(ContractError::ContractPaused)));
+    assert_eq!(client.get_protocol_fee_bps(), None);
+
+    let unpause_id = client.propose_gov_action(&admin, &GovAction::UnpauseProtocol, &None);
+    client.approve_gov_proposal(&approver, &unpause_id);
+    client.execute_gov_proposal(&admin, &unpause_id);
+    assert!(!client.is_paused());
+}
+
+#[test]
+fn test_pause_action_remains_executable_while_paused() {
+    let (_env, client, admin, approver, _oracle, _user) = setup_governance_env();
+
+    let pause_id = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &None);
+    client.approve_gov_proposal(&approver, &pause_id);
+    client.execute_gov_proposal(&admin, &pause_id);
+
+    let second_pause_id = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &None);
+    client.approve_gov_proposal(&approver, &second_pause_id);
+    client.execute_gov_proposal(&admin, &second_pause_id);
+
+    assert!(client.is_paused());
 }

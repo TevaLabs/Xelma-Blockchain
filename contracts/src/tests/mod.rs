@@ -24,6 +24,7 @@ mod edge_cases;
 mod event_coverage;
 mod event_order_golden;
 mod fee_model;
+mod governance;
 mod guard_tests;
 // mod initialization; // upstream bug
 mod archive_participation;
