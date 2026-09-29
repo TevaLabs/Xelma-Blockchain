@@ -2,9 +2,9 @@
 use crate::admin::{_ensure_normal_mode, _ensure_not_paused, _require_supported_schema};
 use crate::common::{
     _emit_action_rejected, _emit_config_updated, _extend_persistent_ttl, _extend_ttl_symbol,
-    _set_balance, balance, payout_add, BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS,
-    DEFAULT_ARCHIVE_RETENTION, DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_CLOSE_BUFFER_LEDGERS,
-    DEFAULT_DISPUTE_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
+    _set_balance, balance, payout_add, CONFIG_TIMELOCK_LEDGERS, DEFAULT_ARCHIVE_RETENTION,
+    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_CLOSE_BUFFER_LEDGERS, DEFAULT_DISPUTE_LEDGERS,
+    DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
     DEFAULT_ORACLE_TIMESTAMP_SKEW, DEFAULT_PENDING_WINNINGS_EXPIRY, DEFAULT_RUN_WINDOW_LEDGERS,
     MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_DISPUTE_LEDGERS,
     MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD,
@@ -14,6 +14,7 @@ use crate::common::{
     MIN_PENDING_WINNINGS_EXPIRY, MIN_START_PRICE,
 };
 use crate::errors::ContractError;
+use crate::settlement_math::{compute_precision_fee_with_model, compute_updown_fee_with_model};
 use crate::types::{
     ConfigChangeKind, ConfigChangePayload, DataKey, DataKeyCore, DataKeyScoped, FeeModel,
     PendingConfigChange, PrecisionPayoutPolicy, RoundTemplate, PENDING_WINNINGS_EXPIRY_KEY,
@@ -1065,58 +1066,19 @@ pub fn _collect_protocol_fee(
     Ok(())
 }
 
+/// Splits an UpDown round's pools into the post-fee pools and the treasury cut.
+///
+/// Thin adapter over the shared engine in
+/// [`crate::settlement_math::compute_updown_fee_with_model`]. The formula
+/// lives in exactly one place so that live settlement, `simulate_payout`, and
+/// the offline replay engine cannot drift apart (Issue #531).
 pub fn calculate_protocol_fee_updown(
     bps: Option<u32>,
     model: FeeModel,
     winning_pool: i128,
     losing_pool: i128,
 ) -> Result<(i128, i128, i128), ContractError> {
-    if bps.is_none() {
-        return Ok((winning_pool, losing_pool, 0));
-    }
-    let bps_value = bps.unwrap();
-
-    let fee_amount = match model {
-        FeeModel::FeeOnPot => {
-            let total_pot = payout_add(winning_pool, losing_pool)?;
-            total_pot
-                .checked_mul(bps_value as i128)
-                .ok_or(ContractError::Overflow)?
-                / BPS_DENOMINATOR
-        }
-        FeeModel::FeeOnWinnings => {
-            losing_pool
-                .checked_mul(bps_value as i128)
-                .ok_or(ContractError::Overflow)?
-                / BPS_DENOMINATOR
-        }
-    };
-
-    if fee_amount == 0 {
-        return Ok((winning_pool, losing_pool, 0));
-    }
-
-    match model {
-        FeeModel::FeeOnPot => {
-            let fee_from_losing = fee_amount.min(losing_pool);
-            let fee_from_winning = fee_amount
-                .checked_sub(fee_from_losing)
-                .ok_or(ContractError::Overflow)?;
-            let dist_winning = winning_pool
-                .checked_sub(fee_from_winning)
-                .ok_or(ContractError::Overflow)?;
-            let dist_losing = losing_pool
-                .checked_sub(fee_from_losing)
-                .ok_or(ContractError::Overflow)?;
-            Ok((dist_winning, dist_losing, fee_amount))
-        }
-        FeeModel::FeeOnWinnings => {
-            let dist_losing = losing_pool
-                .checked_sub(fee_amount)
-                .ok_or(ContractError::Overflow)?;
-            Ok((winning_pool, dist_losing, fee_amount))
-        }
-    }
+    compute_updown_fee_with_model(winning_pool, losing_pool, bps, model.into())
 }
 
 pub fn _apply_protocol_fee_updown(
@@ -1135,41 +1097,23 @@ pub fn _apply_protocol_fee_updown(
     Ok((dist_winning, dist_losing, fee_amount))
 }
 
+/// Splits a Precision round's pot into the distributable amount and the
+/// treasury cut.
+///
+/// Thin adapter over the shared engine in
+/// [`crate::settlement_math::compute_precision_fee_with_model`]. The formula
+/// lives in exactly one place so that live settlement, `simulate_payout`, and
+/// the offline replay engine cannot drift apart (Issue #531).
+///
+/// Overflow on fee/pot arithmetic surfaces as [`ContractError::PayoutOverflow`]
+/// (Issue #405), matching the settlement engine.
 pub fn calculate_protocol_fee_precision(
     bps: Option<u32>,
     model: FeeModel,
     total_pot: i128,
     winner_stakes: i128,
 ) -> Result<(i128, i128), ContractError> {
-    if bps.is_none() || total_pot <= 0 {
-        return Ok((total_pot, 0));
-    }
-    let bps_value = bps.unwrap();
-
-    let taxable_base = match model {
-        FeeModel::FeeOnPot => total_pot,
-        FeeModel::FeeOnWinnings => {
-            let profit = total_pot
-                .checked_sub(winner_stakes)
-                .ok_or(ContractError::Overflow)?;
-            if profit <= 0 {
-                return Ok((total_pot, 0));
-            }
-            profit
-        }
-    };
-
-    let fee_amount = taxable_base
-        .checked_mul(bps_value as i128)
-        .ok_or(ContractError::Overflow)?
-        / BPS_DENOMINATOR;
-    if fee_amount == 0 {
-        return Ok((total_pot, 0));
-    }
-    let distributable = total_pot
-        .checked_sub(fee_amount)
-        .ok_or(ContractError::Overflow)?;
-    Ok((distributable, fee_amount))
+    compute_precision_fee_with_model(total_pot, winner_stakes, bps, model.into())
 }
 
 pub fn _apply_protocol_fee_precision(
