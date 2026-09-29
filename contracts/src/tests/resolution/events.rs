@@ -699,7 +699,7 @@ fn test_outcome_loss_event_precision_legacy_path() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
-    index_legacy_positions(&env, &contract_id);
+        index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| {

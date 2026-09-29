@@ -8,7 +8,9 @@
 //! - Edge cases: one-sided pools, all-unrevealed, ties, zero-profit
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{BetSide, DataKeyCore, DataKeyScoped, FeeModel, OraclePayload, PrecisionPrediction};
+use crate::types::{
+    BetSide, DataKeyCore, DataKeyScoped, FeeModel, OraclePayload, PrecisionPrediction,
+};
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},

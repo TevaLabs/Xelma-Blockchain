@@ -51,11 +51,7 @@ use std::string::{String, ToString};
 /// resolver finds zero participants and settles every payout to zero.
 pub(super) fn index_legacy_positions(env: &Env, contract_id: &Address) {
     env.as_contract(contract_id, || {
-        let round: Round = match env
-            .storage()
-            .persistent()
-            .get(&DataKeyCore::ActiveRound)
-        {
+        let round: Round = match env.storage().persistent().get(&DataKeyCore::ActiveRound) {
             Some(r) => r,
             None => return,
         };
@@ -200,9 +196,7 @@ pub(super) fn collect_outcome_loss_events(
         .collect()
 }
 
-pub(super) fn collect_protocol_fee_events(
-    env: &Env,
-) -> std::vec::Vec<(u64, i128, i128, u32, u32)> {
+pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128, i128, u32, u32)> {
     env.events()
         .all()
         .iter()

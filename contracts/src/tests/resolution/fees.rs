@@ -319,7 +319,7 @@ fn test_protocol_fee_precision_legacy_conservation() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::PrecisionPositions, &predictions);
-    index_legacy_positions(&env, &contract_id);
+        index_legacy_positions(&env, &contract_id);
     });
 
     env.ledger().with_mut(|li| li.sequence_number += 12);
