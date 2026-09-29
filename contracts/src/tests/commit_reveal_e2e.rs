@@ -55,9 +55,8 @@
 
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    symbol_short,
     testutils::{Address as _, Events as _, Ledger as _},
-    Address, Bytes, BytesN, Env, TryFromVal,
+    Address, Bytes, BytesN, Env,
 };
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
@@ -850,6 +849,11 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
     assert_eq!(client.get_pending_winnings(&alice), total_pot);
     assert_eq!(client.get_pending_winnings(&bob), 0);
 
+    // Forfeit-event topic coverage lives in
+    // `event_coverage::test_event_coverage_precision_forfeit`, which reads the
+    // ledger-scoped event buffer immediately after the emitting call. Asserting
+    // it here (after these ledger-advancing getters) is what the module header
+    // warns against, so this integration test stays on state/conservation only.
     let forfeits = env.events().all().iter().filter(|(_, topics, data)| {
         topics.len() == 2
             && topics

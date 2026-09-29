@@ -30,6 +30,27 @@ fn setup() -> (
     (env, contract_id, admin, oracle, client)
 }
 
+/// Salt satisfying the on-chain minimum-entropy floor (non-zero, non-constant).
+fn make_entropy_salt(env: &Env, first: u8, last: u8) -> BytesN<32> {
+    let mut bytes = [0u8; 32];
+    for (i, b) in bytes.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_add(1);
+    }
+    bytes[0] = first;
+    bytes[31] = last;
+    BytesN::from_array(env, &bytes)
+}
+
+/// `sha256(price.to_xdr() || salt.to_xdr())` — the digest `reveal_prediction`
+/// recomputes and compares against the stored commitment.
+fn precision_commitment(env: &Env, price: u128, salt: &BytesN<32>) -> BytesN<32> {
+    let mut preimage = Bytes::new(env);
+    preimage.append(&price.to_xdr(env));
+    preimage.append(&salt.clone().to_xdr(env));
+    let hash = env.crypto().sha256(&preimage);
+    hash.into()
+}
+
 fn assert_last_config_updated(
     env: &Env,
     kind: ConfigChangeKind,
@@ -412,6 +433,66 @@ fn test_event_coverage_resolve_round() {
     assert_eq!(canon.7, 12u32);
     assert_eq!(canon.8, 0u32);
     assert_eq!(canon.9, 0u32);
+}
+
+#[test]
+fn test_event_coverage_precision_forfeit() {
+    // Issue #548: an unrevealed Precision commitment forfeits to the pot and
+    // emits exactly one ("forfeit","predict") event. Events are ledger-scoped,
+    // so they must be read immediately after the emitting call (no intervening
+    // getters), matching the resolve/cancel coverage above.
+    let (env, contract_id, _, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.create_round(&1_0000000, &Some(1)); // Precision mode
+
+    let alice_price = 1000u128;
+    let bob_price = 2000u128;
+    let alice_salt = make_entropy_salt(&env, 0x81, 0x5B);
+    let bob_salt = make_entropy_salt(&env, 0x82, 0x5C);
+
+    client.commit_prediction(&alice, &precision_commitment(&env, alice_price, &alice_salt), &100_0000000);
+    client.commit_prediction(&bob, &precision_commitment(&env, bob_price, &bob_salt), &200_0000000);
+
+    // Reveal window: only Alice reveals; Bob's commitment stays unrevealed.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+    client.reveal_prediction(&alice, &alice_price, &alice_salt);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+    let round = client.get_active_round().unwrap();
+    client.resolve_round(&OraclePayload {
+        price: alice_price,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    let events = env.events().all();
+    let mut forfeit_count = 0u32;
+    for (_contract, topics, data) in events.iter() {
+        let is_forfeit = topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("forfeit"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("predict"));
+        if is_forfeit {
+            forfeit_count += 1;
+            assert_eq!(
+                data.try_into_val(&env),
+                Ok((bob.clone(), 1u64, 200_0000000i128)),
+                "forfeit event must carry the unrevealed bettor, round id, and stake"
+            );
+        }
+    }
+    assert_eq!(forfeit_count, 1, "exactly one forfeit event expected");
 }
 
 #[test]
