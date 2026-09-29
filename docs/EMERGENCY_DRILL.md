@@ -124,11 +124,22 @@ The protocol's incident behavior is validated deterministically in `contracts/sr
 ### Executing the Emergency Drill
 
 Run the drill suite using cargo test (the filter also matches
-`tests::drill_chaos_migration`, so CI's "emergency drill" step runs both):
+`tests::drill_chaos_migration`, so one invocation covers both drill modules):
 
 ```bash
 cargo test --package xelma-contract --lib tests::drill -- --nocapture
 ```
+
+For the **release gate** — same suite plus assertions that every required
+drill actually ran — use the gate script described in §4:
+
+```bash
+./scripts/emergency_drill_gate.sh
+```
+
+In CI this is the `Emergency Drill Gate` job (`emergency-drill` in
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)), which `ci-success`
+requires.
 
 To run all tests in the workspace:
 
@@ -138,11 +149,64 @@ cargo test --all-targets
 
 ---
 
-## 4. Operator Emergency Checklist
+## 4. Release Checklist Gate
+
+The claims-only drill is an **explicit release gate**, not just another test
+target. Nothing ships until it is green, because a release that regresses the
+pause → claims → resume sequence is a release that can strand user funds.
+
+### The gate
+
+| Gate | Where | What it does |
+|---|---|---|
+| **Emergency Drill Gate** (CI, required) | `emergency-drill` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | Runs `scripts/emergency_drill_gate.sh` on every push and PR, and is a required dependency of the `ci-success` job. |
+| **Manual gate** (pre-release) | `./scripts/emergency_drill_gate.sh` | Same script, same assertions; run it locally before tagging. |
+| **Manual re-run** (release branch/tag) | Actions → CI → **Run workflow** (`workflow_dispatch`) | Re-runs the full gate, drill included, against the exact ref being released. |
+
+`scripts/emergency_drill_gate.sh` is the single source of truth for both paths.
+Beyond running the suite it asserts that every drill named in `REQUIRED_DRILLS`
+actually executed. A bare `cargo test --lib tests::drill` exits `0` even when
+the filter matches nothing, so a renamed or deleted drill would otherwise turn
+this gate green while quietly removing the coverage.
+
+### Drill coverage: pause → claims → resume
+
+| Phase | What must hold | Drills that prove it |
+|---|---|---|
+| **Pause** | `pause_contract()` reaches `FullyPaused`; trading *and* claiming are rejected; refusals move no funds. | `test_fully_paused_matrix_verification`, `test_chaos_recovery_migrate_active_round_pause_resume`, `test_chaos_recovery_migrate_active_round_pause_cancel`, `drill_chaos_migration_full_matrix` |
+| **Claims** | In `ClaimsOnly` the in-flight round still resolves/cancels and every holder claims; `Σ pending == total staked`; no funds are stuck. | `test_claims_only_matrix_verification`, `test_emergency_incident_simulation_lifecycle`, `test_chaos_recovery_migrate_active_round_pause_resume`, `drill_chaos_migration_canonical_resume`, `drill_chaos_migration_canonical_cancel` |
+| **Resume** | Returning to `Normal` re-enables minting, round creation and betting; balances reconcile exactly to the initial mints. | `test_emergency_incident_simulation_lifecycle`, `test_chaos_recovery_migrate_active_round_pause_resume`, `test_chaos_recovery_migrate_active_round_pause_cancel`, `drill_chaos_migration_full_matrix` |
+
+Plus `drill_cancel_with_insurance_eligible_reason_does_not_trap`, which guards
+the cancel path from a trap that used to make an active round uncancellable.
+
+### Release checklist
+
+Run this list before cutting a release. Items marked **gate** block the
+release; a bypass needs a written sign-off from the Release Owner and the
+Incident Lead, recorded in the release notes.
+
+- [ ] **gate** `Emergency Drill Gate` job is green on the release commit (required check; `ci-success` depends on it).
+- [ ] **gate** Drill log artifact (`emergency-drill-log`) is attached to the release run for later audit.
+- [ ] **gate** `./scripts/emergency_drill_gate.sh` passes locally on the release ref and reports every drill as `ok`.
+- [ ] Confirm the drill coverage above still matches the tests in `contracts/src/tests/drill.rs` and `contracts/src/tests/drill_chaos_migration.rs`.
+- [ ] Confirm no drill was `#[ignore]`d, renamed or deleted to make the gate pass. If one must change, update `REQUIRED_DRILLS` in `scripts/emergency_drill_gate.sh` and the table above in the same PR.
+- [ ] Confirm the release keeps `pause → claims → resume` working end to end: no release may narrow the `ClaimsOnly` matrix in §1 without an accompanying drill update.
+- [ ] Walk the live-operator checklist in §5 once against staging (or the last testnet deployment) so the on-chain `set_runtime_mode` / `pause_contract` / `unpause_contract` path matches the drilled behaviour.
+- [ ] Record the drill result and the sign-off in the release notes (see [`RELEASE.md`](RELEASE.md)) and in the deployment checklist ([`DEPLOYMENT_RUNBOOK.md`](DEPLOYMENT_RUNBOOK.md) §1).
+
+If the gate is red, do **not** cut the release. Fix the regression, or roll the
+incident-mode behavior back per [`DEPLOYMENT_RUNBOOK.md`](DEPLOYMENT_RUNBOOK.md)
+§4, then re-run the gate.
+
+---
+
+## 5. Operator Emergency Checklist
 
 ### Pre-Incident Readiness
 - [ ] Confirm emergency operator keys are initialized with multi-sig or timelock permissions.
-- [ ] Ensure CI pipeline passes all `tests::drill` targets.
+- [ ] Ensure the `Emergency Drill Gate` CI job passes (it runs all `tests::drill` targets).
+- [ ] Ensure the §4 release checklist is complete for the current release.
 
 ### Phase 1: Incident Detection & ClaimsOnly Containment
 - [ ] Receive alert (oracle stale price, front-end anomaly, or exploit report).

@@ -34,6 +34,7 @@ The output artifact is located at: `target/wasm32v1-none/release/xelma_contract.
 - [ ] Verify admin and oracle addresses are the intended role keys.
 - [ ] Confirm the deployed artifact hash/SHA256 checksum matches the reviewed build.
 - [ ] Run the release checklist script: `python3 scripts/check_release_checklist.py --network mainnet --strict`.
+- [ ] Confirm the **Emergency Drill Gate** is green on the artifact's commit (claims-only `pause → claims → resume` drill; see [EMERGENCY_DRILL.md §4](EMERGENCY_DRILL.md#4-release-checklist-gate)). Re-run locally with `./scripts/emergency_drill_gate.sh` if the release ref is newer than the last CI run.
 - [ ] Review the pending config changes and ensure the timelock is acceptable.
 - [ ] Confirm an operator can access the pause/rollback path before deployment starts.
 
@@ -70,6 +71,10 @@ The output artifact is located at: `target/wasm32v1-none/release/xelma_contract.
 ### Pause path
 - If the deployment introduces a high-risk regression, pause the contract immediately.
 - Keep the pause state until the incident lead confirms the fix path.
+- The claims-only transition, the claims that must keep working during it, and
+  the `unpause_contract` recovery are drilled and gated as described in
+  [EMERGENCY_DRILL.md §4](EMERGENCY_DRILL.md#4-release-checklist-gate); follow
+  the operator checklist there for the live command sequence.
 
 ### Rollback path
 - Roll back to the previous deployed WASM if the new deployment is not safe.
