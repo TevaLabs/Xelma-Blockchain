@@ -218,3 +218,38 @@ When adding a new mutating entrypoint:
 ---
 
 *This document is linked from [`SECURITY_REVIEW.md`](../SECURITY_REVIEW.md) and satisfies the acceptance criteria for issue #195.*
+
+## September 2026 Re-Audit (Issue #553)
+
+Scope expanded from the original single-file audit (contract.rs, 32 entrypoints)
+to all modular entrypoints: admin.rs, betting.rs, settlement.rs, config.rs,
+governance.rs (~60 mutating entrypoints total).
+
+### Violations Found & Fixed
+
+| ID | Function | File | Issue | Fix |
+|----|----------|------|-------|-----|
+| SR-2026-09-001 | batch_touch_ttl | admin.rs | Per-item Checks interleaved with per-item Effects inside one loop (extend_ttl ran before later keys were validated) | Split into a validation-only pass, then an effects-only pass |
+| SR-2026-09-002 | finalize_round | settlement.rs | _remove_pending_dispute (Effect) ran after _complete_settlement's internal ound.resolved event (Interaction) | Moved _remove_pending_dispute before the _complete_settlement call |
+| SR-2026-09-003 | _record_winnings_indexed, _resolve_precision_mode | settlement.rs | outcome.loss (and orfeit.predict) events published before _update_stats_loss/_persist_user_outcome ran | Reordered so stats/outcome writes complete before the events fire |
+
+### Accepted (No Fix)
+
+- **get_amendment** (governance.rs): persists a lazy-expiry status write as a
+  side effect of an unauthenticated getter, unlike get_gov_proposal which
+  computes expiry in-memory only. Not a CEI ordering violation (no user-facing
+  state changes, no funds involved) — noted for consistency, not fixed.
+- **_record_winnings_legacy / _resolve_precision_legacy** (settlement.rs):
+  share the same loss-event-before-effects pattern as SR-2026-09-003, but are
+  gated behind the deprecated legacy-map-settlement feature flag, scheduled
+  for removal by 2026-12-31. Not fixed given imminent removal.
+- **_complete_settlement** (settlement.rs): contains a redundant, dead second
+  removal of DataKeyCore::ActiveRound (leftover from a merge), harmless but
+  worth cleaning up in a future pass.
+
+### Modules Reviewed
+
+- **admin.rs** (~20 entrypoints): full read, 1 violation (fixed).
+- **governance.rs** (~13 entrypoints incl. constitution/amendment lifecycle): full read, 1 informational note (accepted).
+- **settlement.rs** (full 2636-line file, all entrypoints incl. resolve_round, resolve_round_multi, cancel_round, void_round, finalize_round, claim_winnings, claim_many): full read, 2 violations (fixed).
+- **config.rs / betting.rs**: spot-checked rather than re-read line-by-line (mostly unchanged since the June audit, which passed them); cash_out_early (new since June) checked directly — Checks/Effects ordering correct, no violations found.

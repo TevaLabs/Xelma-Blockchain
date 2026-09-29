@@ -1062,9 +1062,7 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
         _emit_action_rejected(&env, &admin, symbol_short!("batch_t"), e);
     })?;
 
-    let mut touched: u32 = 0;
-    let mut skipped: u32 = 0;
-
+    // Checks: validate every key before touching any storage (Issue #553 CEI fix).
     for key in keys.iter() {
         if !_is_ttl_touch_allowed(&key) {
             _emit_action_rejected(
@@ -1075,6 +1073,12 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
             );
             return Err(ContractError::UnsupportedDataKeyForTtlTouch);
         }
+    }
+
+    // Effects: only after every key has passed validation.
+    let mut touched: u32 = 0;
+    let mut skipped: u32 = 0;
+    for key in keys.iter() {
         if env.storage().persistent().has(&key) {
             env.storage()
                 .persistent()
@@ -1085,6 +1089,7 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
         }
     }
 
+    // Interactions: event last.
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("storage"), symbol_short!("touch")),

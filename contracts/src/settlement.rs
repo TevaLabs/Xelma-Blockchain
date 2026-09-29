@@ -1497,8 +1497,6 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     Ok(())
 }
 
-/// Permissionlessly finalizes the staged oracle result once the dispute window
-/// has closed. Calling at the exact deadline is allowed.
 pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     _ensure_not_paused(&env)?;
@@ -1508,13 +1506,17 @@ pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         return Err(ContractError::RoundNotEnded);
     }
 
+    // Effects: clear the dispute record before settling, so no state write
+    // happens after `_complete_settlement`'s own `round.resolved` event
+    // (Issue #553 CEI fix).
+    _remove_pending_dispute(&env, round_id);
+
     let (fee_amount, participant_count) = _complete_settlement(
         &env,
         &pending.round,
         pending.final_price,
         pending.confidence,
     )?;
-    _remove_pending_dispute(&env, round_id);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -2040,19 +2042,6 @@ pub fn _resolve_precision_mode(
                     let stake = participant_amounts[idx];
                     let predicted_price = participant_prices[idx];
 
-                    if !participant_revealed[idx] {
-                        #[allow(deprecated)]
-                        env.events().publish(
-                            (symbol_short!("forfeit"), symbol_short!("predict")),
-                            (user.clone(), round_id, stake),
-                        );
-                    }
-
-                    #[allow(deprecated)]
-                    env.events().publish(
-                        (symbol_short!("outcome"), symbol_short!("loss")),
-                        (user.clone(), round_id, 1u32, stake, 0u32, predicted_price),
-                    );
                     _update_stats_loss(env, user.clone())?;
 
                     _persist_user_outcome(
@@ -2065,6 +2054,20 @@ pub fn _resolve_precision_mode(
                         stake,
                         0,
                         UserOutcomeType::Loss,
+                    );
+
+                    if !participant_revealed[idx] {
+                        #[allow(deprecated)]
+                        env.events().publish(
+                            (symbol_short!("forfeit"), symbol_short!("predict")),
+                            (user.clone(), round_id, stake),
+                        );
+                    }
+
+                    #[allow(deprecated)]
+                    env.events().publish(
+                        (symbol_short!("outcome"), symbol_short!("loss")),
+                        (user.clone(), round_id, 1u32, stake, 0u32, predicted_price),
                     );
                 }
             }
@@ -2313,18 +2316,6 @@ pub fn _record_winnings_indexed(
                         BetSide::Up => 0,
                         BetSide::Down => 1,
                     };
-                    #[allow(deprecated)]
-                    env.events().publish(
-                        (symbol_short!("outcome"), symbol_short!("loss")),
-                        (
-                            user.clone(),
-                            round_id,
-                            0u32,
-                            position.amount,
-                            side_value,
-                            0u128,
-                        ),
-                    );
                     _update_stats_loss(env, user.clone())?;
 
                     _persist_user_outcome(
@@ -2337,6 +2328,19 @@ pub fn _record_winnings_indexed(
                         position.amount,
                         0,
                         UserOutcomeType::Loss,
+                    );
+
+                    #[allow(deprecated)]
+                    env.events().publish(
+                        (symbol_short!("outcome"), symbol_short!("loss")),
+                        (
+                            user.clone(),
+                            round_id,
+                            0u32,
+                            position.amount,
+                            side_value,
+                            0u128,
+                        ),
                     );
                 }
             }
