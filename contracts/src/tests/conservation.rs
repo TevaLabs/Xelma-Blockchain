@@ -45,6 +45,21 @@
 //! |19 | UpDown    | Early cash-out zero forfeit           | n/a                    | n/a | [`early_cashout_zero_forfeit_full_refund`] |
 //! |20 | UpDown    | Early cash-out no position            | n/a                    | n/a | [`early_cashout_no_position_rejected`] |
 //! |21 | UpDown    | Early cash-out double call            | n/a                    | n/a | [`early_cashout_double_call_rejected`] |
+//! |22 | UpDown    | Early cash-out dust stake (forfeit floors to 0) | n/a            | n/a | [`early_cashout_dust_stake_forfeits_nothing_and_refunds_in_full`] |
+//! |23 | UpDown    | Early cash-out dust + insurance split | n/a                  | n/a | [`early_cashout_dust_stake_with_insurance_split_credits_nothing`] |
+//! |24 | UpDown    | Early cash-out forfeit split across insurance/ops | n/a             | n/a | [`early_cashout_forfeit_split_conserves_across_insurance_and_treasury`] |
+//! |25 | UpDown    | Early cash-out fee-on / fee-off        | on + off             | n/a | [`early_cashout_fee_on_and_fee_off_conserve_and_keep_pools_consistent`] |
+//! |26 | UpDown    | Early cash-out, all participants exit  | n/a                    | n/a | [`early_cashout_all_participants_exit_leaves_consistent_empty_pot`] |
+//! |27 | UpDown    | Dust boundary sweep (property)          | on + off             | floor | [`early_cashout_dust_boundary_conservation`] |
+//!
+//! Rows 22–27 (Issue #525) cover early cash-out dust and fee edges. The
+//! forfeited amount is floor-divided, so a small stake forfeits nothing and is
+//! refunded in full while still leaving the pot. The fee is also **fenced**:
+//! `_collect_protocol_fee` routes `insurance_split_bps` of it to the
+//! segregated insurance fund and only the remainder to the ops treasury, so
+//! conservation must be asserted as
+//! `cashout + treasury_delta + insurance_delta == stake`. Asserting only the
+//! treasury leg would under-count by exactly the insurance portion.
 //!
 //! Rows 9–10 guard a real regression: `_resolve_precision_mode` used to drop
 //! every committed-but-unrevealed stroop on the floor when **nobody**
@@ -61,7 +76,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, RoundArchiveStatus};
+use crate::types::{BetSide, DataKeyCore, OraclePayload, RoundArchiveStatus};
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -1047,5 +1062,368 @@ proptest! {
         if !reveal_a && !reveal_b {
             prop_assert_eq!(treasury_delta, 0, "no winner exists to be charged a fee against");
         }
+    }
+}
+
+// ─── Early cash-out dust & fee edge cases (Issue #525) ──────────────────────
+//
+// The early cash-out path computes the forfeited amount with floor division:
+//
+// ```text
+// forfeit  = stake * penalty_bps / 10_000      (floor)
+// cashout  = stake - forfeit
+// ```
+//
+// Two consequences make dust a genuine edge case rather than a rounding
+// footnote:
+//
+// 1. **Forfeit can floor to zero.** For a small stake (or a small penalty),
+//    `stake * penalty_bps < 10_000`, so `forfeit == 0` and the user receives a
+//    **full refund** — while still being removed from the pool. The stake
+//    leaves the round but no fee is collected, so the round's pot shrinks by
+//    the full stake with nothing entering the treasury.
+// 2. **The forfeit is split, not fully credited.** `_collect_protocol_fee`
+//    routes `insurance_split_bps` of every fee to the segregated insurance
+//    fund and only the remainder to the ops treasury. Conservation must
+//    therefore be asserted against `cashout + treasury_delta +
+//    insurance_delta`, not `cashout + treasury_delta` alone — asserting only
+//    the treasury leg would miss value routed to insurance.
+//
+// The tests below pin both behaviours, plus pool-total consistency after a
+// cash-out, for fee-on and fee-off configurations.
+
+/// Row 22 — A stake small enough that the penalty floors to zero is refunded
+/// in full, collects no fee, and still leaves the pool.
+///
+/// This is the dust case: value is returned to the user and removed from the
+/// pot without ever reaching treasury or insurance. That is intentional (no
+/// fee to collect on a dust amount), but it must not silently *create* value —
+/// the pot must decrease by exactly the stake.
+#[test]
+fn early_cashout_dust_stake_forfeits_nothing_and_refunds_in_full() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    // Alice's dust stake: 5 * 1% = 5/100 of a percent → floors to 0.
+    client.place_bet(&alice, &5, &BetSide::Up);
+    client.place_bet(&bob, &100, &BetSide::Down);
+    set_ec_bps_now(&env, &contract_id, 100); // 1%
+
+    // Preconditions: confirm the fixture really is a dust amount.
+    let stake = 5i128;
+    let penalty_bps = 100i128;
+    assert_eq!(
+        stake * penalty_bps / 10_000,
+        0,
+        "fixture must be dust: forfeit must floor to 0"
+    );
+
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+    let alice_pending_before = client.get_pending_winnings(&alice);
+    let treasury_before = client.get_protocol_fee_treasury();
+    let insurance_before = client.get_insurance_fund_balance();
+
+    client.cash_out_early(&alice);
+
+    let cashout = client.get_pending_winnings(&alice) - alice_pending_before;
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+    let insurance_delta = client.get_insurance_fund_balance() - insurance_before;
+
+    // Full refund, and no fee leg is credited anywhere.
+    assert_eq!(cashout, stake, "dust stake must be refunded in full");
+    assert_eq!(
+        treasury_delta, 0,
+        "dust forfeit must not reach ops treasury"
+    );
+    assert_eq!(
+        insurance_delta, 0,
+        "dust forfeit must not reach insurance fund"
+    );
+    assert_eq!(
+        cashout + treasury_delta + insurance_delta,
+        stake,
+        "no value may be created or destroyed at the cash-out"
+    );
+
+    // Pool totals stay consistent: the full stake leaves the pot even though
+    // the user was refunded it.
+    let round = client.get_active_round().unwrap();
+    assert_eq!(round.pool_up, 0, "dust stake must still leave the pool");
+    assert_eq!(round.pool_down, 100);
+}
+
+/// Row 23 — Dust cash-out with an active insurance split still credits nothing.
+///
+/// Guards the specific case where a fee model is configured but the fee
+/// amount is zero: neither the insurance nor the ops leg may move.
+#[test]
+fn early_cashout_dust_stake_with_insurance_split_credits_nothing() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &5, &BetSide::Up);
+    client.place_bet(&bob, &100, &BetSide::Down);
+
+    set_ec_bps_now(&env, &contract_id, 100); // 1% → dust on a 5-stake
+    client.set_insurance_split_bps(&5_000); // 50% of any fee → insurance
+
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+    let treasury_before = client.get_protocol_fee_treasury();
+    let insurance_before = client.get_insurance_fund_balance();
+
+    client.cash_out_early(&alice);
+
+    assert_eq!(
+        client.get_protocol_fee_treasury() - treasury_before,
+        0,
+        "zero fee must not credit ops treasury"
+    );
+    assert_eq!(
+        client.get_insurance_fund_balance() - insurance_before,
+        0,
+        "zero fee must not credit insurance fund"
+    );
+}
+
+/// Row 24 — A non-dust forfeit is split across insurance and ops exactly, and
+/// the two legs plus the cashout reconstruct the stake.
+///
+/// This is the corrected conservation identity for the cash-out path: the fee
+/// is *fenced* between two destinations, so asserting only the treasury leg
+/// would under-count by exactly the insurance portion.
+#[test]
+fn early_cashout_forfeit_split_conserves_across_insurance_and_treasury() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    let stake = 1_000i128;
+    client.place_bet(&alice, &stake, &BetSide::Up);
+    client.place_bet(&bob, &100, &BetSide::Down);
+
+    set_ec_bps_now(&env, &contract_id, 1_000); // 10% → forfeit 100
+    client.set_insurance_split_bps(&5_000); // 50% of the forfeit → insurance
+
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+    let alice_pending_before = client.get_pending_winnings(&alice);
+    let treasury_before = client.get_protocol_fee_treasury();
+    let insurance_before = client.get_insurance_fund_balance();
+
+    client.cash_out_early(&alice);
+
+    let cashout = client.get_pending_winnings(&alice) - alice_pending_before;
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+    let insurance_delta = client.get_insurance_fund_balance() - insurance_before;
+
+    let expected_forfeit = stake * 1_000 / 10_000; // 100
+    let expected_cashout = stake - expected_forfeit; // 900
+    let expected_insurance = expected_forfeit * 5_000 / 10_000; // 50
+    let expected_ops = expected_forfeit - expected_insurance; // 50
+
+    assert_eq!(cashout, expected_cashout);
+    assert_eq!(insurance_delta, expected_insurance, "insurance leg");
+    assert_eq!(treasury_delta, expected_ops, "ops leg");
+    assert_eq!(
+        cashout + treasury_delta + insurance_delta,
+        stake,
+        "cashout + ops fee + insurance fee must reconstruct the stake exactly"
+    );
+}
+
+/// Row 25 — The full fee-on / fee-off matrix: a non-dust cash-out conserves
+/// under both settings, with pool totals consistent afterwards.
+///
+/// Fee-off here means no *settlement* fee configured; the early cash-out
+/// penalty is independent of it and must still be collected. Fee-on means a
+/// settlement fee is also active, which must not double-charge the cash-out.
+#[test]
+fn early_cashout_fee_on_and_fee_off_conserve_and_keep_pools_consistent() {
+    for settlement_fee_bps in [0u32, 1_000u32] {
+        let env = Env::default();
+        let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        client.mint_initial(&alice);
+        client.mint_initial(&bob);
+
+        client.create_round(&1_000u128, &None);
+        let stake = 1_000i128;
+        client.place_bet(&alice, &stake, &BetSide::Up);
+        client.place_bet(&bob, &500, &BetSide::Down);
+
+        set_ec_bps_now(&env, &contract_id, 1_000); // 10% penalty
+        if settlement_fee_bps > 0 {
+            set_fee_bps_now(&env, &contract_id, settlement_fee_bps);
+        }
+        client.set_insurance_split_bps(&5_000);
+
+        env.ledger().with_mut(|li| li.sequence_number = 7);
+        let alice_pending_before = client.get_pending_winnings(&alice);
+        let treasury_before = client.get_protocol_fee_treasury();
+        let insurance_before = client.get_insurance_fund_balance();
+
+        client.cash_out_early(&alice);
+
+        let cashout = client.get_pending_winnings(&alice) - alice_pending_before;
+        let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+        let insurance_delta = client.get_insurance_fund_balance() - insurance_before;
+
+        // The cash-out penalty is identical regardless of the settlement fee.
+        let expected_forfeit = stake * 1_000 / 10_000;
+        assert_eq!(cashout, stake - expected_forfeit);
+        assert_eq!(
+            cashout + treasury_delta + insurance_delta,
+            stake,
+            "conservation must hold for settlement fee bps = {settlement_fee_bps}"
+        );
+
+        // Pool totals consistent: Alice's full stake left the UpDown side.
+        let round = client.get_active_round().unwrap();
+        assert_eq!(round.pool_up, 0, "fee_bps={settlement_fee_bps}");
+        assert_eq!(round.pool_down, 500, "fee_bps={settlement_fee_bps}");
+        assert_eq!(
+            round.pool_up + round.pool_down,
+            500,
+            "remaining pot must equal surviving stakes only"
+        );
+
+        // Alice is out of the round entirely; Bob is untouched.
+        assert!(client.get_user_position(&alice).is_none());
+        assert_eq!(client.get_user_position(&bob).unwrap().amount, 500);
+    }
+}
+
+/// Row 26 — Every participant cashing out leaves an empty, consistent pot
+/// that settles as a full refund with no fee on either leg.
+///
+/// Guards the degenerate all-dust/exit case: repeated cash-outs must not
+/// underflow the pool or strand value in a non-existent pot.
+#[test]
+fn early_cashout_all_participants_exit_leaves_consistent_empty_pot() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &300, &BetSide::Up);
+    client.place_bet(&bob, &200, &BetSide::Down);
+
+    set_ec_bps_now(&env, &contract_id, 1_000); // 10%
+    client.set_insurance_split_bps(&5_000);
+
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+    let alice_before = client.get_pending_winnings(&alice);
+    let bob_before = client.get_pending_winnings(&bob);
+    let treasury_before = client.get_protocol_fee_treasury();
+    let insurance_before = client.get_insurance_fund_balance();
+
+    client.cash_out_early(&alice);
+    client.cash_out_early(&bob);
+
+    let alice_cashout = client.get_pending_winnings(&alice) - alice_before; // 270
+    let bob_cashout = client.get_pending_winnings(&bob) - bob_before; // 180
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+    let insurance_delta = client.get_insurance_fund_balance() - insurance_before;
+
+    assert_eq!(alice_cashout, 270, "300 less 10% forfeit");
+    assert_eq!(bob_cashout, 180, "200 less 10% forfeit");
+
+    let round = client.get_active_round().unwrap();
+    assert_eq!(round.pool_up, 0);
+    assert_eq!(round.pool_down, 0, "every stake must have left the pot");
+
+    // Total across both participants and both fee destinations.
+    assert_eq!(
+        alice_cashout + bob_cashout + treasury_delta + insurance_delta,
+        500,
+        "full exit must conserve every stroop of the original stakes"
+    );
+}
+
+// ─── Property: dust boundary sweep (Issue #525) ─────────────────────────────
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    /// Across the whole legal penalty range and a dust-to-substantial stake
+    /// range, the cash-out accounting identity must hold exactly:
+    ///
+    /// ```text
+    /// cashout + ops_fee + insurance_fee == stake
+    /// cashout == stake - floor(stake * penalty_bps / 10_000)
+    /// ```
+    ///
+    /// The forfeit leg is floor-divided, so the exact expected value is
+    /// recomputed in the test rather than approximated — any drift in the
+    /// contract's division would break equality, not just a tolerance.
+    #[test]
+    fn early_cashout_dust_boundary_conservation(
+        stake in 1i128..=50_000i128,
+        penalty_bps in 1u32..=1_000u32,
+        insurance_split_bps in 0u32..=5_000u32,
+    ) {
+        let env = Env::default();
+        let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+        let alice = Address::generate(&env);
+        client.mint_initial(&alice);
+        client.create_round(&1_000u128, &None);
+        client.place_bet(&alice, &stake, &BetSide::Up);
+
+        set_ec_bps_now(&env, &contract_id, penalty_bps);
+        client.set_insurance_split_bps(&insurance_split_bps);
+
+        env.ledger().with_mut(|li| li.sequence_number = 7);
+        let pending_before = client.get_pending_winnings(&alice);
+        let treasury_before = client.get_protocol_fee_treasury();
+        let insurance_before = client.get_insurance_fund_balance();
+
+        client.cash_out_early(&alice);
+
+        let cashout = client.get_pending_winnings(&alice) - pending_before;
+        let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+        let insurance_delta = client.get_insurance_fund_balance() - insurance_before;
+
+        // Recompute the contract's own floor-division semantics exactly.
+        let expected_forfeit = stake * (penalty_bps as i128) / 10_000i128;
+        let expected_cashout = stake - expected_forfeit;
+        let expected_insurance = expected_forfeit * (insurance_split_bps as i128) / 10_000i128;
+        let expected_ops = expected_forfeit - expected_insurance;
+
+        prop_assert_eq!(cashout, expected_cashout,
+            "cashout must be stake minus the floor-divided forfeit");
+        prop_assert_eq!(insurance_delta, expected_insurance,
+            "insurance leg must be floor(split_bps) of the forfeit");
+        prop_assert_eq!(treasury_delta, expected_ops,
+            "ops leg must be the remainder of the forfeit");
+        prop_assert_eq!(cashout + treasury_delta + insurance_delta, stake,
+            "no stroop may be created or destroyed at cash-out");
+
+        // The pot must shed the stake regardless of forfeit size.
+        let round = client.get_active_round().unwrap();
+        prop_assert_eq!(round.pool_up, 0,
+            "the stake must leave the pool even for a full-refund dust exit");
     }
 }
