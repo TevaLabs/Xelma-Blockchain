@@ -4,11 +4,11 @@
 use super::config_helpers::{apply_oracle_max_deviation_bps, apply_oracle_stale_threshold};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{DataKeyCore, DataKeyScoped, HbGateConfig, HbGateKey, OraclePayload};
+use crate::types::{DataKeyCore, HbGateConfig, HbGateKey, OraclePayload};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, BytesN, Env, IntoVal, Symbol, TryIntoVal,
+    Address, Env, IntoVal, TryIntoVal,
 };
 
 #[test]
@@ -40,8 +40,7 @@ fn test_resolve_round_stale_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    };
+        attestation: None,    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::StaleOracleData)));
@@ -74,8 +73,7 @@ fn test_resolve_round_invalid_round_id() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    };
+        attestation: None,    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
@@ -109,8 +107,7 @@ fn test_resolve_round_valid_payload() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    };
+        attestation: None,    };
 
     client.resolve_round(&payload);
     assert_eq!(client.get_active_round(), None);
@@ -145,8 +142,7 @@ fn test_resolve_round_future_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    };
+        attestation: None,    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::FutureOracleData)));
@@ -226,94 +222,11 @@ fn test_cancel_round_without_admin_auth_fails() {
 }
 
 // ─── Oracle nonce replay protection (Issue #118) ─────────────────────────────
-
-/// A nonce already consumed for a round must be rejected on re-submission.
-/// We seed the consumed-nonce marker to simulate a prior submission, then
-/// assert the resolver rejects a payload reusing that nonce for the same round.
-#[test]
-fn test_resolve_round_duplicate_nonce_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    // Simulate a prior submission having consumed nonce 42 for this round.
-    env.as_contract(&contract_id, || {
-        env.storage().persistent().set(
-            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64),
-            &true,
-        );
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 42u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNonceReused)));
-}
-
-/// A fresh, unique nonce resolves normally and records the consumed marker.
-#[test]
-fn test_resolve_round_unique_nonce_resolves() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    client.resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 7u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-
-    // Round resolved and the nonce is recorded as consumed for that round.
-    assert_eq!(client.get_active_round(), None);
-    env.as_contract(&contract_id, || {
-        let consumed: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 7u64))
-            .unwrap_or(false);
-        assert!(consumed, "resolved nonce must be marked consumed");
-    });
-}
+//
+// Moved to `oracle_replay_security.rs` (Issue #550), which consolidates
+// nonce-reuse and domain-binding coverage for both the single-feed
+// (`resolve_round`) and multi-feed (`resolve_round_multi`) paths in one
+// authoritative suite.
 
 // ─── Oracle heartbeat and liveness tests ─────────────────────────────────────
 
@@ -964,7 +877,7 @@ fn test_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(Symbol::new(&env, "hb_override"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hoverride"))
     });
     assert!(
         hb_override_event.is_some(),
@@ -1014,9 +927,10 @@ fn test_heartbeat_strict_mode_config() {
     assert!(!client.get_hb_strict_mode());
 }
 
-/// Arming override emits hb_arm_ovr event.
+/// Arming the heartbeat override sets the one-shot flag. The contract does not
+/// emit a separate arm event; consumption emits `("oracle", "hoverride")`.
 #[test]
-fn test_arm_heartbeat_override_emits_event() {
+fn test_arm_heartbeat_override_sets_flag() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let admin = Address::generate(&env);
@@ -1025,19 +939,9 @@ fn test_arm_heartbeat_override_emits_event() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
 
+    assert!(!client.get_hb_override_armed());
     client.arm_hb_override();
-
-    let events = env.events().all();
-    let arm_event = events.iter().find(|e| {
-        let (_contract, topics, _data) = e;
-        topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(Symbol::new(&env, "hb_arm_ovr"))
-    });
-    assert!(
-        arm_event.is_some(),
-        "hb_arm_ovr event must be emitted on arm"
-    );
+    assert!(client.get_hb_override_armed());
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
@@ -1239,206 +1143,11 @@ fn test_oracle_liveness_custom_threshold() {
     assert!(!client.is_oracle_live());
 }
 
-/// Boundary nonces (0 and u64::MAX) are rejected on reuse for the same round.
-#[test]
-fn test_resolve_round_nonce_boundary_values() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    // Pre-seed both boundary nonces as consumed for this round.
-    env.as_contract(&contract_id, || {
-        env.storage().persistent().set(
-            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64),
-            &true,
-        );
-        env.storage().persistent().set(
-            &DataKeyScoped::ConsumedOracleNonce(round.round_id, u64::MAX),
-            &true,
-        );
-    });
-
-    let zero = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 0u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(zero, Err(Ok(ContractError::OracleNonceReused)));
-
-    let max = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: u64::MAX,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(max, Err(Ok(ContractError::OracleNonceReused)));
-}
-
 // ─── Oracle domain-context validation tests (Issue #143) ────────────────────
-
-#[test]
-fn test_resolve_round_wrong_network_id_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    let wrong_network = BytesN::from_array(&env, &[0xFFu8; 32]);
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: wrong_network,
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNetworkMismatch)));
-}
-
-#[test]
-fn test_resolve_round_wrong_contract_addr_rejected() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    let wrong_contract = Address::generate(&env);
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: wrong_contract,
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNetworkMismatch)));
-}
-
-#[test]
-fn test_resolve_round_valid_domain_context_resolves() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    // Correct network + correct contract => resolves normally
-    client.resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(client.get_active_round(), None);
-}
-
-#[test]
-fn test_resolve_round_both_network_and_contract_wrong() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
-    let round = client.get_active_round().unwrap();
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 1000;
-    });
-
-    let wrong_network = BytesN::from_array(&env, &[0xFFu8; 32]);
-    let wrong_contract = Address::generate(&env);
-
-    // Network is checked first, so we get OracleNetworkMismatch
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: wrong_network,
-        contract_addr: wrong_contract,
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::OracleNetworkMismatch)));
-}
+//
+// Moved to `oracle_replay_security.rs` (Issue #550) alongside the nonce-reuse
+// tests above, with multi-feed (`resolve_round_multi`) coverage added
+// alongside the pre-existing single-feed (`resolve_round`) tests.
 
 // ─── Protocol health endpoint tests ──────────────────────────────────────────
 
@@ -2013,16 +1722,13 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
         let config: HbGateConfig = env
             .storage()
             .persistent()
-            .get(&HbGateKey::Config)
+            .get(&HbGateKey::HbGate)
             .unwrap_or(HbGateConfig {
                 strict_mode: false,
                 override_armed: false,
                 grace_seconds: 0,
             });
-        assert!(
-            !config.override_armed,
-            "heartbeat override must be cleared after use"
-        );
+        assert!(!config.override_armed, "heartbeat override must be cleared after use");
     });
 }
 
@@ -2468,9 +2174,7 @@ fn test_resolve_round_timestamp_before_round_window() {
     // Default skew 300 -> window: [100-300, 160+300] = [0, 460] (lower saturates at 0)
     // Set a short skew of 30 via instance storage to make lower bound = 100-30 = 70
     env.as_contract(&contract_id, || {
-        env.storage()
-            .instance()
-            .set(&symbol_short!("otskew"), &30u64);
+        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
     });
     // With skew=30: window = [70, 190]
     // Payload ts=10 is before the lower bound
@@ -2514,9 +2218,7 @@ fn test_resolve_round_timestamp_boundary_lower() {
 
     // Skew=30 -> window: [70, 190]
     env.as_contract(&contract_id, || {
-        env.storage()
-            .instance()
-            .set(&symbol_short!("otskew"), &30u64);
+        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
     });
 
     // Payload at exactly the lower bound (70) must be accepted
