@@ -2,6 +2,8 @@
 
 Thanks for improving Xelma. This document explains the expected workflow for contributors and maintainers.
 
+By participating in this project, you agree to abide by our [Code of Conduct](./CODE_OF_CONDUCT.md).
+
 ## Before You Start
 
 - Open or reference an issue describing the change.
@@ -15,30 +17,30 @@ All templates include a label guidance block; use it to select the right labels.
 
 ### Required base labels (choose one per issue type)
 
-| Issue type | Base label(s) |
-|---|---|
-| Bug report | `bug` |
-| Feature request | `enhancement` |
+| Issue type           | Base label(s)             |
+| -------------------- | ------------------------- |
+| Bug report           | `bug`                     |
+| Feature request      | `enhancement`             |
 | Protocol improvement | `protocol`, `enhancement` |
-| Security hardening | `security` |
-| Test task | `testing` |
+| Security hardening   | `security`                |
+| Test task            | `testing`                 |
 
 ### Domain labels (add as applicable)
 
-| Label | When to apply |
-|---|---|
-| `blockchain` | Blockchain-related improvement |
-| `contract` | Changes to the smart contract (`contracts/`) |
-| `Rust` | Rust-specific implementation work |
-| `Stellar Wave` | Eligible for the Stellar Wave program |
+| Label          | When to apply                                |
+| -------------- | -------------------------------------------- |
+| `blockchain`   | Blockchain-related improvement               |
+| `contract`     | Changes to the smart contract (`contracts/`) |
+| `Rust`         | Rust-specific implementation work            |
+| `Stellar Wave` | Eligible for the Stellar Wave program        |
 
 ### Priority labels (add one when you can assess urgency)
 
-| Label | Criteria |
-|---|---|
-| `priority: high` | Security critical, funds at risk, CI blocked, or mainnet-blocking |
-| `priority: medium` | Correctness impact, user-facing regression, or release-blocking |
-| `priority: low` | Nice-to-have, defense-in-depth, docs, or cleanup |
+| Label              | Criteria                                                          |
+| ------------------ | ----------------------------------------------------------------- |
+| `priority: high`   | Security critical, funds at risk, CI blocked, or mainnet-blocking |
+| `priority: medium` | Correctness impact, user-facing regression, or release-blocking   |
+| `priority: low`    | Nice-to-have, defense-in-depth, docs, or cleanup                  |
 
 If you're unsure about labels, leave them for maintainers to apply during triage.
 
@@ -110,6 +112,7 @@ cd Xelma-Blockchain
 pip install pre-commit
 pre-commit install
 ```
+
 ## Snapshot Tests
 
 The project uses storage-snapshot golden files (`contracts/test_snapshots/`) to detect
@@ -170,7 +173,7 @@ cargo clippy --workspace --all-targets --locked -- \
 ```
 
 These lints catch patterns that are benign in general Rust but unsafe in smart-contract
-contexts (silent panics, unchecked integer operations, sign-loss on casts).  CI treats them
+contexts (silent panics, unchecked integer operations, sign-loss on casts). CI treats them
 as warnings that are surfaced in the audit job output; errors `-D` will fail the job.
 
 > **Note**: These lints are stricter than the standard `cargo clippy -- -D warnings` run in

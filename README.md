@@ -13,6 +13,7 @@
 ## 🎯 What is Xelma?
 
 **Xelma** is a blockchain-based prediction market with dual prediction modes:
+
 - **Up/Down Mode**: Bet on whether XLM price will go UP or DOWN
 - **Precision Mode (Legends)**: Predict the exact price - closest guess wins!
 
@@ -30,14 +31,14 @@ Unlike traditional prediction markets, Xelma is:
 
 ### Traditional Prediction Markets Fail Users:
 
-| Issue | Traditional Markets | Xelma Solution |
-|-------|-------------------|----------------|
-| **Centralization** | Single point of failure, can be shut down | Runs on blockchain, unstoppable |
-| **Transparency** | Opaque calculations, potential manipulation | All logic on-chain, fully auditable |
-| **Access** | Requires KYC, bank accounts, specific locations | Just need a Stellar wallet |
-| **Payout Speed** | Days or weeks to withdraw | Instant claims after resolution |
-| **Trust** | Must trust the operator won't steal funds | Trustless smart contract execution |
-| **Fees** | High fees (5-10%+) | Minimal blockchain fees (~0.00001 XLM) |
+| Issue              | Traditional Markets                             | Xelma Solution                         |
+| ------------------ | ----------------------------------------------- | -------------------------------------- |
+| **Centralization** | Single point of failure, can be shut down       | Runs on blockchain, unstoppable        |
+| **Transparency**   | Opaque calculations, potential manipulation     | All logic on-chain, fully auditable    |
+| **Access**         | Requires KYC, bank accounts, specific locations | Just need a Stellar wallet             |
+| **Payout Speed**   | Days or weeks to withdraw                       | Instant claims after resolution        |
+| **Trust**          | Must trust the operator won't steal funds       | Trustless smart contract execution     |
+| **Fees**           | High fees (5-10%+)                              | Minimal blockchain fees (~0.00001 XLM) |
 
 ### Why This Matters:
 
@@ -123,6 +124,7 @@ Unlike traditional prediction markets, Xelma is:
 ## 🛠️ Technical Stack
 
 ### Smart Contract (Rust + Soroban)
+
 - **Language**: Rust 1.94.0
 - **Framework**: Soroban SDK 23.5.3
 - **Blockchain**: Stellar (Testnet)
@@ -130,6 +132,7 @@ Unlike traditional prediction markets, Xelma is:
 - **Canonical crate**: `xelma-contract` (used by CI, build, and artifact paths)
 
 ### Key Features:
+
 - ✅ Custom error handling (50 error types)
 - ✅ Emergency pause/recovery controls for incident response
 - ✅ Overflow protection (checked arithmetic)
@@ -145,6 +148,7 @@ Unlike traditional prediction markets, Xelma is:
 When multiple users tie in **Precision Mode**, the total pot is split evenly using integer division. Any remainder (dust) from the division is awarded to the **first winner** (by prediction order).
 
 **Example:**
+
 - Total pot: 100 vXLM
 - 3-way tie (Alice, Bob, Charlie)
 - Division: 100 ÷ 3 = 33.33...
@@ -155,6 +159,7 @@ When multiple users tie in **Precision Mode**, the total pot is split evenly usi
 - **Total distributed: 100 vXLM** ✅ (no dust lost)
 
 This ensures:
+
 - ✅ **Zero dust loss** - Every stroops is accounted for
 - ✅ **Simple & predictable** - First predictor gets the remainder
 - ✅ **Fair distribution** - Close to equal split, minimal advantage
@@ -162,17 +167,20 @@ This ensures:
 ### Precision Commit-Reveal Flow
 
 To prevent front-running and copy-trading, Precision rounds support a two-step commit-reveal flow:
+
 1. **Commit**: Users submit a SHA-256 hash of their `predicted_price` and a `salt`. This locks their stake without revealing the guess. The commitment hash must be valid (not all-zeros).
 2. **Reveal**: During the reveal window, users submit the plaintext `predicted_price` and `salt`. The contract verifies the hash and enforces minimum salt entropy (to prevent trivial grinding).
 
 **Unrevealed Policy**:
+
 - **Anti-Griefing**: If at least one prediction is revealed (or placed directly), any unrevealed commitments are forfeited to the pot and count as losers.
-- **Conservation**: If *nobody* reveals in the round, all committed stakes are fully refunded to the users.
+- **Conservation**: If _nobody_ reveals in the round, all committed stakes are fully refunded to the users.
 
 ### Oracle Operator Runbook
 
 Oracle mistakes are a top incident source. See
 [docs/ORACLE_OPERATOR_RUNBOOK.md](./docs/ORACLE_OPERATOR_RUNBOOK.md) for:
+
 - Payload field-by-field requirements and copy-paste templates.
 - Troubleshooting matrix for stale, future, deviation, and nonce errors.
 - Escalation steps for pause, cancel, and deviation override.
@@ -183,10 +191,12 @@ Oracle mistakes are a top incident source. See
 The contract includes an admin-controlled emergency pause for incidents such as oracle outages or critical bugs.
 
 When paused:
+
 - Mutating operations are rejected, including round creation, betting, resolution, claims, and token minting.
 - Read-only queries remain available so operators and users can inspect state.
 
 Recovery workflow:
+
 1. Admin calls `pause_contract()` to freeze high-risk operations.
 2. Investigate and fix the incident off-chain or in a patched deployment.
 3. Admin calls `unpause_contract()` once the system is safe again.
@@ -199,11 +209,13 @@ Use `is_paused()` to verify the current contract state before attempting recover
 Precision rounds enforce a configurable participant cap to keep storage growth and resolution cost predictable. The default cap is **1,000 participants** per Precision round. Admins can tune it with `set_max_precision_participants(max)` within the supported range of `1` to `10,000`; use `get_max_precision_participants()` to confirm the active value.
 
 Operator guidance:
+
 - Lower the cap for short rounds, high-volatility windows, or constrained infrastructure.
 - Raise the cap only after benchmark evidence shows resolution remains within Soroban resource limits.
 - Treat cap changes as operational risk controls; announce material changes to indexers and frontends before opening new rounds.
 
 ### TypeScript Bindings
+
 - **Language**: TypeScript 5.6.2
 - **SDK**: Stellar SDK 14.1.1
 - **Package**: `@tevalabs/xelma-bindings`
@@ -308,12 +320,12 @@ npm run build
 ### 5. Use in Your Project
 
 ```typescript
-import { Client, BetSide } from '@tevalabs/xelma-bindings';
+import { Client, BetSide } from "@tevalabs/xelma-bindings";
 
 const client = new Client({
-  contractId: 'YOUR_CONTRACT_ID',
+  contractId: "YOUR_CONTRACT_ID",
   networkPassphrase: Networks.TESTNET,
-  rpcUrl: 'https://soroban-testnet.stellar.org'
+  rpcUrl: "https://soroban-testnet.stellar.org",
 });
 
 // Mint initial tokens
@@ -323,7 +335,7 @@ await client.mint_initial({ user: userAddress });
 await client.place_bet({
   user: userAddress,
   amount: 100_0000000n, // 100 vXLM (in stroops)
-  side: BetSide.Up
+  side: BetSide.Up,
 });
 
 // Check stats
@@ -338,6 +350,7 @@ console.log(`Wins: ${stats.total_wins}, Streak: ${stats.current_streak}`);
 We take security seriously. The contract has undergone comprehensive hardening:
 
 ### Security Features:
+
 - ✅ **50 Custom Error Types** - Clear, debuggable error codes
 - ✅ **Checked Arithmetic** - All math operations use `checked_*` to prevent overflow
 - ✅ **Role-Based Access** - Admin creates rounds, Oracle resolves, Users bet
@@ -347,6 +360,7 @@ We take security seriously. The contract has undergone comprehensive hardening:
 - ✅ **Full Test Suite Passing** - Comprehensive coverage of edge cases and attack vectors
 
 ### Audited:
+
 - [SECURITY_REVIEW.md](./SECURITY_REVIEW.md) - Complete security analysis
 - [PROTOCOL_SPEC.md](./PROTOCOL_SPEC.md) - Formal invariants, threat model, and trust boundaries
 
@@ -364,6 +378,7 @@ All major state transitions emit standardized events for indexers and frontend c
 ### Event Types:
 
 #### 1. Round Created
+
 Emitted when admin creates a new prediction round.
 
 ```rust
@@ -381,6 +396,7 @@ Payload: (
 **Use Case**: Index new rounds, display active games, trigger notifications.
 
 #### 2. Bet Placed (Up/Down Mode)
+
 Emitted when user places a bet in Up/Down mode.
 
 ```rust
@@ -396,6 +412,7 @@ Payload: (
 **Use Case**: Track user bets, calculate pool sizes, display live betting activity.
 
 #### 3. Price Prediction (Precision Mode)
+
 Emitted when user submits a price prediction in Precision/Legends mode.
 
 ```rust
@@ -411,6 +428,7 @@ Payload: (
 **Use Case**: Track predictions, show leaderboard before resolution, display user guesses.
 
 #### 4. Round Summary (Canonical Terminal Event)
+
 Emitted exactly once per terminal round transition — competitive resolution,
 admin cancellation, or min-participants fallback. Replaces the previously
 separate `("round", "resolved")`, `("round", "cancelled")`, and
@@ -438,6 +456,7 @@ Payload: (
 **Use Case**: Single canonical event for all terminal round states. Indexers should listen for this event and ignore legacy topic names.
 
 #### 5. Participant Payout Outcome
+
 Emitted once per participant during round resolution.
 
 ```rust
@@ -454,6 +473,7 @@ Payload: (
 **Use Case**: Reconstruct participant-level settlement outcomes for analytics, UX, and dispute forensics without replaying storage reads.
 
 #### 6. Winnings Claimed
+
 Emitted when user claims their pending winnings.
 
 ```rust
@@ -467,6 +487,7 @@ Payload: (
 **Use Case**: Track payouts, display claim history, calculate platform volume.
 
 #### 7. Windows Updated
+
 Emitted when admin updates bet/run window durations.
 
 ```rust
@@ -480,6 +501,7 @@ Payload: (
 **Use Case**: Update frontend timers, recalculate round schedules.
 
 #### 8. Initial Mint
+
 Emitted when new user mints their first 1000 vXLM.
 
 ```rust
@@ -493,6 +515,7 @@ Payload: (
 **Use Case**: Track new users, display welcome messages, analytics.
 
 #### 9. Oracle Heartbeat
+
 Emitted when the oracle records an on-chain liveness heartbeat.
 
 ```rust
@@ -506,41 +529,46 @@ Payload: (
 ### Event Consumption
 
 #### TypeScript Example (Frontend/Indexer):
-```typescript
-import { SorobanRpc } from '@stellar/stellar-sdk';
 
-const server = new SorobanRpc.Server('https://soroban-testnet.stellar.org');
+```typescript
+import { SorobanRpc } from "@stellar/stellar-sdk";
+
+const server = new SorobanRpc.Server("https://soroban-testnet.stellar.org");
 
 // Get transaction events
 const txResult = await server.getTransaction(txHash);
 const events = txResult.events;
 
 // Parse round created event
-const roundCreatedEvent = events.find(e => 
-  e.topic[0] === 'round' && e.topic[1] === 'created'
+const roundCreatedEvent = events.find(
+  (e) => e.topic[0] === "round" && e.topic[1] === "created",
 );
 
 if (roundCreatedEvent) {
-  const [roundId, startPrice, startLedger, betEnd, endLedger, mode] = roundCreatedEvent.value;
+  const [roundId, startPrice, startLedger, betEnd, endLedger, mode] =
+    roundCreatedEvent.value;
   console.log(`New round ${roundId} created at price ${startPrice}`);
 }
 ```
 
 #### Event Subscription Pattern:
+
 ```typescript
 // Poll for new rounds
 async function watchForNewRounds(contractId: string) {
   const latestLedger = await server.getLatestLedger();
-  
+
   const events = await server.getEvents({
     startLedger: latestLedger.sequence - 100,
-    filters: [{
-      type: 'contract',
-      contractIds: [contractId],
-      topics: [['round'], ['created']]
-    }]
+    filters: [
+      {
+        type: "contract",
+        contractIds: [contractId],
+        topics: [["round"], ["created"]],
+      },
+    ],
   });
-  
+
   return events.events.map(parseRoundCreatedEvent);
 }
 ```
@@ -558,6 +586,7 @@ async function watchForNewRounds(contractId: string) {
 ## 📊 Contract Functions
 
 ### User Functions:
+
 - `mint_initial(user)` - Get 1000 vXLM on first use
 - `balance(user)` - Query current balance
 - `place_bet(user, amount, side)` - Bet on UP or DOWN (Mode 0)
@@ -569,6 +598,7 @@ async function watchForNewRounds(contractId: string) {
 - `get_user_precision_prediction(user)` - Check prediction in current round (Mode 1)
 
 ### Admin Functions:
+
 - `initialize(admin, oracle)` - One-time contract setup
 - `create_round(start_price, mode)` - Start new betting round (mode: 0=Up/Down, 1=Precision)
 - `set_windows(bet_ledgers, run_ledgers)` - Configure round timing windows
@@ -578,9 +608,11 @@ async function watchForNewRounds(contractId: string) {
 - `reset_leaderboard_season()` - Archive the active leaderboard season's rankings and advance to the next season
 
 ### Oracle Functions:
+
 - `resolve_round(payload)` - Resolve round and trigger payouts (requires `OraclePayload` with price, timestamp, and round ID)
 
 ### Query Functions:
+
 - `get_active_round()` - View current round details (includes mode)
 - `get_last_round_id()` - Query the latest round ID
 - `get_admin()` - Query admin address
@@ -601,16 +633,19 @@ async function watchForNewRounds(contractId: string) {
 ## 🎮 Use Cases
 
 ### 🎯 Entertainment
+
 - Short-term price predictions (5-15 minute rounds)
 - Friendly competition and leaderboards
 - Track and improve prediction skills
 
 ### 📚 Education
+
 - Learn prediction markets risk-free (virtual tokens)
 - Understand blockchain interactions
 - Practice trading psychology
 
 ### 🏦 Future Financial Products
+
 - Expand to real money markets (with proper licensing)
 - Multi-asset predictions (BTC, ETH, stocks)
 - Longer time horizons (hourly, daily rounds)
@@ -621,6 +656,7 @@ async function watchForNewRounds(contractId: string) {
 ## 🗺️ Roadmap
 
 ### ✅ Phase 1: Core Contract (Completed)
+
 - [x] Virtual token system
 - [x] Dual-mode round management (Up/Down + Precision)
 - [x] Hybrid resolution logic
@@ -632,18 +668,21 @@ async function watchForNewRounds(contractId: string) {
 - [x] TypeScript bindings
 
 ### 🚧 Phase 2: Infrastructure (In Progress)
+
 - [ ] Deploy to Stellar testnet
 - [ ] Oracle service (price feed integration)
 - [ ] Backend API
 - [ ] Monitoring & analytics
 
 ### 📅 Phase 3: Frontend (Q1 2026)
+
 - [ ] React/Next.js web app
 - [ ] Wallet integration (Freighter, Albedo)
 - [ ] Real-time round updates
 - [ ] User dashboard & leaderboards
 
 ### 🎯 Phase 4: Production (Q2 2026)
+
 - [ ] External security audit
 - [ ] Mainnet deployment
 - [ ] Mobile app (React Native)
@@ -657,22 +696,22 @@ async function watchForNewRounds(contractId: string) {
 
 The repository includes a controlled deployment workflow at `.github/workflows/deploy_testnet.yml` with two modes:
 
-| Mode | Trigger | Behavior |
-|------|---------|----------|
-| **Dry-run** | `workflow_dispatch` with `dry_run: true` | Builds WASM, validates config, checks secrets — **no transaction broadcast** |
-| **Deploy** | `workflow_dispatch` with `dry_run: false` | Full deployment via `scripts/deploy_testnet.sh` (restricted to maintainers) |
+| Mode        | Trigger                                   | Behavior                                                                     |
+| ----------- | ----------------------------------------- | ---------------------------------------------------------------------------- |
+| **Dry-run** | `workflow_dispatch` with `dry_run: true`  | Builds WASM, validates config, checks secrets — **no transaction broadcast** |
+| **Deploy**  | `workflow_dispatch` with `dry_run: false` | Full deployment via `scripts/deploy_testnet.sh` (restricted to maintainers)  |
 
 ### Required GitHub Secrets
 
 Configure these in the repository **Settings → Secrets and variables → Actions**:
 
-| Secret | Purpose |
-|--------|---------|
-| `SOROBAN_RPC_URL` | Testnet RPC endpoint (e.g. `https://soroban-testnet.stellar.org`) |
-| `SOROBAN_NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` |
-| `DEPLOYER_SECRET_KEY` | Secret key of the account paying deployment fees |
-| `SOROBAN_ADMIN_ADDRESS` | Public Stellar address of the contract admin |
-| `ORACLE_ADDRESS` | Public Stellar address of the oracle signer |
+| Secret                       | Purpose                                                           |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `SOROBAN_RPC_URL`            | Testnet RPC endpoint (e.g. `https://soroban-testnet.stellar.org`) |
+| `SOROBAN_NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015`                               |
+| `DEPLOYER_SECRET_KEY`        | Secret key of the account paying deployment fees                  |
+| `SOROBAN_ADMIN_ADDRESS`      | Public Stellar address of the contract admin                      |
+| `ORACLE_ADDRESS`             | Public Stellar address of the oracle signer                       |
 
 ### Workflow Usage
 
@@ -721,6 +760,7 @@ For the full staged deployment and incident response playbook, see [docs/DEPLOYM
 5. **Output** — Prints contract ID, WASM hash, network, and initialization checklist
 
 Safety guarantees:
+
 - Never deploys with missing secrets (fails with clear errors)
 - Never broadcasts transactions in dry-run mode
 - Non-testnet passphrase triggers a warning
@@ -729,6 +769,8 @@ Safety guarantees:
 ---
 
 ## 🤝 Contributing
+
+Please also read our [Code of Conduct](./CODE_OF_CONDUCT.md) before contributing.
 
 We welcome contributions from the community! Start with the maintainer workflow docs:
 
@@ -743,6 +785,7 @@ We welcome contributions from the community! Start with the maintainer workflow 
 Here's how you can help:
 
 ### Ways to Contribute:
+
 1. **Report Bugs** - Open an issue with reproduction steps
 2. **Suggest Features** - Share your ideas for improvements
 3. **Submit PRs** - Fix bugs or add features
@@ -750,6 +793,7 @@ Here's how you can help:
 5. **Write Tests** - Expand test coverage
 
 ### Getting Started:
+
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
@@ -761,12 +805,14 @@ Here's how you can help:
 This repository contains both source files and generated artifacts. Understanding which files are generated and how to regenerate them is essential for contributions.
 
 #### Files That Are Committed (Source Files):
-- **`contracts/src/**`** - Rust source code (manually written)
+
+- **`contracts/src/**`\*\* - Rust source code (manually written)
 - **`bindings/src/index.ts`** - TypeScript bindings source (auto-generated but committed for convenience)
 - **`Cargo.toml`**, **`package.json`** - Dependency manifests
 - **Configuration files** - `.gitignore`, `tsconfig.json`, etc.
 
 #### Files That Are NOT Committed (Build Artifacts):
+
 - **`target/`** - Rust build outputs (WASM binaries, compiled Rust)
 - **`bindings/dist/`** - Compiled TypeScript output (JavaScript + type definitions)
 - **`node_modules/`** - npm dependencies
@@ -777,6 +823,7 @@ This repository contains both source files and generated artifacts. Understandin
 #### How to Regenerate Build Artifacts:
 
 **1. Build the Smart Contract:**
+
 ```bash
 cd contracts
 stellar contract build
@@ -784,6 +831,7 @@ stellar contract build
 
 **2. Regenerate TypeScript Bindings:**
 After building the contract, generate the bindings from the WASM file:
+
 ```bash
 cd ../
 stellar contract bindings typescript \
@@ -794,6 +842,7 @@ stellar contract bindings typescript \
 
 **3. Build TypeScript Bindings:**
 Compile the TypeScript bindings to JavaScript:
+
 ```bash
 cd bindings
 npm install
@@ -801,6 +850,7 @@ npm run build
 ```
 
 **4. Run Tests (regenerates test artifacts):**
+
 ```bash
 cd ../contracts
 cargo test
@@ -811,22 +861,24 @@ cargo test
 #### Before Submitting a PR:
 
 1. **Verify no build artifacts are staged:**
+
    ```bash
    git status
    # Ensure target/, bindings/dist/, node_modules/, test_snapshots/, proptest-regressions/ are not listed
    ```
 
 2. **If you modified the contract**, regenerate bindings:
+
    ```bash
    # Build contract
    stellar contract build --package xelma-contract
-   
+
    # Regenerate bindings
    stellar contract bindings typescript \
      --wasm target/wasm32v1-none/release/xelma_contract.wasm \
      --output-dir ./bindings/src \
      --overwrite
-   
+
    # Build bindings
    cd bindings && npm run build && cd ..
    ```
@@ -836,6 +888,7 @@ cargo test
    - ❌ Don't commit: `bindings/dist/` (compiled output)
 
 ### Good First Issues:
+
 Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Blockchain/labels/good-first-issue) to get started!
 
 ---
@@ -859,11 +912,13 @@ Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Bloc
 ## 🔗 Related Projects
 
 ### Separate Repositories (Coming Soon):
+
 - **Xelma-Frontend** - React web application for users
 - **Xelma-Backend** - Oracle service and API
 - **Xelma-Mobile** - React Native mobile app
 
 ### Technology:
+
 - [Stellar](https://stellar.org/) - Blockchain platform
 - [Soroban](https://soroban.stellar.org/) - Smart contract framework
 - [Rust](https://www.rust-lang.org/) - Contract language
@@ -890,9 +945,9 @@ When making contract changes, update the following to keep this README in sync:
 
 - [ ] **Test count** — re-run `cargo test` and update badge + inline counts
 - [ ] **Error types** — if new `ContractError` variants are added, update the error-type count
-- [ ] **Function list** — add/remove entries under *Contract Functions* section
+- [ ] **Function list** — add/remove entries under _Contract Functions_ section
 - [ ] **Build artifact name** — if the crate name changes, update `Cargo.toml`, CI workflow, and the binding generation command
-- [ ] **SDK version** — after bumping `soroban-sdk`, update the Soroban badge and *Technical Stack* section
+- [ ] **SDK version** — after bumping `soroban-sdk`, update the Soroban badge and _Technical Stack_ section
 - [ ] **Repository structure** — reflect any new source files or directories
 
 ---
@@ -912,6 +967,7 @@ For legacy deployments (no schema version set), operators can run:
 - `migrate_schema_v1_to_v2()`
 
 Guards:
+
 - Migration is blocked while a round is active (prevents partial state interpretation changes).
 - The migration emits `("schema","migrated")` with `(from_version, to_version)` for indexers.
 
