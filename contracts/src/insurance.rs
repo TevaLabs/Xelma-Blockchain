@@ -15,9 +15,7 @@
 //!    admin; withdrawals require the governance dual-approval pipeline
 //!    (GovernorAction::WithdrawInsuranceFund).
 
-use crate::common::{
-    _emit_action_rejected, _extend_persistent_ttl, payout_add, BPS_DENOMINATOR,
-};
+use crate::common::{_emit_action_rejected, _extend_persistent_ttl, payout_add, BPS_DENOMINATOR};
 use crate::errors::ContractError;
 use crate::types::{DataKeyCore, InsuranceEvent};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
@@ -85,11 +83,7 @@ pub fn set_insurance_split_bps(env: Env, bps: u32) -> Result<(), ContractError> 
     }
 
     let key = _split_bps_key(&env);
-    let old_bps: u32 = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(0);
+    let old_bps: u32 = env.storage().persistent().get(&key).unwrap_or(0);
     env.storage().persistent().set(&key, &bps);
     _extend_persistent_ttl(&env, &key);
 
@@ -141,11 +135,7 @@ pub fn set_insurance_coverage_bps(env: Env, bps: u32) -> Result<(), ContractErro
     }
 
     let key = _coverage_bps_key(&env);
-    let old_bps: u32 = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(0);
+    let old_bps: u32 = env.storage().persistent().get(&key).unwrap_or(0);
     env.storage().persistent().set(&key, &bps);
     _extend_persistent_ttl(&env, &key);
 
@@ -173,10 +163,7 @@ pub fn get_insurance_coverage_bps(env: &Env) -> u32 {
 /// an `InsuranceEvent` discriminant value.
 ///
 /// Requires admin auth and contract not paused.
-pub fn set_insurance_eligible_events(
-    env: Env,
-    events: Vec<u32>,
-) -> Result<(), ContractError> {
+pub fn set_insurance_eligible_events(env: Env, events: Vec<u32>) -> Result<(), ContractError> {
     let admin: Address = env
         .storage()
         .persistent()
@@ -256,11 +243,7 @@ pub fn collect_insurance_fee(
     let capped_amount = insurance_amount.min(fee_amount);
 
     let key = _fund_balance_key(&env);
-    let current: i128 = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(0);
+    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
     let new_balance = current
         .checked_add(capped_amount)
         .ok_or(ContractError::Overflow)?;
@@ -319,10 +302,7 @@ pub fn is_coverage_eligible(env: &Env, cancel_reason: u32) -> bool {
 ///
 /// Returns `min(stake * coverage_bps / BPS_DENOMINATOR, fund_remaining)`
 /// with the solvency cap applied globally across all participants.
-pub fn calculate_coverage_amount(
-    env: &Env,
-    stake: i128,
-) -> Result<i128, ContractError> {
+pub fn calculate_coverage_amount(env: &Env, stake: i128) -> Result<i128, ContractError> {
     let coverage_bps = get_insurance_coverage_bps(env);
     if coverage_bps == 0 || stake <= 0 {
         return Ok(0);
@@ -352,11 +332,7 @@ pub fn deduct_insurance_coverage(
     }
 
     let fund_key = _fund_balance_key(&env);
-    let current_fund: i128 = env
-        .storage()
-        .persistent()
-        .get(&fund_key)
-        .unwrap_or(0);
+    let current_fund: i128 = env.storage().persistent().get(&fund_key).unwrap_or(0);
 
     if current_fund <= 0 {
         return Ok(0);
@@ -413,11 +389,7 @@ pub fn top_up_insurance_fund(env: Env, amount: i128) -> Result<(), ContractError
 
     // Credit insurance fund
     let fund_key = _fund_balance_key(&env);
-    let current_fund: i128 = env
-        .storage()
-        .persistent()
-        .get(&fund_key)
-        .unwrap_or(0);
+    let current_fund: i128 = env.storage().persistent().get(&fund_key).unwrap_or(0);
     let new_fund = current_fund
         .checked_add(amount)
         .ok_or(ContractError::Overflow)?;
@@ -466,11 +438,7 @@ pub fn withdraw_insurance_fund(
     }
 
     let fund_key = _fund_balance_key(&env);
-    let current_fund: i128 = env
-        .storage()
-        .persistent()
-        .get(&fund_key)
-        .unwrap_or(0);
+    let current_fund: i128 = env.storage().persistent().get(&fund_key).unwrap_or(0);
     if amount > current_fund {
         return Err(ContractError::InsuranceInsufficientFund);
     }
@@ -509,11 +477,7 @@ pub fn execute_withdraw_insurance_fund(
     }
 
     let fund_key = _fund_balance_key(&env);
-    let current_fund: i128 = env
-        .storage()
-        .persistent()
-        .get(&fund_key)
-        .unwrap_or(0);
+    let current_fund: i128 = env.storage().persistent().get(&fund_key).unwrap_or(0);
     if amount > current_fund {
         return Err(ContractError::InsuranceInsufficientFund);
     }
