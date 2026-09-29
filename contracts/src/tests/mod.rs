@@ -29,6 +29,7 @@ mod guard_tests;
 mod archive_participation;
 mod insurance;
 mod invariant_harness;
+mod keeper_auth;
 mod leaderboard;
 mod leaderboard_seasons;
 mod lifecycle;
