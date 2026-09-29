@@ -346,7 +346,7 @@ pub fn place_bet(
         return Err(ContractError::RoundEnded);
     }
     if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::BettingClosed);
     }
 
     let user_balance = balance(env.clone(), user.clone());
@@ -475,7 +475,7 @@ pub fn place_precision_prediction(
         return Err(ContractError::RoundEnded);
     }
     if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::BettingClosed);
     }
 
     let pred_key = DataKeyScoped::PrecisionPosition(round.round_id, user.clone());
@@ -597,7 +597,7 @@ pub fn commit_prediction(
         return Err(ContractError::RoundEnded);
     }
     if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::BettingClosed);
     }
 
     let user_balance = balance(env.clone(), user.clone());

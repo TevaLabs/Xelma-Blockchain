@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use crate::common::{
-    _derive_round_phase, _extend_persistent_ttl, payout_add, payout_mul, sort_addresses,
-    BPS_DENOMINATOR, DEFAULT_ARCHIVE_RETENTION, MAX_PAGE_SIZE,
+    _derive_round_phase, _extend_persistent_ttl, _legacy_positions_key, payout_add, payout_mul,
+    sort_addresses, BPS_DENOMINATOR, DEFAULT_ARCHIVE_RETENTION, MAX_PAGE_SIZE,
 };
 use crate::config::{
     _read_fee_model, _read_precision_payout_policy, _read_protocol_fee_bps,
@@ -10,10 +10,10 @@ use crate::config::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, LeaderboardEntry, MarketSnapshot,
-    PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy, PrecisionPrediction,
-    Round, RoundMode, RoundPhase, RoundPoolStats, SimulationResult, UserOutcomeType, UserPosition,
-    UserRoundOutcome, UserStats,
+    ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
+    MarketSnapshot, PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy,
+    PrecisionPrediction, Round, RoundMode, RoundPhase, RoundPoolStats, RoundTemplate,
+    SeasonArchive, SimulationResult, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
 use soroban_sdk::{Address, Env, Map, Vec};
 

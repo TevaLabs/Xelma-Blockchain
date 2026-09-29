@@ -53,7 +53,7 @@ jobs:
       - name: Run adversarial CI-critical scenarios only
         run: cargo test --package xelma-contract --lib test_critical_ --locked -- --nocapture
 
-      - name: Verify settlement_math golden vectors (Issue #412)
+      - name: Verify settlement_math golden vectors (Issue #412, #562)
         run: |
           set -o pipefail
           mkdir -p golden-vectors-report

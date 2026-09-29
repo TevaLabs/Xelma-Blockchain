@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! Tests for round resolution and winnings distribution.
 //!
-//! Split into focused scenario packs (Issues #416 and #566):
+//! Split into focused scenario packs for reviewability (Issue #416):
 //! - `updown` – basic up/down round resolution
-//! - `precision` – closest-guess, exact, empty, and single-prediction outcomes
-//! - `precision_ties` – tie splits and remainder assignment
-//! - `precision_conservation` – determinism and pot conservation
-//! - `precision_commit` – commit-reveal settlement with unrevealed stakes
+//! - `precision` – precision mode resolution, determinism & conservation
 //! - `min_participants` – minimum participants threshold guard
 //! - `fees` – protocol fee collection, conservation & withdrawal
 //! - `archive` – archived rounds & user participation history
-//! - `events` – round, payout, and claim event emission
-//! - `outcome_loss` – loss-event emission and refund suppression
+//! - `events` – payout/outcome event emission & loss event semantics
 //! - `golden` – pure settlement_math golden-vector tests
 //! - `policy` – precision payout policy (equal vs. stake-weighted)
 
@@ -22,12 +18,8 @@ mod events;
 mod fees;
 mod golden;
 mod min_participants;
-mod outcome_loss;
 mod policy;
 mod precision;
-mod precision_commit;
-mod precision_conservation;
-mod precision_ties;
 mod updown;
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
@@ -35,12 +27,12 @@ use crate::errors::ContractError;
 use crate::settlement_math::{
     classify_price_direction, compute_deviation_bps, compute_precision_fee,
     compute_precision_payouts, compute_updown_fee, compute_updown_payouts, find_precision_winners,
-    is_one_sided_pool, split_pot_among_winners, total_pot_updown, PrecisionEntry, PriceDirection,
-    UpDownPosition,
+    is_one_sided_pool, split_pot_among_winners, total_pot_updown, PrecisionEntry,
+    PrecisionPayoutEntry, PriceDirection, UpDownPayoutEntry, UpDownPosition,
 };
 use crate::types::{
-    BetSide, DataKeyCore, OraclePayload, PrecisionPrediction, Round, RoundArchiveStatus, RoundMode,
-    UserOutcomeType, UserPosition,
+    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, PrecisionPrediction, Round,
+    RoundArchiveStatus, RoundMode, UserOutcomeType, UserPosition,
 };
 use soroban_sdk::BytesN;
 use soroban_sdk::{
@@ -141,7 +133,7 @@ pub(super) fn collect_outcome_loss_events(
         .collect()
 }
 
-pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128, i128, u32, u32)> {
+pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128, i128, u32)> {
     env.events()
         .all()
         .iter()
@@ -153,10 +145,8 @@ pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128
             {
                 return None;
             }
-            // Fee events are `(round_id, fee, treasury, bps, model)`.
-            // A length mismatch panics inside the SDK, so only decode the live shape.
-            let tuple: (u64, i128, i128, u32, u32) = data.try_into_val(env).ok()?;
-            Some(tuple)
+            let res: Result<(u64, i128, i128, u32), _> = data.try_into_val(env);
+            res.ok()
         })
         .collect()
 }

@@ -241,7 +241,7 @@ fn test_close_buffer_rejects_bets_in_final_window() {
         li.sequence_number = 4;
     });
     let result = client.try_place_bet(&user_b, &50_0000000, &BetSide::Down);
-    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
 
     // At bet_end_ledger, the error should be RoundEnded
     env.ledger().with_mut(|li| {
@@ -286,12 +286,12 @@ fn test_close_buffer_distinct_error_boundary() {
     // Ledger 3: at close buffer edge — BettingClosed
     env.ledger().with_mut(|li| li.sequence_number = 3);
     let result = client.try_place_bet(&user_b, &50_0000000, &BetSide::Down);
-    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
 
     // Ledger 5: still in buffer zone — BettingClosed
     env.ledger().with_mut(|li| li.sequence_number = 5);
     let result = client.try_place_bet(&user_b, &50_0000000, &BetSide::Down);
-    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
 
     // Ledger 6: at bet_end_ledger — RoundEnded
     env.ledger().with_mut(|li| li.sequence_number = 6);
@@ -325,7 +325,7 @@ fn test_close_buffer_precision_prediction_distinct_error() {
     // Ledger 4: close buffer freezes — BettingClosed for precision
     env.ledger().with_mut(|li| li.sequence_number = 4);
     let result = client.try_place_precision_prediction(&user, &50_0000000, &2297);
-    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
 
     // Ledger 6: bet window ended — RoundEnded
     env.ledger().with_mut(|li| li.sequence_number = 6);
@@ -363,7 +363,7 @@ fn test_close_buffer_commit_prediction_distinct_error() {
     // Ledger 4: close buffer freezes — BettingClosed for commit
     env.ledger().with_mut(|li| li.sequence_number = 4);
     let result = client.try_commit_prediction(&user, &hash, &50_0000000);
-    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
 
     // Ledger 6: bet window ended — RoundEnded
     env.ledger().with_mut(|li| li.sequence_number = 6);

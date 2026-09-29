@@ -36,13 +36,13 @@ fn test_critical_last_ledger_sniping_updown_blocked() {
     env.ledger().with_mut(|li| li.sequence_number = 3);
     let balance_before = client.balance(&sniper);
     let result = client.try_place_bet(&sniper, &50_0000000, &BetSide::Down);
-    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
     assert_eq!(client.balance(&sniper), balance_before);
 
     emit_result(
         "last_ledger_sniping_updown",
         "pass",
-        "RoundEnded (close buffer)",
+        "BettingClosed (close buffer)",
         "none when close_buffer configured",
         "medium",
         true,
@@ -67,13 +67,13 @@ fn test_last_ledger_sniping_precision_blocked() {
     env.ledger().with_mut(|li| li.sequence_number = 4);
     let balance_before = client.balance(&sniper);
     let result = client.try_place_precision_prediction(&sniper, &50_0000000, &2297);
-    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
     assert_eq!(client.balance(&sniper), balance_before);
 
     emit_result(
         "last_ledger_sniping_precision",
         "pass",
-        "RoundEnded (close buffer)",
+        "BettingClosed (close buffer)",
         "none when close_buffer configured",
         "medium",
         false,

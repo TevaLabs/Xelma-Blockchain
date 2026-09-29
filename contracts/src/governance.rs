@@ -441,7 +441,6 @@ pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
 }
 
 // ─── On-Chain Constitution Framework (Issue #363) ─────────────────────────────
-//
 // This module implements the on-chain constitution system for parameter governance,
 // introducing immutable, timelocked, and dual-approval parameters with optional
 // veto and guardian windows before activation.
@@ -515,7 +514,7 @@ pub fn propose_amendment(
     env: Env,
     proposer: Address,
     parameter_name: soroban_sdk::Symbol,
-    new_value: soroban_sdk::Bytes,
+    new_value: i128,
 ) -> Result<u64, ContractError> {
     _require_supported_schema(&env)?;
     proposer.require_auth();

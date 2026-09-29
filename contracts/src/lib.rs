@@ -21,6 +21,7 @@
     clippy::assertions_on_constants,
     clippy::clone_on_copy,
     clippy::inconsistent_digit_grouping,
+    clippy::manual_abs_diff,
     clippy::manual_checked_ops,
     clippy::manual_range_contains,
     clippy::needless_borrow,

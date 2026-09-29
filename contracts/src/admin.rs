@@ -375,7 +375,7 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
 
 /// Loads the deviation guardrail config, returning the `StartPrice` default if unset (Issue #266).
 pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
-    let key = DeviationConfigKey::DevCfg;
+    let key = DeviationConfigKey::Config;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -391,7 +391,7 @@ pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
 }
 
 fn _save_deviation_config(env: &Env, config: &DeviationConfig) {
-    let key = DeviationConfigKey::DevCfg;
+    let key = DeviationConfigKey::Config;
     env.storage().persistent().set(&key, config);
     env.storage()
         .persistent()
@@ -458,7 +458,7 @@ pub fn get_deviation_window_samples(env: Env) -> u32 {
 
 /// Loads the attestation config, returning `key: None` (disabled) if unset (Issue #263).
 pub fn _load_attestation_config(env: &Env) -> AttestationConfig {
-    let key = AttestationConfigKey::Attest;
+    let key = AttestationConfigKey::Config;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -485,7 +485,7 @@ pub fn set_attestation_key(env: Env, key: Option<BytesN<32>>) -> Result<(), Cont
         _emit_action_rejected(&env, &admin, symbol_short!("attkey"), e);
     })?;
 
-    let storage_key = AttestationConfigKey::Attest;
+    let storage_key = AttestationConfigKey::Config;
     env.storage()
         .persistent()
         .set(&storage_key, &AttestationConfig { key: key.clone() });
@@ -679,7 +679,7 @@ pub fn _consume_hb_override(env: &Env) -> bool {
 
 /// Loads the heartbeat gate config, returning defaults if unset.
 pub fn _load_hb_config(env: &Env) -> HbGateConfig {
-    let key = HbGateKey::HbGate;
+    let key = HbGateKey::Config;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -697,7 +697,7 @@ pub fn _load_hb_config(env: &Env) -> HbGateConfig {
 
 /// Saves the heartbeat gate config to persistent storage.
 pub fn _save_hb_config(env: &Env, config: &HbGateConfig) {
-    let key = HbGateKey::HbGate;
+    let key = HbGateKey::Config;
     env.storage().persistent().set(&key, config);
     env.storage()
         .persistent()

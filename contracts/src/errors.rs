@@ -121,6 +121,8 @@ pub enum ContractError {
     InsuranceInsufficientFund = 100,
     /// The supplied token amount is invalid for the requested operation.
     InvalidAmount = 101,
+    /// The close-buffer has frozen betting before the round's betting window ends.
+    BettingClosed = 102,
     /// The dispute window for `void_round` has expired, or dispute windows
     /// are not configured (`dispute_ledgers == 0`).
     DisputeWindowExpired = 91,
@@ -137,5 +139,5 @@ pub enum ContractError {
     PageSizeExceeded = 94,
     /// The user's active and pending-round portfolio exposure exceeds the
     /// configured cross-round limit.
-    PortfolioExposureCapExceeded = 102,
+    PortfolioExposureCapExceeded = 103,
 }

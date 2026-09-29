@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
+    contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Val, Vec,
 };
 
 use crate::access_control;
@@ -23,9 +23,13 @@ use crate::types::{
 };
 
 use crate::common::{
-    BPS_DENOMINATOR, CURRENT_SCHEMA_VERSION, MAX_BET_WINDOW_LEDGERS, MAX_ORACLE_DEVIATION_BPS,
-    MAX_ORACLE_STALE_THRESHOLD, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS, MIN_CAP_VALUE,
-    MIN_ORACLE_STALE_THRESHOLD, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
+    BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
+    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
+    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS,
+    MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
+    MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
+    MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
+    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
 
 // ─── Oracle rotation expiry ───────────────────────────────────────────────────
@@ -706,7 +710,7 @@ impl VirtualTokenContract {
         env: Env,
         proposer: Address,
         parameter_name: Symbol,
-        new_value: Bytes,
+        new_value: i128,
     ) -> Result<u64, ContractError> {
         governance::propose_amendment(env, proposer, parameter_name, new_value)
     }

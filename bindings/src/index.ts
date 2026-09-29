@@ -644,8 +644,10 @@ export const ContractError = {
   100: {message:"InsuranceInsufficientFund"},
   /** The supplied token amount is invalid. */
   101: {message:"InvalidAmount"},
+  /** The close-buffer has frozen betting before the betting window ends. */
+  102: {message:"BettingClosed"},
   /** Cross-round portfolio exposure exceeds the configured limit. */
-  102: {message:"PortfolioExposureCapExceeded"}
+  103: {message:"PortfolioExposureCapExceeded"}
 }
 
 /**

@@ -94,4 +94,5 @@ When adding, removing, renaming, or renumbering an error:
 | 99 | `InsuranceInvalidSplit` |
 | 100 | `InsuranceInsufficientFund` |
 | 101 | `InvalidAmount` |
-| 102 | `PortfolioExposureCapExceeded` |
+| 102 | `BettingClosed` |
+| 103 | `PortfolioExposureCapExceeded` |

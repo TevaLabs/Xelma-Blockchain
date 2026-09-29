@@ -5,8 +5,8 @@ use crate::admin::{
     _require_supported_schema,
 };
 use crate::common::{
-    _accumulate_pending, _emit_action_rejected, _extend_persistent_ttl, _set_balance, balance,
-    payout_add, payout_mul, sort_addresses, DEFAULT_ARCHIVE_RETENTION,
+    _accumulate_pending, _emit_action_rejected, _extend_persistent_ttl, _extend_ttl_symbol,
+    _set_balance, balance, payout_add, payout_mul, sort_addresses, DEFAULT_ARCHIVE_RETENTION,
     DEFAULT_ORACLE_TIMESTAMP_SKEW, MAX_CLAIM_BATCH_SIZE, MAX_ORACLE_OBSERVATIONS,
     SECONDS_PER_LEDGER, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
@@ -14,16 +14,16 @@ use crate::config::{_apply_protocol_fee_precision, _apply_protocol_fee_updown, _
 use crate::errors::ContractError;
 use crate::risk;
 use crate::settlement_math::{
-    classify_price_direction, compute_updown_winner_payout, is_one_sided_pool, total_pot_updown,
-    PriceDirection,
+    classify_price_direction, compute_deviation_bps, compute_updown_winner_payout,
+    is_one_sided_pool, total_pot_updown, PriceDirection,
 };
 use crate::storage::clear_round_storage;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
-    HbGateConfig, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload,
-    OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy,
-    PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode, TwapSamplesKey,
-    UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
+    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord,
+    OraclePayload, OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment,
+    PrecisionPayoutPolicy, PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode,
+    TwapSamplesKey, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
 use alloc::vec::Vec as StdVec;
 use soroban_sdk::xdr::ToXdr;
@@ -96,6 +96,8 @@ fn _remove_pending_dispute(env: &Env, round_id: u64) {
 fn _clear_dispute_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>) {
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
+            // Canonical cleanup so the cross-round portfolio exposure index is
+            // released together with the position keys.
             crate::storage::clear_user_positions(env, round_id, &user);
         }
     }
@@ -266,8 +268,8 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
     clear_round_storage(&env, round_id, &participants);
 
     // Clean up participant list and mark round as cancelled
-    let _participant_count = participants.len();
-    let _total_pot = match round.mode {
+    let participant_count = participants.len();
+    let total_pot = match round.mode {
         RoundMode::UpDown => round.pool_up.checked_add(round.pool_down).unwrap_or(0),
         RoundMode::Precision => {
             let mut pot = 0i128;
@@ -512,30 +514,18 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         _emit_action_rejected(&env, &oracle, symbol_short!("resolve"), e);
     })?;
 
-    // ─── Oracle heartbeat health gate (Issue #264) ──────────────────────────
-    //
-    // The health gate is opt-in: it only applies while `HbGateConfig.strict_mode`
-    // is enabled (default off), so operators opt into refusing settlement from
-    // an unhealthy oracle. It must run before any state mutation (nonce
-    // consumption) so a stale oracle cannot race the admin override. An armed
-    // one-shot override bypasses the block and is consumed once the round id is
-    // known, where the `hoverride` event is published.
+    // Heartbeat health enforcement (Issue #264) — must come before any
+    // state mutation (nonce consumption) so a stale oracle cannot race
+    // the admin override.
     let hb_config = _load_hb_config(&env);
-    let hb_blocked = hb_config.strict_mode && _check_heartbeat_health_blocked(&env, &hb_config);
-    let consumed_hb_override = hb_blocked && hb_config.override_armed;
-    if hb_blocked && !hb_config.override_armed {
-        #[allow(deprecated)]
-        env.events().publish(
-            (symbol_short!("oracle"), symbol_short!("hblocked")),
-            (payload.round_id,),
-        );
+    if _check_heartbeat_health_blocked(&env, &hb_config) {
         _emit_action_rejected(
             &env,
             &oracle,
             symbol_short!("resolve"),
-            ContractError::OracleNotLive,
+            ContractError::OracleHeartbeatUnhealthy,
         );
-        return Err(ContractError::OracleNotLive);
+        return Err(ContractError::OracleHeartbeatUnhealthy);
     }
 
     let round: Round = env
@@ -573,15 +563,6 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
             ContractError::OracleNetworkMismatch,
         );
         return Err(ContractError::OracleNetworkMismatch);
-    }
-
-    if consumed_hb_override {
-        crate::admin::_consume_hb_override(&env);
-        #[allow(deprecated)]
-        env.events().publish(
-            (symbol_short!("oracle"), symbol_short!("hoverride")),
-            (round.round_id,),
-        );
     }
 
     // Verify timestamp is inside the round-relative economic window.
@@ -654,15 +635,7 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
     let lower_bound = round_start.saturating_sub(skew);
     let upper_bound = round_end_estimate.saturating_add(skew);
 
-    // The payload must be economically phase-correct: either inside the
-    // round's own window, or close enough to the current ledger time that it
-    // cannot be a stale price replayed from an earlier phase. The absolute
-    // freshness rule above already rejected any future timestamp, so the
-    // near-now branch stays bounded by `[now - skew, now]`.
-    let in_round_window = payload.timestamp >= lower_bound && payload.timestamp <= upper_bound;
-    let near_now = payload.timestamp >= current_time.saturating_sub(skew);
-
-    if !in_round_window && !near_now {
+    if payload.timestamp < lower_bound || payload.timestamp > upper_bound {
         _emit_action_rejected(
             &env,
             &oracle,
@@ -795,6 +768,42 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         return Err(ContractError::OracleNonceReused);
     }
     env.storage().persistent().set(&nonce_key, &true);
+
+    // ─── Oracle heartbeat health gate (Issue #264) ──────────────────────────
+    //
+    // When `HbGateConfig.strict_mode` is enabled, `resolve_round` verifies
+    // that the oracle heartbeat is live before allowing settlement.
+    let hb_config = crate::admin::_load_hb_config(&env);
+
+    if hb_config.strict_mode {
+        let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
+
+        if hb_blocked {
+            if hb_config.override_armed {
+                // Consume the one-shot override
+                crate::admin::_consume_hb_override(&env);
+
+                #[allow(deprecated)]
+                env.events().publish(
+                    (symbol_short!("oracle"), symbol_short!("hoverride")),
+                    (round.round_id,),
+                );
+            } else {
+                #[allow(deprecated)]
+                env.events().publish(
+                    (symbol_short!("oracle"), symbol_short!("hblocked")),
+                    (round.round_id,),
+                );
+                _emit_action_rejected(
+                    &env,
+                    &oracle,
+                    symbol_short!("resolve"),
+                    ContractError::OracleNotLive,
+                );
+                return Err(ContractError::OracleNotLive);
+            }
+        }
+    }
 
     let current_ledger = env.ledger().sequence();
     if current_ledger < round.end_ledger {
@@ -940,15 +949,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
     let lower_bound = round_start.saturating_sub(skew);
     let upper_bound = round_end_estimate.saturating_add(skew);
 
-    // The payload must be economically phase-correct: either inside the
-    // round's own window, or close enough to the current ledger time that it
-    // cannot be a stale price replayed from an earlier phase. The absolute
-    // freshness rule above already rejected any future timestamp, so the
-    // near-now branch stays bounded by `[now - skew, now]`.
-    let in_round_window = payload.timestamp >= lower_bound && payload.timestamp <= upper_bound;
-    let near_now = payload.timestamp >= current_time.saturating_sub(skew);
-
-    if !in_round_window && !near_now {
+    if payload.timestamp < lower_bound || payload.timestamp > upper_bound {
         _emit_action_rejected(
             &env,
             &oracle,
@@ -1546,9 +1547,8 @@ pub fn _apply_one_sided_policy(
             if !participants.is_empty() {
                 _record_refunds_indexed(env, round.round_id, 0, participants)?;
             } else if let Some(pos_map) = positions {
-                #[cfg(any(feature = "legacy-map-settlement", test))]
+                #[cfg(feature = "legacy-map-settlement")]
                 {
-                    #[allow(deprecated)]
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
@@ -1558,9 +1558,8 @@ pub fn _apply_one_sided_policy(
             if !participants.is_empty() {
                 _record_refunds_indexed(env, round.round_id, 0, participants)?;
             } else if let Some(pos_map) = positions {
-                #[cfg(any(feature = "legacy-map-settlement", test))]
+                #[cfg(feature = "legacy-map-settlement")]
                 {
-                    #[allow(deprecated)]
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
@@ -1658,7 +1657,7 @@ pub fn _resolve_updown_mode(
             )?;
         }
     } else {
-        #[cfg(any(feature = "legacy-map-settlement", test))]
+        #[cfg(feature = "legacy-map-settlement")]
         {
             let positions: Map<Address, UserPosition> = env
                 .storage()
@@ -1667,32 +1666,25 @@ pub fn _resolve_updown_mode(
                 .unwrap_or(Map::new(env));
             if !positions.is_empty() {
                 if price_unchanged {
-                    #[allow(deprecated)]
                     _record_refunds_legacy(env, round.round_id, &positions)?;
                 } else if price_went_up {
-                    #[allow(deprecated)]
-                    {
-                        fee_amount = _record_winnings_legacy(
-                            env,
-                            round.round_id,
-                            &positions,
-                            BetSide::Up,
-                            round.pool_up,
-                            round.pool_down,
-                        )?;
-                    }
+                    fee_amount = _record_winnings_legacy(
+                        env,
+                        round.round_id,
+                        &positions,
+                        BetSide::Up,
+                        round.pool_up,
+                        round.pool_down,
+                    )?;
                 } else if price_went_down {
-                    #[allow(deprecated)]
-                    {
-                        fee_amount = _record_winnings_legacy(
-                            env,
-                            round.round_id,
-                            &positions,
-                            BetSide::Down,
-                            round.pool_down,
-                            round.pool_up,
-                        )?;
-                    }
+                    fee_amount = _record_winnings_legacy(
+                        env,
+                        round.round_id,
+                        &positions,
+                        BetSide::Down,
+                        round.pool_down,
+                        round.pool_up,
+                    )?;
                 }
             }
         }
@@ -1701,7 +1693,7 @@ pub fn _resolve_updown_mode(
     Ok((is_one_sided, fee_amount))
 }
 
-#[cfg(any(feature = "legacy-map-settlement", test))]
+#[cfg(feature = "legacy-map-settlement")]
 #[deprecated(
     note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
 )]
@@ -1736,7 +1728,7 @@ pub fn _record_refunds_legacy(
     Ok(())
 }
 
-#[cfg(any(feature = "legacy-map-settlement", test))]
+#[cfg(feature = "legacy-map-settlement")]
 #[deprecated(
     note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
 )]
@@ -1896,7 +1888,7 @@ pub fn _resolve_precision_mode(
         .unwrap_or(Vec::new(env));
     participants = sort_addresses(participants);
 
-    #[cfg(any(feature = "legacy-map-settlement", test))]
+    #[cfg(feature = "legacy-map-settlement")]
     if participants.is_empty() {
         let legacy: Map<Address, PrecisionPrediction> = env
             .storage()
@@ -1906,11 +1898,10 @@ pub fn _resolve_precision_mode(
         if legacy.is_empty() {
             return Ok((0, 0));
         }
-        #[allow(deprecated)]
         return _resolve_precision_legacy(env, round_id, &legacy, final_price);
     }
 
-    #[cfg(not(any(feature = "legacy-map-settlement", test)))]
+    #[cfg(not(feature = "legacy-map-settlement"))]
     if participants.is_empty() {
         return Ok((0, 0));
     }
@@ -2106,7 +2097,7 @@ pub fn _resolve_precision_mode(
     Ok((fee_amount, total_pot))
 }
 
-#[cfg(any(feature = "legacy-map-settlement", test))]
+#[cfg(feature = "legacy-map-settlement")]
 #[deprecated(
     note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
 )]
@@ -2405,7 +2396,7 @@ pub fn _archive_round(
                 .persistent()
                 .get(&DataKeyScoped::RoundParticipants(round.round_id))
                 .unwrap_or(Vec::new(env));
-            #[cfg(any(feature = "legacy-map-settlement", test))]
+            #[cfg(feature = "legacy-map-settlement")]
             if participants.is_empty() {
                 let legacy: Map<Address, PrecisionPrediction> = env
                     .storage()
@@ -2444,7 +2435,7 @@ pub fn _archive_round(
                     }
                 }
             }
-            #[cfg(not(any(feature = "legacy-map-settlement", test)))]
+            #[cfg(not(feature = "legacy-map-settlement"))]
             {
                 for i in 0..participants.len() {
                     if let Some(user) = participants.get(i) {
@@ -2661,6 +2652,8 @@ pub fn _refund_under_threshold(
     }
     for i in 0..participants.len() {
         if let Some(user) = participants.get(i) {
+            // Canonical cleanup so the cross-round portfolio exposure index is
+            // released together with the position keys.
             crate::storage::clear_user_positions(env, round_id, &user);
         }
     }

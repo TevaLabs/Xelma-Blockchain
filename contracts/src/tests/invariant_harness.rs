@@ -6,10 +6,13 @@ extern crate std;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
+use rand::{rngs::StdRng, SeedableRng};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env};
 use std::env;
 use std::format;
+use std::string::String;
+use std::vec::Vec;
 
 use super::reference_model::ReferenceModel;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
