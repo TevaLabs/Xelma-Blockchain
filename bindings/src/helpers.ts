@@ -7,6 +7,7 @@ import type { i128 } from "@stellar/stellar-sdk/contract";
 
 // Re-export BetSide from the generated client for convenience
 import type { BetSide } from "./index.js";
+import type { SeasonLeaderboardEntry } from "./index.js";
 
 // ─── Typed Exceptions ──────────────────────────────────────────
 
@@ -272,4 +273,69 @@ export async function simulateBet(
       error: wrapContractError(err),
     };
   }
+}
+
+// ─── Season Leaderboard Helper ─────────────────────────────────
+
+/** Ranking dimension for a season top-N query. */
+export type SeasonRankBy = "wins" | "streak";
+
+export interface SeasonTopNParams {
+  /**
+   * Season to query. Defaults to the currently-active season
+   * (via `get_current_season_id`) when omitted — the season may have
+   * ended between resolving this and the query landing on-chain, in
+   * which case the frozen archive is served transparently instead of
+   * the live index, matching contract behavior.
+   */
+  seasonId?: number;
+  /** "wins" (default) or "streak". */
+  rankBy?: SeasonRankBy;
+  offset?: number;
+  /** Capped to 100 (`MAX_PAGE_SIZE`) — the contract enforces the same cap server-side. */
+  limit?: number;
+}
+
+const MAX_PAGE_SIZE = 100;
+
+/**
+ * Fetches a page of a season's leaderboard, ranked by wins or best streak.
+ * Resolves the active season automatically when `seasonId` is omitted, so
+ * the common "show me the current top 10" call needs no season lookup of
+ * its own. Works identically for a past (archived) season id.
+ *
+ * @example
+ * // Top 10 of the active season, by wins
+ * const top10 = await getSeasonTopN(client, {})
+ *
+ * @example
+ * // Top 5 of season 3, by best streak
+ * const top5 = await getSeasonTopN(client, { seasonId: 3, rankBy: "streak", limit: 5 })
+ */
+export async function getSeasonTopN(
+  client: Client,
+  params: SeasonTopNParams,
+  options?: MethodOptions,
+): Promise<Array<SeasonLeaderboardEntry>> {
+  const { rankBy = "wins", offset = 0, limit = 10 } = params;
+  const cappedLimit = Math.min(limit, MAX_PAGE_SIZE);
+
+  let seasonId = params.seasonId;
+  if (seasonId === undefined) {
+    const { result } = await client.get_current_season_id(options);
+    seasonId = result;
+  }
+
+  const { result } =
+    rankBy === "streak"
+      ? await client.get_season_leaderboard_by_streak(
+          { season_id: seasonId, offset, limit: cappedLimit },
+          options,
+        )
+      : await client.get_season_leaderboard_by_wins(
+          { season_id: seasonId, offset, limit: cappedLimit },
+          options,
+        );
+
+  return result;
 }

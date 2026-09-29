@@ -11,6 +11,7 @@ correctness.
 | 1 | **Up-Win** | Up/Down (mode 0) | Rises (1.5 → 1.65) | UP bettors split the DOWN pool |
 | 2 | **Down-Win** | Up/Down (mode 0) | Falls (1.5 → 1.35) | DOWN bettors split the UP pool |
 | 3 | **Precision-Tie** | Precision (mode 1) | Hits predicted price (1.55) | Both predict the same winning price → tie-split with remainder to first |
+| 4 | **Season-Rollover** | Up/Down (mode 0), 3 rounds | Two rounds in season 1, one in season 2 | Demonstrates `reset_leaderboard_season`: archiving, event emission, and season isolation |
 
 ## Quick Start
 
@@ -22,6 +23,7 @@ correctness.
 ./scripts/demo_scenarios/scenario_up_win.sh
 ./scripts/demo_scenarios/scenario_down_win.sh
 ./scripts/demo_scenarios/scenario_precision_tie.sh
+./scripts/demo_scenarios/scenario_season_rollover.sh
 ```
 
 ## Prerequisites
@@ -85,6 +87,23 @@ even split). First winner (by address sort order) gets dust if any.
 - Both users have `pending_winnings > 0`
 - Combined payout == total pot (800 vXLM) — fee disabled by default
 - Pool stats report `precision_participant_count >= 2`
+
+### Season-Rollover (`scenario_season_rollover.sh`)
+
+**Setup**: Alice wins two Up/Down rounds in season 1 (Bob loses both), the
+admin resets the season, then Bob wins a third round in season 2.
+
+**Assertions**:
+- Live season-1 wins leaderboard puts Alice on top before the reset
+- `reset_leaderboard_season` emits `(season, reset)` and advances the active
+  season id (1 → 2)
+- `get_season_archive(1)` freezes the pre-reset top-N and `participant_count`
+- `get_season_user_stats(1, alice)` is unchanged by the reset (still 2 wins)
+- `get_season_leaderboard_by_wins(1)` keeps serving the frozen archive after
+  the reset, rather than an empty live index
+- Season 2 starts isolated: Bob's season-2 stats begin fresh (his season-1
+  losses do not carry over), and the season-2 leaderboard shows his new win
+  rather than Alice's season-1 history
 
 ## Troubleshooting
 
