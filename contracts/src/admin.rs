@@ -6,6 +6,7 @@ use crate::common::{
     TTL_BUMP_THRESHOLD,
 };
 use crate::errors::ContractError;
+use crate::risk;
 use crate::types::{
     AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt, DeviationConfig,
     DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey, OracleHeartbeatRecord,
@@ -641,6 +642,16 @@ pub fn set_hb_grace_seconds(env: Env, seconds: u64) -> Result<(), ContractError>
     _ensure_not_paused(&env).inspect_err(|&e| {
         _emit_action_rejected(&env, &admin, symbol_short!("hbgrace"), e);
     })?;
+    if seconds > crate::common::MAX_ORACLE_HEARTBEAT_GRACE_SECONDS {
+        _emit_action_rejected(
+            &env,
+            &admin,
+            symbol_short!("hbgrace"),
+            ContractError::InvalidDuration,
+        );
+        return Err(ContractError::InvalidDuration);
+    }
+
     let mut config = _load_hb_config(&env);
     config.grace_seconds = seconds;
     _save_hb_config(&env, &config);
@@ -1268,6 +1279,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
 
     // CEI: remove storage keys before transferring.
     env.storage().persistent().remove(&pending_key);
+    risk::remove_pending(&env, user.clone(), pending)?;
     env.storage().persistent().remove(&updated_key);
 
     // Credit the admin's balance (conservation: funds are not destroyed).

@@ -222,6 +222,8 @@ pub enum DataKeyScoped {
     /// within a single ledger. This marker lets settlement reject a payload whose
     /// `start_ledger` resolves to a different round than the active one.
     RoundStartLedger(u32),
+    /// Outstanding portfolio exposure for a user: total, Up, and Down.
+    PortfolioExposure(Address),
 }
 
 /// Fee incidence model (Issue #268).

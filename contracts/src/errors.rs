@@ -137,4 +137,7 @@ pub enum ContractError {
     RoundStartLedgerReused = 93,
     /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
     PageSizeExceeded = 94,
+    /// The user's active and pending-round portfolio exposure exceeds the
+    /// configured cross-round limit.
+    PortfolioExposureCapExceeded = 103,
 }

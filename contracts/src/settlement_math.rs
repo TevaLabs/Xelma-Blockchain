@@ -210,11 +210,7 @@ pub fn find_precision_winners_with_policy(
             continue;
         }
 
-        let abs_diff = if entry.predicted_price >= final_price {
-            entry.predicted_price - final_price
-        } else {
-            final_price - entry.predicted_price
-        };
+        let abs_diff = entry.predicted_price.abs_diff(final_price);
 
         let score = match policy.mode {
             PrecisionScoringMode::AbsoluteDistance => abs_diff,

@@ -7,7 +7,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{DataKeyCore, DataKeyScoped, OraclePayload, Round};
+use crate::types::{DataKeyCore, OraclePayload, Round};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, Env,

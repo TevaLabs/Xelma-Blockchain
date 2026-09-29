@@ -36,7 +36,7 @@ fn set_pending_at_current_ledger(env: &Env, contract_id: &Address, user: &Addres
 
 #[test]
 fn test_default_expiry_is_disabled() {
-    let (env, _admin, _contract_id, client) = setup();
+    let (_env, _admin, _contract_id, client) = setup();
     assert_eq!(client.get_pending_winnings_expiry(), 0);
 }
 
@@ -57,7 +57,7 @@ fn test_set_expiry_to_zero_disables() {
 
 #[test]
 fn test_invalid_expiry_below_min_rejected() {
-    let (env, _admin, _contract_id, client) = setup();
+    let (_env, _admin, _contract_id, client) = setup();
     // 10 is below MIN_PENDING_WINNINGS_EXPIRY (128)
     let result = client.try_schedule_pending_winnings_expiry(&10);
     assert_eq!(result, Err(Ok(ContractError::InvalidDuration)));
@@ -65,7 +65,7 @@ fn test_invalid_expiry_below_min_rejected() {
 
 #[test]
 fn test_invalid_expiry_above_max_rejected() {
-    let (env, _admin, _contract_id, client) = setup();
+    let (_env, _admin, _contract_id, client) = setup();
     let result = client.try_schedule_pending_winnings_expiry(&1_000_001);
     assert_eq!(result, Err(Ok(ContractError::InvalidDuration)));
 }
@@ -74,7 +74,7 @@ fn test_invalid_expiry_above_max_rejected() {
 
 #[test]
 fn test_reclaim_fails_when_expiry_disabled() {
-    let (env, admin, contract_id, client) = setup();
+    let (env, _admin, contract_id, client) = setup();
     let user = Address::generate(&env);
     set_pending_at_current_ledger(&env, &contract_id, &user, 1000);
 
@@ -84,7 +84,7 @@ fn test_reclaim_fails_when_expiry_disabled() {
 
 #[test]
 fn test_reclaim_fails_for_nonexistent_pending() {
-    let (env, admin, contract_id, client) = setup();
+    let (env, _admin, _contract_id, client) = setup();
     let user = Address::generate(&env);
     apply_pending_winnings_expiry(&env, &client, 500);
 
@@ -94,7 +94,7 @@ fn test_reclaim_fails_for_nonexistent_pending() {
 
 #[test]
 fn test_reclaim_fails_when_not_expired() {
-    let (env, admin, contract_id, client) = setup();
+    let (env, _admin, contract_id, client) = setup();
     let user = Address::generate(&env);
 
     set_pending_at_current_ledger(&env, &contract_id, &user, 1000);
@@ -134,7 +134,7 @@ fn test_reclaim_succeeds_when_expired() {
 
 #[test]
 fn test_reclaim_at_exact_threshold() {
-    let (env, admin, contract_id, client) = setup();
+    let (env, _admin, contract_id, client) = setup();
     let user = Address::generate(&env);
 
     env.ledger().with_mut(|li| li.sequence_number = 100);
@@ -182,7 +182,7 @@ fn test_reclaim_emits_event() {
 
 #[test]
 fn test_claim_winnings_clears_tracking_key() {
-    let (env, admin, contract_id, client) = setup();
+    let (env, _admin, contract_id, client) = setup();
     let user = Address::generate(&env);
 
     client.mint_initial(&user);
@@ -228,7 +228,7 @@ fn test_claim_winnings_clears_tracking_key() {
 
 #[test]
 fn test_reclaim_fails_when_paused() {
-    let (env, admin, contract_id, client) = setup();
+    let (env, _admin, contract_id, client) = setup();
     let user = Address::generate(&env);
 
     env.ledger().with_mut(|li| li.sequence_number = 0);
@@ -251,7 +251,7 @@ fn test_reclaim_requires_admin_auth() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     let user = Address::generate(&env);
-    let attacker = Address::generate(&env);
+    let _attacker = Address::generate(&env);
 
     // Auth for initialize only
     env.mock_all_auths();
@@ -278,7 +278,7 @@ fn test_reclaim_requires_admin_auth() {
 
 #[test]
 fn test_get_pending_winnings_bumps_tracking_ttl() {
-    let (env, admin, contract_id, client) = setup();
+    let (env, _admin, contract_id, client) = setup();
     let user = Address::generate(&env);
 
     env.ledger().with_mut(|li| li.sequence_number = 0);

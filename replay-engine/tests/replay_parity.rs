@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Golden and property tests proving live settlement == replay.
 
+#![allow(clippy::inconsistent_digit_grouping, clippy::manual_abs_diff)]
+
 use std::fs;
 use std::path::PathBuf;
 

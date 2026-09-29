@@ -95,3 +95,4 @@ When adding, removing, renaming, or renumbering an error:
 | 100 | `InsuranceInsufficientFund` |
 | 101 | `InvalidAmount` |
 | 102 | `BettingClosed` |
+| 103 | `PortfolioExposureCapExceeded` |

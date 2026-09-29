@@ -10,6 +10,7 @@ use crate::config::{
     _collect_protocol_fee, _read_fee_model, get_early_cashout_bps, get_max_precision_participants,
 };
 use crate::errors::ContractError;
+use crate::risk;
 use crate::settlement::_persist_user_outcome;
 use crate::types::{
     BetSide, DataKeyCore, DataKeyScoped, PrecisionCommitment, PrecisionPrediction, Round,
@@ -365,6 +366,8 @@ pub fn place_bet(
         .ok_or(ContractError::Overflow)?;
     _set_balance(&env, user.clone(), new_balance);
 
+    risk::add_stake(&env, user.clone(), amount, Some(side.clone()))?;
+
     // Write single-user position key
     let position = UserPosition {
         amount,
@@ -503,6 +506,8 @@ pub fn place_precision_prediction(
         .ok_or(ContractError::Overflow)?;
     _set_balance(&env, user.clone(), new_balance);
 
+    risk::add_stake(&env, user.clone(), amount, None)?;
+
     // Write single-user prediction key
     let prediction = PrecisionPrediction {
         user: user.clone(),
@@ -612,6 +617,8 @@ pub fn commit_prediction(
         .checked_sub(amount)
         .ok_or(ContractError::Overflow)?;
     _set_balance(&env, user.clone(), new_balance);
+
+    risk::add_stake(&env, user.clone(), amount, None)?;
 
     // Store commitment
     let commitment = PrecisionCommitment {
@@ -858,6 +865,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // Remove user's position
     env.storage().persistent().remove(&pos_key);
+    risk::remove_stake(&env, user.clone(), stake, Some(position.side.clone()))?;
 
     // Remove user from participant list
     let participants_key = DataKeyScoped::RoundParticipants(round.round_id);

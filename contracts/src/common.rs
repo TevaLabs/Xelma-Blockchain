@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
 use crate::errors::ContractError;
+use crate::risk;
 use crate::types::{
     ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, PendingWinningsUpdatedAtKey,
     Round, RoundPhase,
@@ -161,6 +162,7 @@ pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(),
     }
 
     env.storage().persistent().set(&key, &new_pending);
+    risk::add_pending(env, user_key.clone(), amount)?;
     _extend_persistent_ttl(env, &key);
 
     // Track the ledger when this entry was last written for expiry checks.

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Tests for schema versioning and migration guards.
 
-use crate::common::_migrated_key;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{DataKeyCore, DataKeyScoped};
+use crate::types::DataKeyCore;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env};
 
