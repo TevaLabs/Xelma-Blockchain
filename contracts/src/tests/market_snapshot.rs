@@ -59,7 +59,10 @@ fn test_market_snapshot_active_round_matches_individual_getters() {
     assert_eq!(snapshot.phase.get(0), Some(client.get_round_phase()));
     assert_eq!(snapshot.pool_stats.get(0), client.get_round_pool_stats());
 
-    let pool_stats = snapshot.pool_stats.get(0).expect("active round should have pool stats");
+    let pool_stats = snapshot
+        .pool_stats
+        .get(0)
+        .expect("active round should have pool stats");
     assert_eq!(pool_stats.total_up_stake, 500);
     assert_eq!(pool_stats.total_down_stake, 300);
     assert_eq!(pool_stats.up_participant_count, 1);
