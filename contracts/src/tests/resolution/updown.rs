@@ -47,6 +47,7 @@ fn test_resolve_round_price_unchanged() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::UpDownPositions, &positions);
+        index_legacy_positions(&env, &contract_id);
 
         // Update round pools to match positions
         let mut round: Round = env
@@ -158,6 +159,7 @@ fn test_resolve_round_price_went_up() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::UpDownPositions, &positions);
+        index_legacy_positions(&env, &contract_id);
 
         let mut round: Round = env
             .storage()
@@ -261,6 +263,7 @@ fn test_resolve_round_price_went_down() {
         env.storage()
             .persistent()
             .set(&DataKeyCore::UpDownPositions, &positions);
+        index_legacy_positions(&env, &contract_id);
 
         let mut round: Round = env
             .storage()
