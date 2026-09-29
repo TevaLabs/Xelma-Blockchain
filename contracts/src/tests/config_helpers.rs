@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 //! Helpers to apply timelocked config immediately in tests.
 
 use crate::contract::VirtualTokenContractClient;
