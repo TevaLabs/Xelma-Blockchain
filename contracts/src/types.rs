@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
+use crate::fee_incidence::FeeIncidence;
 use soroban_sdk::{contracttype, Address, BytesN, Symbol, Val, Vec};
 
 /// Round mode for prediction type
@@ -225,12 +226,34 @@ pub enum DataKeyScoped {
 }
 
 /// Fee incidence model (Issue #268).
+///
+/// ABI-facing mirror of [`FeeIncidence`], which is the SDK-free type the
+/// shared settlement engine uses. Discriminants are identical, so the
+/// conversion is lossless and the two must be kept in step.
 #[contracttype]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
 pub enum FeeModel {
     FeeOnPot = 0,
     FeeOnWinnings = 1,
+}
+
+impl From<FeeModel> for FeeIncidence {
+    fn from(model: FeeModel) -> Self {
+        match model {
+            FeeModel::FeeOnPot => FeeIncidence::FeeOnPot,
+            FeeModel::FeeOnWinnings => FeeIncidence::FeeOnWinnings,
+        }
+    }
+}
+
+impl From<FeeIncidence> for FeeModel {
+    fn from(model: FeeIncidence) -> Self {
+        match model {
+            FeeIncidence::FeeOnPot => FeeModel::FeeOnPot,
+            FeeIncidence::FeeOnWinnings => FeeModel::FeeOnWinnings,
+        }
+    }
 }
 
 /// Identifies which critical risk setting is pending timelocked activation.

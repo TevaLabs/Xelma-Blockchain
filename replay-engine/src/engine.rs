@@ -2,9 +2,11 @@
 //! Deterministic replay entrypoint — uses the same settlement math as live settlement.
 
 use crate::errors::ContractError;
+use crate::fee_incidence::FeeIncidence;
 use crate::settlement_math::{
-    compute_precision_fee, compute_precision_payouts, compute_updown_fee, compute_updown_payouts,
-    PrecisionEntry, UpDownPosition,
+    compute_precision_payouts_with_policy_and_model, compute_updown_payouts_with_model,
+    PrecisionEntry, PrecisionPayoutPolicy, PrecisionScoringMode, PrecisionScoringPolicy,
+    UpDownPosition,
 };
 use crate::transcript::{
     ArchiveStatus, OutcomeKind, RoundTranscript, TerminalAction, TranscriptError, TranscriptMode,
@@ -119,6 +121,9 @@ fn replay_full_refund(
 
 fn replay_resolve(transcript: &RoundTranscript) -> Result<ReplayResult, ReplayError> {
     let final_price = transcript.final_price;
+    // Transcripts recorded before #531 omit `fee_model`; absent means the
+    // pre-#268 behaviour, which was always fee-on-pot.
+    let fee_model = FeeIncidence::from_code(transcript.fee_model.unwrap_or(0));
 
     match transcript.mode {
         TranscriptMode::UpDown => {
@@ -132,27 +137,21 @@ fn replay_resolve(transcript: &RoundTranscript) -> Result<ReplayResult, ReplayEr
                 })
                 .collect();
 
-            let entries = compute_updown_payouts(
+            // The engine derives the fee itself and applies the price
+            // direction. Recomputing it here from `(pool_up, pool_down)`
+            // would tax the wrong pool under `FeeOnWinnings`, whose base is
+            // the *losing* side (Issue #531).
+            let settlement = compute_updown_payouts_with_model(
                 &positions,
                 transcript.price_start,
                 final_price,
                 transcript.pool_up,
                 transcript.pool_down,
                 transcript.fee_bps,
+                fee_model,
             )?;
-
-            let all_refund = entries.iter().all(|e| e.is_refund);
-            let total_fee = if all_refund {
-                0
-            } else {
-                let (_, _, fee_amount) = compute_updown_fee(
-                    transcript.pool_up.max(0),
-                    transcript.pool_down.max(0),
-                    transcript.fee_bps,
-                )
-                .unwrap_or((0, 0, 0));
-                fee_amount
-            };
+            let entries = settlement.payouts;
+            let total_fee = settlement.fee_amount;
 
             let payouts = entries
                 .iter()
@@ -187,14 +186,20 @@ fn replay_resolve(transcript: &RoundTranscript) -> Result<ReplayResult, ReplayEr
                 })
                 .collect();
 
-            let total_pot: i128 = entries.iter().map(|e| e.amount).sum();
-            let (_, fee_amount) =
-                compute_precision_fee(total_pot, transcript.fee_bps).unwrap_or((0, 0));
+            let settlement = compute_precision_payouts_with_policy_and_model(
+                &entries,
+                final_price,
+                transcript.fee_bps,
+                PrecisionScoringPolicy {
+                    mode: PrecisionScoringMode::AbsoluteDistance,
+                    confidence_band: None,
+                },
+                PrecisionPayoutPolicy::Equal,
+                fee_model,
+            )?;
 
-            let math = compute_precision_payouts(&entries, final_price, transcript.fee_bps)?;
-
-            let all_refund = math.iter().all(|e| e.is_refund);
-            let total_fee = if all_refund { 0 } else { fee_amount };
+            let math = settlement.payouts;
+            let total_fee = settlement.fee_amount;
 
             let payouts = math
                 .iter()
