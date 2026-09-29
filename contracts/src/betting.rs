@@ -7,7 +7,8 @@ use crate::common::{
     DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_RUN_WINDOW_LEDGERS, MAX_START_PRICE, MIN_START_PRICE,
 };
 use crate::config::{
-    _collect_protocol_fee, _read_fee_model, get_early_cashout_bps, get_max_precision_participants,
+    _collect_protocol_fee, _compute_commit_fee, _read_fee_model, _read_precision_commit_fee_bps,
+    get_early_cashout_bps, get_max_precision_participants,
 };
 use crate::errors::ContractError;
 use crate::settlement::_persist_user_outcome;
@@ -595,8 +596,17 @@ pub fn commit_prediction(
         return Err(ContractError::BettingClosed);
     }
 
+    // Optional sealed-bid commit fee (Issue #534). Charged on top of the
+    // stake and *not* added to the pot, so it is pure protocol revenue and
+    // never affects settlement maths. Zero when the fee is disabled, which is
+    // the default.
+    let commit_fee = _compute_commit_fee(&env, amount)?;
+
     let user_balance = balance(env.clone(), user.clone());
-    if user_balance < amount {
+    let total_debit = amount
+        .checked_add(commit_fee)
+        .ok_or(ContractError::PayoutOverflow)?;
+    if user_balance < total_debit {
         return Err(ContractError::InsufficientBalance);
     }
 
@@ -607,11 +617,27 @@ pub fn commit_prediction(
         return Err(ContractError::AlreadyBet);
     }
 
-    // Deduct balance
+    // Deduct stake + commit fee in one write.
     let new_balance = user_balance
-        .checked_sub(amount)
+        .checked_sub(total_debit)
         .ok_or(ContractError::Overflow)?;
     _set_balance(&env, user.clone(), new_balance);
+
+    // Route the fee to the treasury. Reuses the settlement fee accounting so
+    // the `protocol::fee_coll` event and the insurance split apply uniformly;
+    // the dedicated `commit::fee_charged` event below carries the per-user
+    // attribution that round-level `fee_coll` cannot.
+    if commit_fee > 0 {
+        let fee_bps = _read_precision_commit_fee_bps(&env);
+        let fee_model = _read_fee_model(&env);
+        _collect_protocol_fee(&env, round.round_id, commit_fee, fee_bps, fee_model)?;
+
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("commit"), symbol_short!("fee_chrg")),
+            (round.round_id, user.clone(), amount, commit_fee),
+        );
+    }
 
     // Store commitment
     let commitment = PrecisionCommitment {

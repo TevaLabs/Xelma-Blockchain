@@ -80,6 +80,16 @@ pub const MAX_ORACLE_TIMESTAMP_SKEW: u64 = 86_400;
 pub const MAX_PROTOCOL_FEE_BPS: u32 = 1_000;
 pub use crate::math_common::{payout_add, payout_mul, BPS_DENOMINATOR};
 
+// ─── Precision sealed-bid commit fee (Issue #534) ─────────────────────────
+/// Maximum sealed-bid commit fee, in basis points of the committed amount.
+/// Matches [`MAX_PROTOCOL_FEE_BPS`] so both fee surfaces share one bound.
+pub const MAX_COMMIT_FEE_BPS: u32 = 1_000;
+/// Protocol default: commitments are free.
+///
+/// The storage key is absent by default, which is exactly the behaviour every
+/// pre-#534 deployment already has, so the fee is opt-in.
+pub const DEFAULT_COMMIT_FEE_BPS: u32 = 0;
+
 // ─── Storage schema versioning ───────────────────────────────────────────────
 pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 // ─── Start-price bounds ─────────────────────────────────────────
