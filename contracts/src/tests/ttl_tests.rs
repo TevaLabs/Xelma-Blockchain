@@ -3,7 +3,7 @@
 
 use super::config_helpers::apply_max_stake;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{DataKeyCore, DataKeyScoped};
+use crate::types::{DataKeyCore, DataKeyExt, DataKeyScoped};
 use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
@@ -199,6 +199,81 @@ fn test_batch_touch_ttl_rejects_non_allowlisted_key() {
 
     let result = client.try_batch_touch_ttl(&keys);
     assert!(result.is_err(), "non-allowlisted key should be rejected");
+}
+
+#[test]
+fn test_batch_touch_ttl_accepts_dispute_and_quorum_keys() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Neither key is set by initialize, so both should be skipped (not
+    // touched) but must NOT be rejected as unsupported.
+    let keys: Vec<DataKeyCore> = Vec::from_array(
+        &env,
+        [DataKeyCore::DisputeLedgers, DataKeyCore::OracleQuorum],
+    );
+
+    let result = client.try_batch_touch_ttl(&keys);
+    assert!(
+        result.is_ok(),
+        "DisputeLedgers and OracleQuorum should be allowlisted"
+    );
+}
+
+#[test]
+fn test_batch_touch_ttl_accepts_season_stats_and_archive_keys() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    let keys: Vec<DataKeyCore> = Vec::from_array(
+        &env,
+        [
+            DataKeyCore::Ext(DataKeyExt::SeasonUserStats(1, user.clone())),
+            DataKeyCore::Ext(DataKeyExt::SeasonArchive(1)),
+        ],
+    );
+
+    let result = client.try_batch_touch_ttl(&keys);
+    assert!(
+        result.is_ok(),
+        "SeasonUserStats and SeasonArchive should be allowlisted"
+    );
+}
+
+#[test]
+fn test_batch_touch_ttl_still_rejects_governance_keys() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // ConstitutionMetadata (Issue #363 governance) is intentionally out of
+    // scope for this TTL pass and must remain rejected.
+    let keys: Vec<DataKeyCore> =
+        Vec::from_array(&env, [DataKeyCore::Ext(DataKeyExt::ConstitutionMetadata)]);
+
+    let result = client.try_batch_touch_ttl(&keys);
+    assert!(
+        result.is_err(),
+        "ConstitutionMetadata should remain outside the TTL-touch allowlist"
+    );
 }
 
 #[test]

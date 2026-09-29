@@ -1001,6 +1001,24 @@ pub fn _schema_version(env: &Env) -> Option<u32> {
 
 /// Returns `true` if a `DataKeyCore` variant is eligible for batch TTL touch
 /// by a maintainer. Only system-critical, long-lived keys are allowlisted.
+/// Inventory of persistent key families vs. TTL-touch allowlist status (Issue #515).
+///
+/// - `DataKeyCore` (parameterless config/system keys): allowlisted individually below.
+///   `ActiveRound` and legacy migration-compat keys (`Positions`, `UpDownPositions`,
+///   `PrecisionPositions`) are intentionally excluded — they're ephemeral/legacy,
+///   not long-lived config.
+/// - `DataKeyExt::{LeaderboardWins,LeaderboardStreak,SeasonId,SeasonLeaderboardWins,
+///   SeasonLeaderboardStreak}`: allowlisted (long-lived leaderboard aggregates).
+/// - `DataKeyExt::{SeasonUserStats,SeasonArchive}`: allowlisted as of #515 — per-season
+///   history that should survive as long as the season/leaderboard data does.
+/// - `DataKeyExt::{ConstitutionMetadata,Amendment,NextAmendmentId}`: NOT allowlisted —
+///   governance keys (Issue #363), out of scope for this TTL pass.
+/// - `DataKeyCore::OracleQuorum`: allowlisted as of #515 — long-lived admin config,
+///   same treatment as other Oracle* config keys.
+/// - `DataKeyCore::DisputeLedgers`: allowlisted as of #515 — long-lived admin config
+///   for the dispute window, same treatment as `BetWindowLedgers`/`RunWindowLedgers`.
+/// - `DataKeyScoped` (per-user/per-round keyed data): out of scope for this batch
+///   touch mechanism entirely (different type; not accepted by `batch_touch_ttl`).
 pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
     matches!(
         key,
@@ -1027,11 +1045,15 @@ pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
             | DataKeyCore::MigratedToV3
             | DataKeyCore::ArchiveRetention
             | DataKeyCore::RoundTemplate
+            | DataKeyCore::OracleQuorum
+            | DataKeyCore::DisputeLedgers
             | DataKeyCore::Ext(DataKeyExt::LeaderboardWins)
             | DataKeyCore::Ext(DataKeyExt::LeaderboardStreak)
             | DataKeyCore::Ext(DataKeyExt::SeasonId)
             | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins)
             | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak)
+            | DataKeyCore::Ext(DataKeyExt::SeasonUserStats(_, _))
+            | DataKeyCore::Ext(DataKeyExt::SeasonArchive(_))
             | DataKeyCore::LastRoundId
             | DataKeyCore::OracleRotationProposal
             | DataKeyCore::MintLimitConfig
