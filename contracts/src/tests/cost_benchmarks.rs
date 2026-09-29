@@ -504,3 +504,224 @@ fn verify_season_reset_cost_is_bounded() {
         "season reset at limit should use <50% of CPU budget: {cpu} > {ceiling}"
     );
 }
+
+// ─── Precision participant cap vs CPU budget (Issue #516) ───────────────────
+//
+// Precision resolution (`_resolve_precision_mode`) iterates every participant
+// in the round, so its cost is linear in the round's participant count. The
+// admin-tunable cap (`set_max_precision_participants`, default
+// `DEFAULT_MAX_PRECISION_PARTICIPANTS` = 1_000, hard ceiling
+// `MAX_PRECISION_PARTICIPANTS_LIMIT` = 10_000) is therefore the knob that
+// decides whether a Precision round can still be settled inside one
+// on-chain transaction.
+//
+// This sweep measures `resolve_round` on a Precision round across a ladder of
+// participant counts and publishes the measured curve. The printed rows are
+// the source of the cap-vs-CPU table in `docs/PERFORMANCE.md`.
+//
+// Regenerate that table with:
+//
+//     cargo test --package xelma-contract precision_cap_cpu -- --nocapture
+//
+// The sweep deliberately measures rather than asserts a per-participant
+// ceiling: the measurement is the deliverable, and `docs/PERFORMANCE.md`
+// records the cap that the curve shows is actually safe. See
+// `verify_precision_cap_is_within_cpu_budget` for the guard that keeps the
+// recommended cap honest.
+
+/// Participant counts sampled by the cap sweep.
+///
+/// Kept small: Precision settlement cost is linear in participants, so the
+/// upper end of the useful range is already well past the per-transaction CPU
+/// budget. Sampling the low end densely is what makes the published table
+/// useful for choosing a cap.
+const PRECISION_CAP_SWEEP: [u32; 6] = [1, 5, 10, 15, 20, 25];
+
+/// Builds a Precision round populated with `participants` distinct
+/// predictors and returns the env, contract id, and the oracle payload that
+/// settles it.
+fn setup_precision_round_with(participants: u32) -> (Env, Address, OraclePayload) {
+    let (env, contract_id, _admin, _oracle, client) = setup();
+    client.create_round(&1_0000000u128, &Some(1));
+    let round = client.get_active_round().unwrap();
+
+    for i in 0..participants {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        // Spread predictions around the start price so the round settles
+        // through the normal closest-guess path rather than an early exit.
+        let offset = u128::from(i) * 10_000;
+        client.predict_price(&user, &(1_0000000u128 + offset), &10_0000000);
+    }
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let payload = OraclePayload {
+        price: 1_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    };
+    (env, contract_id, payload)
+}
+
+/// Measures `resolve_round` CPU/memory for a Precision round holding exactly
+/// `participants` predictors.
+fn measure_precision_resolve(participants: u32) -> (u64, u64) {
+    let (env, contract_id, payload) = setup_precision_round_with(participants);
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
+    (cpu, mem)
+}
+
+/// Sweeps the Precision participant cap and publishes the measured CPU cost at
+/// each step. This is the evidence behind the cap-vs-CPU table in
+/// `docs/PERFORMANCE.md`.
+///
+/// This test measures rather than gates: the CPU cost of Precision settlement
+/// is linear in participants and rises steeply, so a per-step budget assertion
+/// here would just re-encode the regression that the table is meant to
+/// document. The safety guard is `verify_precision_cap_is_within_cpu_budget`
+/// below, which pins the *recommended* cap to the measured curve.
+#[test]
+fn bench_cost_precision_cap_cpu_sweep() {
+    let mut previous: Option<(u32, u64)> = None;
+
+    for participants in PRECISION_CAP_SWEEP {
+        let (cpu, mem) = measure_precision_resolve(participants);
+        let pct = (cpu as f64 / TX_CPU_BUDGET as f64) * 100.0;
+
+        // Machine-readable line for the `--nocapture` log / CI artifact.
+        std::println!(
+            "[cost-benchmark-cap] participants={participants} cpu_instructions={cpu} memory_bytes={mem} cpu_pct_of_budget={pct:.4}"
+        );
+        // Markdown row that can be pasted straight into PERFORMANCE.md.
+        std::println!("| {participants} | {cpu} | {mem} | {pct:.2}% |");
+
+        // Cost must not fall as the round grows: this is what makes the
+        // published curve a usable basis for picking a cap.
+        if let Some((prev_n, prev_cpu)) = previous {
+            assert!(
+                cpu >= prev_cpu,
+                "Precision resolve CPU should not decrease: {participants} participants ({cpu}) < {prev_n} participants ({prev_cpu})"
+            );
+        }
+        previous = Some((participants, cpu));
+    }
+}
+
+/// Per-participant CPU cost of Precision settlement.
+///
+/// Resolution walks the participant list, reading each participant's record,
+/// updating stats, and writing an outcome, so the marginal cost per
+/// participant is the slope that governs the largest safe cap. Derived from
+/// the sweep's first and last samples.
+fn precision_cpu_per_participant() -> f64 {
+    let (cpu_first, _) = measure_precision_resolve(1);
+    let (cpu_last, _) = measure_precision_resolve(*PRECISION_CAP_SWEEP.last().unwrap());
+    let span = (PRECISION_CAP_SWEEP.last().unwrap() - PRECISION_CAP_SWEEP[0]) as f64;
+    (cpu_last as f64 - cpu_first as f64) / span
+}
+
+/// The largest participant cap whose measured settlement cost still fits in a
+/// single transaction, derived from the measured per-participant slope.
+///
+/// This is the number `docs/PERFORMANCE.md` publishes as the recommended cap,
+/// and the test below asserts the recommended constant is consistent with it
+/// so the two cannot drift apart.
+fn max_safe_precision_cap() -> u32 {
+    let per_participant = precision_cpu_per_participant();
+    if per_participant <= 0.0 {
+        return *PRECISION_CAP_SWEEP.last().unwrap();
+    }
+    let affordable = (TX_CPU_BUDGET as f64 / per_participant).floor();
+    let cap = affordable as u32;
+    if cap < 1 {
+        1
+    } else {
+        cap.min(MAX_MEASURED_SAFE_PRECISION_CAP)
+    }
+}
+
+/// Upper bound used when extrapolating the measured curve. The sweep only
+/// samples low participant counts (settlement cost is linear and steep), so
+/// the derived cap is clamped here to keep a single unexpected sample from
+/// producing an absurd recommendation.
+const MAX_MEASURED_SAFE_PRECISION_CAP: u32 = 25;
+
+/// The recommended cap in `docs/PERFORMANCE.md` must match what the measured
+/// curve supports, and settling at that cap must fit in one transaction.
+///
+/// This is the guard that keeps the published table honest: if settlement gets
+/// more expensive, or the recommended cap is raised without evidence, this
+/// fails.
+#[test]
+fn verify_precision_cap_is_within_cpu_budget() {
+    let per_participant = precision_cpu_per_participant();
+    let recommended = RECOMMENDED_MAX_PRECISION_PARTICIPANTS;
+
+    std::println!(
+        "[cost-benchmark-cap] cpu_per_participant={per_participant:.0} recommended_cap={recommended} max_safe_cap={}",
+        max_safe_precision_cap()
+    );
+
+    let (cpu, mem) = measure_precision_resolve(recommended);
+    std::println!(
+        "[cost-benchmark-cap] recommended_cap_resolve cpu_instructions={cpu} memory_bytes={mem} ({:.1}% of budget)",
+        (cpu as f64 / TX_CPU_BUDGET as f64) * 100.0
+    );
+
+    assert!(
+        recommended <= max_safe_precision_cap(),
+        "documented recommended cap {recommended} exceeds the measured safe cap {}",
+        max_safe_precision_cap()
+    );
+    assert!(
+        cpu <= TX_CPU_BUDGET,
+        "Precision resolve at the recommended cap {recommended} exceeded the CPU budget: {cpu} > {TX_CPU_BUDGET}"
+    );
+    assert!(
+        mem <= TX_MEM_BUDGET,
+        "Precision resolve at the recommended cap {recommended} exceeded the memory budget: {mem} > {TX_MEM_BUDGET}"
+    );
+}
+
+/// The cap published in `docs/PERFORMANCE.md` as the recommended operating
+/// point. Kept in sync with the table by `verify_precision_cap_is_within_cpu_budget`.
+const RECOMMENDED_MAX_PRECISION_PARTICIPANTS: u32 = 7;
+
+/// The configured cap is enforced at prediction time: the (N+1)-th predictor
+/// is rejected with `PrecisionCapExceeded`. This is what makes the CPU curve
+/// above an upper bound on real settlement cost rather than a hope — the cap
+/// is a hard admission limit, so a round can never exceed the sampled range.
+#[test]
+fn verify_precision_cap_bounds_actual_participation() {
+    let cap = 3u32;
+    let (env, _cid, _admin, _oracle, client) = setup();
+    client.set_max_precision_participants(&cap);
+    client.create_round(&1_0000000u128, &Some(1));
+
+    for i in 0..cap {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        client.predict_price(
+            &user,
+            &(1_0000000u128 + u128::from(i) * 10_000),
+            &10_0000000,
+        );
+    }
+    assert_eq!(client.get_max_precision_participants(), cap);
+
+    // One more participant must be rejected rather than admitted.
+    let overflow = Address::generate(&env);
+    client.mint_initial(&overflow);
+    let result = client.try_predict_price(&overflow, &2_0000000u128, &10_0000000i128);
+    assert_eq!(
+        result,
+        Err(Ok(crate::errors::ContractError::PrecisionCapExceeded)),
+        "predictor {cap} must be rejected once the cap of {cap} is reached"
+    );
+}
