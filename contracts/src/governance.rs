@@ -3,14 +3,15 @@
 //! On-Chain Constitution for Parameter Governance (Issue #363).
 
 use crate::admin::{_require_supported_schema, _set_mode};
-use crate::common::{_emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_PROPOSAL_TTL_LEDGERS};
+use crate::common::{
+    _emit_action_rejected, _extend_persistent_ttl, DEFAULT_GOV_PROPOSAL_TTL_LEDGERS,
+};
 use crate::errors::ContractError;
 use crate::types::{
-    DataKeyCore, DataKeyExt, DataKeyScoped, GovAction, GovProposal, GovProposalStatus, RuntimeMode,
-    Amendment, AmendmentStatus, ConstitutionMetadata,
+    Amendment, AmendmentStatus, ConstitutionMetadata, DataKeyCore, DataKeyExt, DataKeyScoped,
+    GovAction, GovProposal, GovProposalStatus, RuntimeMode,
 };
 use soroban_sdk::{symbol_short, Address, Env};
-use soroban_sdk::xdr::ToXdr;
 
 /// Returns whether `user` is an authorized governance administrator or approver.
 pub fn _is_authorized_gov_user(env: &Env, user: &Address) -> bool {
@@ -162,7 +163,12 @@ pub fn propose(
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("gov"), symbol_short!("proposed")),
-        (proposal_id, proposer, _action_code(&action), expires_at_ledger),
+        (
+            proposal_id,
+            proposer,
+            _action_code(&action),
+            expires_at_ledger,
+        ),
     );
 
     Ok(proposal_id)
@@ -302,15 +308,21 @@ pub fn execute(env: Env, executor: Address, proposal_id: u64) -> Result<(), Cont
             _execute_withdraw_fee(&env, &recipient, *amount)?;
         }
         GovAction::SetTreasuryAddress(treasury) => {
-            env.storage().persistent().set(&DataKeyCore::ProtocolFeeTreasury, &treasury);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::ProtocolFeeTreasury, &treasury);
             _extend_persistent_ttl(&env, &DataKeyCore::ProtocolFeeTreasury);
         }
         GovAction::SetAdmin(new_admin) => {
-            env.storage().persistent().set(&DataKeyCore::Admin, &new_admin);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::Admin, &new_admin);
             _extend_persistent_ttl(&env, &DataKeyCore::Admin);
         }
         GovAction::SetOracle(new_oracle) => {
-            env.storage().persistent().set(&DataKeyCore::Oracle, &new_oracle);
+            env.storage()
+                .persistent()
+                .set(&DataKeyCore::Oracle, &new_oracle);
             _extend_persistent_ttl(&env, &DataKeyCore::Oracle);
         }
         GovAction::WithdrawInsuranceFund(recipient, amount) => {
@@ -418,7 +430,8 @@ pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
     let mut proposal: GovProposal = env.storage().persistent().get(&p_key)?;
 
     let current_ledger = env.ledger().sequence();
-    if (proposal.status == GovProposalStatus::Pending || proposal.status == GovProposalStatus::Approved)
+    if (proposal.status == GovProposalStatus::Pending
+        || proposal.status == GovProposalStatus::Approved)
         && current_ledger > proposal.expires_at_ledger
     {
         proposal.status = GovProposalStatus::Expired;
@@ -428,7 +441,6 @@ pub fn get_gov_proposal(env: Env, proposal_id: u64) -> Option<GovProposal> {
 }
 
 // ─── On-Chain Constitution Framework (Issue #363) ─────────────────────────────
-//
 // This module implements the on-chain constitution system for parameter governance,
 // introducing immutable, timelocked, and dual-approval parameters with optional
 // veto and guardian windows before activation.
@@ -473,7 +485,11 @@ pub fn establish_constitution(
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("const"), symbol_short!("estab")),
-        (veto_window_ledgers, timelock_ledgers, dual_approval_required),
+        (
+            veto_window_ledgers,
+            timelock_ledgers,
+            dual_approval_required,
+        ),
     );
 
     Ok(())
@@ -498,7 +514,7 @@ pub fn propose_amendment(
     env: Env,
     proposer: Address,
     parameter_name: soroban_sdk::Symbol,
-    new_value: soroban_sdk::Bytes,
+    new_value: i128,
 ) -> Result<u64, ContractError> {
     _require_supported_schema(&env)?;
     proposer.require_auth();
@@ -532,10 +548,7 @@ pub fn propose_amendment(
         id: amendment_id,
         proposer: proposer.clone(),
         parameter_name: parameter_name.clone(),
-        // `Amendment::new_value` is stored as XDR bytes: `#[contracttype]`
-        // cannot encode a raw `Val` field, so the proposed value is serialized
-        // once at proposal time and round-tripped unchanged by `get_amendment`.
-        new_value: new_value.to_xdr(&env),
+        new_value,
         created_at_ledger: current_ledger,
         veto_deadline_ledger: veto_deadline,
         activation_deadline_ledger: activation_deadline,
@@ -549,7 +562,13 @@ pub fn propose_amendment(
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("const"), symbol_short!("amend")),
-        (amendment_id, proposer, parameter_name, veto_deadline, activation_deadline),
+        (
+            amendment_id,
+            proposer,
+            parameter_name,
+            veto_deadline,
+            activation_deadline,
+        ),
     );
 
     Ok(amendment_id)
@@ -559,11 +578,7 @@ pub fn propose_amendment(
 ///
 /// Once vetoed, an amendment cannot be reactivated without a new proposal.
 /// This is the governance backstop against unwanted parameter changes.
-pub fn veto_amendment(
-    env: Env,
-    vetoer: Address,
-    amendment_id: u64,
-) -> Result<(), ContractError> {
+pub fn veto_amendment(env: Env, vetoer: Address, amendment_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     vetoer.require_auth();
 
@@ -664,7 +679,9 @@ pub fn get_amendment(env: Env, amendment_id: u64) -> Option<Amendment> {
     let mut amendment: Amendment = env.storage().persistent().get(&a_key)?;
 
     let current_ledger = env.ledger().sequence();
-    if amendment.status == AmendmentStatus::Pending && current_ledger > amendment.activation_deadline_ledger {
+    if amendment.status == AmendmentStatus::Pending
+        && current_ledger > amendment.activation_deadline_ledger
+    {
         amendment.status = AmendmentStatus::Expired;
         env.storage().persistent().set(&a_key, &amendment);
         _extend_persistent_ttl(&env, &a_key);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Type definitions for the XLM Price Prediction Market.
 
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Val, Vec};
 
 /// Round mode for prediction type
 #[contracttype]
@@ -465,15 +465,15 @@ pub struct OracleHeartbeatRecord {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Round {
-    pub round_id: u64,       // Unique monotonically increasing round identifier
-    pub price_start: u128,   // Starting XLM price in stroops
-    pub start_ledger: u32,   // Ledger when round was created
-    pub start_timestamp: u64,  // Ledger timestamp when round was created
-    pub bet_end_ledger: u32, // Ledger when betting closes
-    pub end_ledger: u32,     // Ledger when round ends (~5s per ledger)
-    pub pool_up: i128,       // Total vXLM bet on UP
-    pub pool_down: i128,     // Total vXLM bet on DOWN
-    pub mode: RoundMode,     // Round mode: UpDown (0) or Precision (1)
+    pub round_id: u64,        // Unique monotonically increasing round identifier
+    pub price_start: u128,    // Starting XLM price in stroops
+    pub start_ledger: u32,    // Ledger when round was created
+    pub start_timestamp: u64, // Ledger timestamp when round was created
+    pub bet_end_ledger: u32,  // Ledger when betting closes
+    pub end_ledger: u32,      // Ledger when round ends (~5s per ledger)
+    pub pool_up: i128,        // Total vXLM bet on UP
+    pub pool_down: i128,      // Total vXLM bet on DOWN
+    pub mode: RoundMode,      // Round mode: UpDown (0) or Precision (1)
 }
 
 /// Aggregated active-round pool composition for frontend transparency.
@@ -902,7 +902,7 @@ pub struct DeviationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum DeviationConfigKey {
-    DevCfg,
+    Config,
 }
 
 #[contracttype]
@@ -914,7 +914,7 @@ pub struct AttestationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum AttestationConfigKey {
-    Attest,
+    Config,
 }
 
 #[contracttype]
@@ -928,7 +928,7 @@ pub struct HbGateConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum HbGateKey {
-    HbGate,
+    Config,
 }
 
 #[contracttype]
@@ -1014,9 +1014,7 @@ pub struct Amendment {
     pub id: u64,
     pub proposer: Address,
     pub parameter_name: Symbol,
-    /// XDR-encoded (`ToXdr`) representation of the proposed value; a raw
-    /// `Val` field is not encodable by `#[contracttype]`.
-    pub new_value: Bytes,
+    pub new_value: i128,
     pub created_at_ledger: u32,
     pub veto_deadline_ledger: u32,
     pub activation_deadline_ledger: u32,

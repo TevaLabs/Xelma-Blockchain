@@ -12,8 +12,8 @@
 //! |----------|--------|---------|-------------|
 //! | Sybil faucet (mint limit) | `sybil` | `MintLimitExceeded` | yes |
 //! | Sybil faucet (epoch budget) | `sybil` | `EpochBudgetExceeded` | |
-//! | Last-ledger sniping (UpDown) | `sniping` | `RoundEnded` + close buffer | yes |
-//! | Last-ledger sniping (Precision) | `sniping` | `RoundEnded` + close buffer | |
+//! | Last-ledger sniping (UpDown) | `sniping` | `BettingClosed` + close buffer | yes |
+//! | Last-ledger sniping (Precision) | `sniping` | `BettingClosed` + close buffer | |
 //! | Precision spam commits | `precision` | `PrecisionCapExceeded` | yes |
 //! | Oracle heartbeat griefing | `oracle` | `OracleNotLive` | |
 //! | Oracle nonce replay | `oracle` | `OracleNonceReused` | |
@@ -27,8 +27,8 @@
 //! Run locally: `./scripts/run_adversarial_suite.sh`
 //! Deterministic seed: [`ADVERSARIAL_SEED`]
 
-mod commit_reveal;
 mod economic;
+mod grinding;
 mod lifecycle;
 mod oracle;
 mod precision;

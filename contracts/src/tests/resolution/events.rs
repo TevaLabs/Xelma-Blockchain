@@ -36,7 +36,8 @@ fn test_round_resolved_event_emitted() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Verify resolved event was emitted
     let events = env.events().all();
@@ -91,7 +92,8 @@ fn test_updown_resolution_emits_participant_payout_outcomes() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let outcomes = payout_outcome_events(&env);
 
@@ -154,7 +156,8 @@ fn test_unchanged_price_resolution_emits_refund_outcomes() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let outcomes = payout_outcome_events(&env);
 
@@ -220,7 +223,8 @@ fn test_precision_resolution_emits_participant_payout_outcomes() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let outcomes = payout_outcome_events(&env);
 
@@ -313,7 +317,8 @@ fn test_claim_winnings_event_emitted() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Claim winnings
     client.claim_winnings(&user);
@@ -431,7 +436,8 @@ fn test_outcome_loss_event_updown_indexed_path() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Two losers => exactly two loss events.
     assert_eq!(
@@ -537,7 +543,8 @@ fn test_outcome_loss_event_updown_legacy_path() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // One loser (bob) => exactly one loss event.
     assert_eq!(count_outcome_loss_events(&env), 1);
@@ -604,7 +611,8 @@ fn test_outcome_loss_event_precision_indexed_path() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Two losers => two loss events (includes the unrevealed-commitment loser).
     assert_eq!(
@@ -709,7 +717,8 @@ fn test_outcome_loss_event_precision_legacy_path() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // 2 losers => 2 loss events.
     assert_eq!(count_outcome_loss_events(&env), 2);
@@ -807,7 +816,8 @@ fn test_outcome_loss_event_not_emitted_on_refund() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(
         count_outcome_loss_events(&env),
@@ -849,7 +859,8 @@ fn test_outcome_loss_event_not_emitted_on_min_participants_fallback() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Fallback refunds the user; no loss event should be emitted.
     assert_eq!(
@@ -930,7 +941,8 @@ fn test_outcome_loss_event_count_matches_outcomes_across_modes() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let updown_count = count_outcome_loss_events(&env);
     assert_eq!(
@@ -959,7 +971,8 @@ fn test_outcome_loss_event_count_matches_outcomes_across_modes() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let total_after_precision = count_outcome_loss_events(&env);
     assert_eq!(

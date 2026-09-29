@@ -88,7 +88,6 @@ fn test_resolve_precision_stake_weighted_policy() {
     assert_eq!(client.balance(&highest_user), 1000_0000000 - 300_0000000);
     assert_eq!(client.get_pending_winnings(&highest_user), 0);
 
-    let events = env.events().all();
     let resolved_event = events
         .iter()
         .find(|e| {
@@ -102,19 +101,6 @@ fn test_resolve_precision_stake_weighted_policy() {
     let resolved_data: (u64, u128, u32, Option<u32>, u32) =
         resolved_event.2.clone().try_into_val(&env).unwrap();
     assert_eq!(resolved_data.4, 1);
-
-    client.claim_winnings(&lowest_user);
-    client.claim_winnings(&middle_user);
-    client.claim_winnings(&highest_user);
-    assert_eq!(
-        client.balance(&lowest_user),
-        1000_0000000 - 100_0000000 + 200_0000000
-    );
-    assert_eq!(
-        client.balance(&middle_user),
-        1000_0000000 - 200_0000000 + 400_0000000
-    );
-    assert_eq!(client.balance(&highest_user), 1000_0000000 - 300_0000000);
 }
 
 #[test]

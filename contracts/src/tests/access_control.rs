@@ -6,7 +6,7 @@ use crate::errors::ContractError;
 use crate::types::{AccessState, BetSide};
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Ledger as _, Events},
+    testutils::{Address as _, Events, Ledger as _},
     Address, Env, IntoVal, TryIntoVal,
 };
 
@@ -107,8 +107,11 @@ fn test_allowlist_gates_precision_and_commit() {
     // Non-allowlisted user is refused on both precision entrypoints.
     let predict = client.try_place_precision_prediction(&bob, &75_0000000, &1_0000000);
     assert_eq!(predict, Err(Ok(ContractError::AccessDenied)));
-    let commit =
-        client.try_commit_prediction(&bob, &soroban_sdk::BytesN::from_array(&env, &[7; 32]), &75_0000000);
+    let commit = client.try_commit_prediction(
+        &bob,
+        &soroban_sdk::BytesN::from_array(&env, &[7; 32]),
+        &75_0000000,
+    );
     assert_eq!(commit, Err(Ok(ContractError::AccessDenied)));
 }
 
@@ -128,7 +131,10 @@ fn test_denylist_wins_over_allowlist() {
     client.mint_initial(&user);
     client.add_denylisted(&user);
     assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
-    assert!(!client.is_allowlisted(&user), "conflicting allowlist marker cleared");
+    assert!(
+        !client.is_allowlisted(&user),
+        "conflicting allowlist marker cleared"
+    );
 
     client.create_round(&1_5000000, &None);
     let result = client.try_place_bet(&user, &50_0000000, &BetSide::Down);
@@ -243,7 +249,9 @@ fn test_allowlist_gates_cashout() {
     client.place_bet(&alice, &100_0000000, &BetSide::Up);
 
     // Advance into the Running phase.
-    env.ledger().with_mut(|li| { li.sequence_number = 8; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 8;
+    });
 
     // Non-allowlisted user is refused on early cash-out.
     let cashout = client.try_cash_out_early(&bob);
@@ -264,7 +272,9 @@ fn test_denylist_blocks_cashout() {
     client.create_round(&1_0000000, &None);
     client.place_bet(&user, &100_0000000, &BetSide::Up);
 
-    env.ledger().with_mut(|li| { li.sequence_number = 8; });
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 8;
+    });
 
     client.add_denylisted(&user);
     assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
@@ -285,9 +295,15 @@ fn test_protocol_health_reports_access_mode() {
     client.create_round(&1_0000000, &None);
 
     let before = client.get_protocol_health();
-    assert_ne!(before.status_code, 7, "should not be restricted before enabling");
+    assert_ne!(
+        before.status_code, 7,
+        "should not be restricted before enabling"
+    );
 
     client.set_access_control_enabled(&true);
     let after = client.get_protocol_health();
-    assert_eq!(after.status_code, 7, "allowlist mode should surface ACCESS_RESTRICTED");
+    assert_eq!(
+        after.status_code, 7,
+        "allowlist mode should surface ACCESS_RESTRICTED"
+    );
 }
