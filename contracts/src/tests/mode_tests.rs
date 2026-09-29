@@ -978,7 +978,7 @@ fn test_precision_prediction_counts_updown_position_toward_exposure_cap() {
 }
 
 #[test]
-fn test_commit_prediction_counts_precision_prediction_toward_exposure_cap() {
+fn test_commit_prediction_counts_updown_position_toward_exposure_cap() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
@@ -995,15 +995,17 @@ fn test_commit_prediction_counts_precision_prediction_toward_exposure_cap() {
     client.create_round(&1_0000000, &Some(1));
 
     let round = client.get_active_round().unwrap();
-    let prediction = PrecisionPrediction {
-        user: user.clone(),
-        predicted_price: 2297,
+    // Simulate an UpDown position from an earlier phase of the same round
+    // (mode alternation within one round id is only reachable this way in
+    // tests, but the cap must still account for both keys).
+    let position = UserPosition {
         amount: 75_0000000,
+        side: BetSide::Up,
     };
     env.as_contract(&contract_id, || {
         env.storage()
             .persistent()
-            .set(&DataKeyScoped::PrecisionPosition(round.round_id, user.clone()), &prediction);
+            .set(&DataKeyScoped::Position(round.round_id, user.clone()), &position);
     });
 
     let result = client.try_commit_prediction(
@@ -1381,7 +1383,7 @@ fn test_precision_commit_rejects_zero_commitment_hash() {
 
     let zero = BytesN::from_array(&env, &[0u8; 32]);
     let result = client.try_commit_prediction(&user, &zero, &100_0000000);
-    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidCommitment)));
 }
 
 #[test]
@@ -1418,7 +1420,7 @@ fn test_precision_reveal_rejects_low_entropy_salt() {
     let zero_salt = BytesN::from_array(&env, &[0u8; 32]);
     assert_eq!(
         client.try_reveal_prediction(&user, &price, &zero_salt),
-        Err(Ok(ContractError::InvalidPrice))
+        Err(Ok(ContractError::InvalidSalt))
     );
 }
 

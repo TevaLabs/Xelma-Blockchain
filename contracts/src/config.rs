@@ -550,6 +550,20 @@ pub fn _read_precision_payout_policy(env: &Env) -> PrecisionPayoutPolicy {
     }
 }
 
+/// Sets the per-ledger faucet rate limit: the maximum number of
+/// `mint_initial` grants allowed within a single ledger (admin only).
+/// `0` disables the per-ledger limit entirely.
+///
+/// # Operator defaults (Issue #509)
+///
+/// | Deployment | Recommended value | Rationale |
+/// |------------|-------------------|-----------|
+/// | Demo / hackathon (trusted, invite-only) | `0` (unlimited) or `≥ 50` | Frictionless onboarding; the crowd is bounded by the invite list. |
+/// | Open public testnet | `5`–`10` | Caps per-ledger sybil bursts; each ledger is ~5 s, so 5 grants is roughly a 1-grant-per-second sustained drain ceiling before the epoch budget binds. |
+///
+/// Always pair with [`set_epoch_mint_budget`]: the per-ledger limit caps
+/// burst rate, while the epoch budget caps total faucet outflow — sybil
+/// resistance needs both.
 pub fn set_mint_limit(env: Env, limit: u32) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env
@@ -588,6 +602,21 @@ pub fn get_mint_limit(env: Env) -> u32 {
 
 const EPOCH_MINT_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
 
+/// Sets the faucet budget per epoch: the maximum total vXLM that
+/// `mint_initial` may grant within one epoch of [`EPOCH_LEDGERS`]
+/// (~2 hours at 5 s/ledger) (admin only). `0` disables the budget entirely.
+///
+/// # Operator defaults (Issue #509)
+///
+/// The initial grant is `1000_0000000` (1000 vXLM) per user.
+///
+/// | Deployment | Recommended value | Rationale |
+/// |------------|-------------------|-----------|
+/// | Demo / hackathon (trusted, invite-only) | `100_000_0000000` (≈ 100k vXLM ≈ 100 users) | Comfortable headroom for a demo crowd; an accidental drain is capped at ~100 grants per epoch. |
+/// | Open public testnet | `25_000_0000000`–`50_000_0000000` (25–50 users/epoch) | Bounds worst-case faucet outflow to ~300–600 grants/day while remaining generous for real newcomers. |
+///
+/// Always pair with [`set_mint_limit`]: the epoch budget alone still allows
+/// a single-ledger burst; the per-ledger limit smooths it.
 pub fn set_epoch_mint_budget(env: Env, budget: i128) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env

@@ -19,7 +19,7 @@ use crate::settlement_math::{
     classify_price_direction, compute_deviation_bps, compute_updown_winner_payout,
     is_one_sided_pool, total_pot_updown, PriceDirection,
 };
-use crate::storage::clear_round_storage;
+use crate::storage::{clear_round_storage, clear_round_storage_keep_active};
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
     HbGateConfig, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord, OraclePayload,
@@ -89,35 +89,6 @@ fn _remove_pending_dispute(env: &Env, round_id: u64) {
             .persistent()
             .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
     }
-}
-
-/// Clears only storage owned by the terminal round. A newer active round may
-/// already exist while an older result is inside its dispute window, so this
-/// helper deliberately does not remove `ActiveRound`.
-fn _clear_dispute_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>) {
-    for i in 0..participants.len() {
-        if let Some(user) = participants.get(i) {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
-        }
-    }
-    env.storage()
-        .persistent()
-        .remove(&DataKeyScoped::RoundParticipants(round_id));
-    env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage()
-        .persistent()
-        .remove(&DataKeyCore::UpDownPositions);
-    env.storage()
-        .persistent()
-        .remove(&DataKeyCore::PrecisionPositions);
 }
 
 /// Cancels the active round and deterministically refunds all participant stakes.
@@ -268,38 +239,11 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
         }
     }
 
-    // Canonical cleanup: removes ALL position keys + shared keys + legacy keys
-    clear_round_storage(&env, round_id, &participants);
-
-    // Clean up participant list and mark round as cancelled
-    let participant_count = participants.len();
-    let total_pot = match round.mode {
-        RoundMode::UpDown => round.pool_up.checked_add(round.pool_down).unwrap_or(0),
-        RoundMode::Precision => {
-            let mut pot = 0i128;
-            for i in 0..participants.len() {
-                if let Some(user) = participants.get(i) {
-                    let pred_key = DataKeyScoped::PrecisionPosition(round_id, user.clone());
-                    let commit_key = DataKeyScoped::PrecisionCommitment(round_id, user);
-                    if let Some(pred) = env
-                        .storage()
-                        .persistent()
-                        .get::<_, PrecisionPrediction>(&pred_key)
-                    {
-                        pot = pot.checked_add(pred.amount).unwrap_or(pot);
-                    } else if let Some(commit) = env
-                        .storage()
-                        .persistent()
-                        .get::<_, PrecisionCommitment>(&commit_key)
-                    {
-                        pot = pot.checked_add(commit.amount).unwrap_or(pot);
-                    }
-                }
-            }
-            pot
-        }
-    };
-
+    // Archive while round state is still readable: `_archive_round` re-reads
+    // the participant list and Precision stake keys to compute the summary
+    // pot, so it must precede the canonical cleanup below. (The previous
+    // code cleaned up first and archived after, so a cancelled Precision
+    // round's summary pot was silently reported as 0 — Issue #507.)
     _archive_round(
         &env,
         &round,
@@ -310,13 +254,14 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
         None,
     );
 
-    env.storage()
-        .persistent()
-        .remove(&DataKeyScoped::RoundParticipants(round_id));
+    // Canonical cleanup: removes ALL position keys (both modes), the shared
+    // participant list, legacy keys, and the `ActiveRound` marker — this
+    // path owns the active round (Issue #507).
+    clear_round_storage(&env, round_id, &participants);
+
     env.storage()
         .persistent()
         .set(&DataKeyScoped::CancelledRound(round_id), &true);
-    env.storage().persistent().remove(&DataKeyCore::ActiveRound);
 
     Ok(())
 }
@@ -1333,42 +1278,17 @@ fn _complete_settlement(
         confidence,
     );
 
-    _clear_dispute_round_storage(env, round_id, &participants);
+    // Canonical cleanup (Issue #507): removes every participant position key
+    // (both modes), the participant list, and legacy keys — but NOT the
+    // `ActiveRound` marker, because `_complete_settlement` is also reached
+    // via `finalize_round` for an older disputed round, by which time a
+    // newer round may already be active. The marker is removed below, and
+    // only when it still points at the round being settled.
+    clear_round_storage_keep_active(env, round_id, &participants);
 
-    // Mode-scoped position cleanup (eliminates redundant storage delete lookups)
-    match round.mode {
-        RoundMode::UpDown => {
-            for i in 0..participants.len() {
-                if let Some(user) = participants.get(i) {
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::Position(round_id, user));
-                }
-            }
-        }
-        RoundMode::Precision => {
-            for i in 0..participants.len() {
-                if let Some(user) = participants.get(i) {
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-                    env.storage()
-                        .persistent()
-                        .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
-                }
-            }
-        }
-    }
-    env.storage()
-        .persistent()
-        .remove(&DataKeyScoped::RoundParticipants(round_id));
-
-    env.storage().persistent().remove(&DataKeyCore::ActiveRound);
-    env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage().persistent().remove(&DataKeyCore::UpDownPositions);
-    // A merge left this guarded re-remove of the active round split across
-    // two fragments (the `if` keyword and its condition were separated from
-    // the body). Rejoined here so the file parses again.
+    // Remove the active-round marker only if it still points at THIS round.
+    // (An older round's `finalize_round` must not kill a newer round's
+    // marker.)
     if env
         .storage()
         .persistent()
@@ -1492,7 +1412,11 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         0,
         pending.confidence,
     );
-    _clear_dispute_round_storage(&env, round_id, &participants);
+    // Canonical dispute-window cleanup: removes every participant position
+    // key, the participant list, and legacy keys — but NOT `ActiveRound`,
+    // since a newer round may already be active while this older round was
+    // staged (Issue #507).
+    clear_round_storage_keep_active(&env, round_id, &participants);
     _remove_pending_dispute(&env, round_id);
 
     #[allow(deprecated)]
@@ -2485,20 +2409,26 @@ pub fn _archive_round(
 
     let fee_model_value: u32 = _read_fee_model(env) as u32;
 
+    // The canonical 13-field layout from docs/EVENT_SCHEMA.md. A 10-field
+    // variant was merged at some point, breaking `try_into_val` decoding in
+    // indexers and the event-coverage test (Object, UnexpectedSize).
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("round"), symbol_short!("summary")),
         (
+            0u32, // version: schema tag for this payload layout
             round.round_id,
             status_val,
             round.mode.clone() as u32,
+            round.price_start,
             final_price,
+            round.pool_up,
+            round.pool_down,
             participant_count,
             total_pot,
             fee_amount,
             settled_at_ledger,
-            confidence.unwrap_or(0u32),
-            fee_model_value,
+            confidence,
         ),
     );
 
@@ -2665,30 +2595,11 @@ pub fn _refund_under_threshold(
             }
         }
     }
-    for i in 0..participants.len() {
-        if let Some(user) = participants.get(i) {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::Position(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionPosition(round_id, user.clone()));
-            env.storage()
-                .persistent()
-                .remove(&DataKeyScoped::PrecisionCommitment(round_id, user));
-        }
-    }
-    env.storage()
-        .persistent()
-        .remove(&DataKeyScoped::RoundParticipants(round_id));
-    env.storage().persistent().remove(&DataKeyCore::ActiveRound);
-    env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage()
-        .persistent()
-        .remove(&DataKeyCore::UpDownPositions);
-    env.storage()
-        .persistent()
-        .remove(&DataKeyCore::PrecisionPositions);
+    // Canonical cleanup (Issue #507): removes all position keys (both
+    // modes), the participant list, legacy keys, and the `ActiveRound`
+    // marker — the minimum-participants fallback terminalizes the
+    // still-active round.
+    clear_round_storage(env, round_id, participants);
     Ok(())
 }
 

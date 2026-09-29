@@ -23,11 +23,12 @@ mod drill;
 mod drill_chaos_migration;
 mod event_coverage;
 mod event_order_golden;
+mod exposure_caps;
 mod fee_model;
 mod fee_onesided_precision_tie;
 mod fuzz_lifecycle;
 mod guard_tests;
-// mod initialization; // upstream bug
+mod initialization; // upstream bug
 mod invariant_harness;
 mod leaderboard;
 mod leaderboard_seasons;
@@ -48,6 +49,7 @@ mod policy_gate;
 mod property_invariants;
 mod reference_model;
 mod resolution;
+mod round_cleanup;
 mod rotation;
 mod security;
 mod settlement_math_vectors;
