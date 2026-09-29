@@ -16,11 +16,23 @@ FUZZ_MODE=fast cargo test --package xelma-contract --lib tests::fuzz_lifecycle
 ```
 
 ### 2. Extended Mode (Nightly & Local Stress Testing)
-Runs extended randomized action sequences (longer trace depth, higher case count) for deep state exploration. This mode runs automatically every night via [.github/workflows/nightly-fuzz-extended.yml](file:///C:/Users/SOSA/Downloads/od/Xelma-Blockchain/.github/workflows/nightly-fuzz-extended.yml) or on manual `workflow_dispatch`.
+Runs extended randomized action sequences (longer trace depth, higher case count) for deep state exploration. This mode runs automatically every night via [.github/workflows/nightly-fuzz-extended.yml](../.github/workflows/nightly-fuzz-extended.yml) or on manual `workflow_dispatch`.
 
 ```bash
 FUZZ_MODE=extended cargo test --package xelma-contract --lib tests::fuzz_lifecycle
 ```
+
+### 2.1 Nightly Extended Fuzz Job
+
+The **Nightly Extended Fuzzing** job in `.github/workflows/nightly-fuzz-extended.yml` is the scheduled, long-running instance of the extended suite. It is additive and does not change the harness itself or the PR/push-triggered CI fuzz behavior.
+
+- **When it runs**: every night at 02:00 UTC (cron `0 2 * * *`).
+- **Manual trigger**: open the **Actions** tab, select **Nightly Extended Fuzzing**, and click **Run workflow**. The job runs the full extended suite with no inputs required.
+- **What it does**: checks out the repo, installs the same Rust toolchain (`dtolnay/rust-toolchain@stable` with the `wasm32v1-none` target) used by the rest of CI, and runs:
+  ```bash
+  FUZZ_MODE=extended cargo test --package xelma-contract --lib tests::fuzz_lifecycle -- --nocapture
+  ```
+- **Artifacts**: the full `--nocapture` output is teed to `fuzz-extended-logs/fuzz-extended.log` and uploaded as the `fuzz-extended-logs` artifact (30-day retention). Download it from the workflow run's **Artifacts** section to review the trace, seeds, and any invariant-violation diagnostics. On a failed run, re-run locally with the reported `SEED` value as described in *Failure Reproduction & Seed Replay*.
 
 ---
 

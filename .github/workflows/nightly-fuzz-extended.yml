@@ -2,26 +2,65 @@ name: Nightly Extended Fuzzing
 
 on:
   schedule:
+    # 02:00 UTC daily
     - cron: '0 2 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: nightly-fuzz-extended-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
 
 jobs:
   fuzz-extended:
     name: Run Extended Fuzz Suite
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32v1-none
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-fuzz-extended-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-fuzz-extended-
+            ${{ runner.os }}-cargo-
+
       - name: Run Extended Fuzz Tests
-        run: FUZZ_MODE=extended cargo test --package xelma-contract --lib tests::fuzz_lifecycle -- --nocapture
+        run: |
+          set -o pipefail
+          mkdir -p fuzz-extended-logs
+          # `cargo test` does not write a log file on its own, so tee the full
+          # --nocapture output to a file. This is the artifact the upload step
+          # below archives (see docs/FUZZ_TESTING.md).
+          FUZZ_MODE=extended cargo test --package xelma-contract --lib tests::fuzz_lifecycle -- --nocapture \
+            2>&1 | tee fuzz-extended-logs/fuzz-extended.log
+
       - name: Archive Fuzz Logs & Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-extended-logs
           path: |
-            target/fuzz_*.log
+            fuzz-extended-logs/
             target/debug/deps/fuzz_*
+          retention-days: 30
           if-no-files-found: ignore
