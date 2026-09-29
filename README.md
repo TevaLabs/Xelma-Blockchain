@@ -203,6 +203,41 @@ Operator guidance:
 - Raise the cap only after benchmark evidence shows resolution remains within Soroban resource limits.
 - Treat cap changes as operational risk controls; announce material changes to indexers and frontends before opening new rounds.
 
+### Precision Sealed-Bid Commit Fee
+
+Committing a sealed bid is cheap: the stake is locked, and if the commitment
+is never revealed it is forfeited to the pot. That makes bulk commitment spam
+very nearly free for an attacker. An **optional** per-commit fee makes it
+economically irrational.
+
+```
+set_precision_commit_fee_bps(bps: Option<u32>)   // admin, applies IMMEDIATELY (no timelock)
+get_precision_commit_fee_bps() -> Option<u32>     // None = free commitments (default)
+```
+
+- **Default is 0** — commitments are free, which is exactly the pre-existing
+  behaviour. The fee is opt-in, so enabling it never surprises a live
+  deployment.
+- Charged as `bps` of the committed amount, capped at `MAX_COMMIT_FEE_BPS`
+  (1000 = 10%). `Some(0)` is rejected; use `None` to disable.
+- Debited **in addition to** the stake, so a committer needs
+  `stake + fee` available. A commit that cannot cover the fee is rejected
+  without any state change.
+- **Not added to the round pot.** It is pure protocol revenue, so settlement
+  maths and pot conservation are unaffected.
+- **Never refunded** — not on reveal, not on the all-unrevealed refund path,
+  not on round cancellation. That is what makes it a deterrent.
+- Routed to the protocol fee treasury like any other fee, so the insurance
+  split applies too. Emits `("commit", "fee_chrg")` with
+  `(round_id, user, stake, fee)` for per-user attribution, plus the usual
+  `("protocol", "fee_coll")`.
+
+Unlike `set_protocol_fee_bps`, this setter is **not** timelocked: an operator
+must be able to raise the fee *during* an attack, when a timelock would leave
+the window open. It only affects commitments placed after it is set, and only
+sealed-bid commitments — direct Precision predictions and Up/Down bets are
+never charged.
+
 ### TypeScript Bindings
 - **Language**: TypeScript 5.6.2
 - **SDK**: Stellar SDK 14.1.1
@@ -851,6 +886,7 @@ Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Bloc
 - **[Storage Lifecycle](./docs/storage_lifecycle.md)** — TTL/rent policy for persistent keys
 - **[Bindings Guide](./bindings/README.md)** - TypeScript integration guide
 - **[Wallet Error Guide](./docs/WALLET_ERROR_GUIDE.md)** - Mapping of contract error codes to UI messages
+- **[Precision Commit Fee](./docs/COMMIT_FEE.md)** — Optional per-commit sealed-bid fee: configuration, refund policy, and conservation
 - **[Test Suite](./contracts/src/tests/)** - Comprehensive test examples
 - **[Demo Scenarios](./docs/DEMO.md)** - Scripted Up-win, Down-win, and Precision-tie demos with end-state assertions
 

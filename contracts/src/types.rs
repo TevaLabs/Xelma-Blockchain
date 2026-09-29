@@ -106,6 +106,11 @@ pub enum DataKeyCore {
     /// Admin withdraws via the dedicated withdrawal method; does NOT mix
     /// into the per-user balance ledger.
     ProtocolFeeTreasury,
+    /// Optional fee in basis points charged on each Precision sealed-bid
+    /// commitment (Issue #534), used to make commitment spam economically
+    /// costly. `None` (key absent) means commitments are free, which is the
+    /// pre-#534 behaviour and the protocol default.
+    PrecisionCommitFeeBps,
     /// Mint limit configuration: maximum number of mints allowed per ledger.
     MintLimitConfig,
     /// Pending two-step oracle rotation proposal with expiry.
@@ -258,6 +263,7 @@ pub enum ConfigChangeKind {
     DisputeLedgers = 17,
     FeeModel = 18,
     EarlyCashoutBps = 19,
+    PrecisionCommitFeeBps = 20,
 }
 
 /// Payload for a scheduled critical config change.
@@ -284,6 +290,7 @@ pub enum ConfigChangePayload {
     DisputeLedgers(u32),
     FeeModel(FeeModel),
     EarlyCashoutBps(Option<u32>),
+    PrecisionCommitFeeBps(Option<u32>),
 }
 
 /// Pending timelocked config change with activation ledger for on-chain observability.

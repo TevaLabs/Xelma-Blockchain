@@ -66,7 +66,7 @@ export type BetSide = {tag: "Up", values: void} | {tag: "Down", values: void};
  * Legacy single-key maps (`UpDownPositions`, `PrecisionPositions`) are kept for
  * backward-compatible reads during a migration window; they are no longer written.
  */
-export type DataKey = {tag: "Balance", values: readonly [string]} | {tag: "Admin", values: void} | {tag: "Oracle", values: void} | {tag: "SchemaVersion", values: void} | {tag: "ActiveRound", values: void} | {tag: "Positions", values: void} | {tag: "UpDownPositions", values: void} | {tag: "PrecisionPositions", values: void} | {tag: "PendingWinnings", values: readonly [string]} | {tag: "UserStats", values: readonly [string]} | {tag: "Paused", values: void} | {tag: "BetWindowLedgers", values: void} | {tag: "RunWindowLedgers", values: void} | {tag: "LastRoundId", values: void} | {tag: "Position", values: readonly [u64, string]} | {tag: "PrecisionPosition", values: readonly [u64, string]} | {tag: "PrecisionCommitment", values: readonly [u64, string]} | {tag: "RoundParticipants", values: readonly [u64]} | {tag: "MaxStake", values: void} | {tag: "MaxUserRoundExposure", values: void} | {tag: "MaxPendingWinnings", values: void} | {tag: "CancelledRound", values: readonly [u64]} | {tag: "ConsumedOracleNonce", values: readonly [u64, u64]} | {tag: "MinParticipants", values: void} | {tag: "OracleHeartbeat", values: void} | {tag: "OracleStaleThreshold", values: void} | {tag: "MaxPrecisionParticipants", values: void} | {tag: "OracleMaxDeviationBps", values: void} | {tag: "OracleDeviationOverrideArmed", values: void} | {tag: "ArchivedRound", values: readonly [u64]} | {tag: "RecentArchivedRoundIds", values: void} | {tag: "PendingConfigChange", values: readonly [ConfigChangeKind]} | {tag: "ProtocolFeeBps", values: void} | {tag: "ProtocolFeeTreasury", values: void} | {tag: "FeeModel", values: void} | {tag: "CloseBufferLedgers", values: void};
+export type DataKey = {tag: "Balance", values: readonly [string]} | {tag: "Admin", values: void} | {tag: "Oracle", values: void} | {tag: "SchemaVersion", values: void} | {tag: "ActiveRound", values: void} | {tag: "Positions", values: void} | {tag: "UpDownPositions", values: void} | {tag: "PrecisionPositions", values: void} | {tag: "PendingWinnings", values: readonly [string]} | {tag: "UserStats", values: readonly [string]} | {tag: "Paused", values: void} | {tag: "BetWindowLedgers", values: void} | {tag: "RunWindowLedgers", values: void} | {tag: "LastRoundId", values: void} | {tag: "Position", values: readonly [u64, string]} | {tag: "PrecisionPosition", values: readonly [u64, string]} | {tag: "PrecisionCommitment", values: readonly [u64, string]} | {tag: "RoundParticipants", values: readonly [u64]} | {tag: "MaxStake", values: void} | {tag: "MaxUserRoundExposure", values: void} | {tag: "MaxPendingWinnings", values: void} | {tag: "CancelledRound", values: readonly [u64]} | {tag: "ConsumedOracleNonce", values: readonly [u64, u64]} | {tag: "MinParticipants", values: void} | {tag: "OracleHeartbeat", values: void} | {tag: "OracleStaleThreshold", values: void} | {tag: "MaxPrecisionParticipants", values: void} | {tag: "OracleMaxDeviationBps", values: void} | {tag: "OracleDeviationOverrideArmed", values: void} | {tag: "ArchivedRound", values: readonly [u64]} | {tag: "RecentArchivedRoundIds", values: void} | {tag: "PendingConfigChange", values: readonly [ConfigChangeKind]} | {tag: "ProtocolFeeBps", values: void} | {tag: "ProtocolFeeTreasury", values: void} | {tag: "FeeModel", values: void} | {tag: "CloseBufferLedgers", values: void} | {tag: "PrecisionCommitFeeBps", values: void};
 
 /**
  * Round mode for prediction type
@@ -262,6 +262,8 @@ export enum ConfigChangeKind {
   ArchiveRetention = 10,
   CloseBufferLedgers = 11,
   EpochMintBudget = 12,
+  /** Optional Precision sealed-bid commit fee in bps (Issue #534). */
+  PrecisionCommitFeeBps = 20,
 }
 
 /**
@@ -289,7 +291,8 @@ export type ConfigChangePayload =
   | {tag: "MintLimit", values: readonly [u32]}
   | {tag: "ArchiveRetention", values: readonly [u32]}
   | {tag: "CloseBufferLedgers", values: readonly [u32]}
-  | {tag: "EpochMintBudget", values: readonly [i128]};
+  | {tag: "EpochMintBudget", values: readonly [i128]}
+  | {tag: "PrecisionCommitFeeBps", values: readonly [Option<u32>]};
 
 
 /**
@@ -1245,6 +1248,19 @@ export interface Client {
   set_protocol_fee_bps: ({bps}: {bps: Option<u32>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
   get_protocol_fee_bps: (options?: MethodOptions) => Promise<AssembledTransaction<Option<u32>>>
   get_protocol_fee_treasury: (options?: MethodOptions) => Promise<AssembledTransaction<i128>>
+  /**
+   * Construct and simulate a set_precision_commit_fee_bps transaction.
+   * Sets the optional fee charged on each Precision sealed-bid commitment, in
+   * basis points of the committed amount (admin only, NOT timelocked).
+   * The fee deters commitment spam; it is not added to the round pot and is
+   * never refunded. `null` disables it (the default); 1-1000 enables it.
+   */
+  set_precision_commit_fee_bps: ({bps}: {bps: Option<u32>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  /**
+   * Returns the configured sealed-bid commit fee in bps, or `null` when
+   * commitments are free (the default).
+   */
+  get_precision_commit_fee_bps: (options?: MethodOptions) => Promise<AssembledTransaction<Option<u32>>>
   withdraw_protocol_fee: ({recipient, amount}: {recipient: string, amount: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<i128>>>
   /**
    * Construct and simulate a set_fee_model transaction.
@@ -1472,6 +1488,8 @@ export class Client extends ContractClient {
         set_protocol_fee_bps: this.txFromJSON<Result<void>>,
         get_protocol_fee_bps: this.txFromJSON<Option<u32>>,
         get_protocol_fee_treasury: this.txFromJSON<i128>,
+        set_precision_commit_fee_bps: this.txFromJSON<Result<void>>,
+        get_precision_commit_fee_bps: this.txFromJSON<Option<u32>>,
         withdraw_protocol_fee: this.txFromJSON<Result<i128>>,
         set_mint_limit: this.txFromJSON<Result<void>>,
         get_mint_limit: this.txFromJSON<u32>,

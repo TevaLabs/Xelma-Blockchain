@@ -6,12 +6,12 @@ use crate::common::{
     DEFAULT_ARCHIVE_RETENTION, DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_CLOSE_BUFFER_LEDGERS,
     DEFAULT_DISPUTE_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
     DEFAULT_ORACLE_TIMESTAMP_SKEW, DEFAULT_PENDING_WINNINGS_EXPIRY, DEFAULT_RUN_WINDOW_LEDGERS,
-    MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_DISPUTE_LEDGERS,
-    MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD,
-    MAX_ORACLE_TIMESTAMP_SKEW, MAX_PENDING_WINNINGS_EXPIRY, MAX_PRECISION_PARTICIPANTS_LIMIT,
-    MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS, MAX_START_PRICE, MIN_ARCHIVE_RETENTION,
-    MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD, MIN_ORACLE_TIMESTAMP_SKEW,
-    MIN_PENDING_WINNINGS_EXPIRY, MIN_START_PRICE,
+    MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_CLOSE_BUFFER_LEDGERS, MAX_COMMIT_FEE_BPS,
+    MAX_DISPUTE_LEDGERS, MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS,
+    MAX_ORACLE_STALE_THRESHOLD, MAX_ORACLE_TIMESTAMP_SKEW, MAX_PENDING_WINNINGS_EXPIRY,
+    MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
+    MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
+    MIN_ORACLE_TIMESTAMP_SKEW, MIN_PENDING_WINNINGS_EXPIRY, MIN_START_PRICE,
 };
 use crate::errors::ContractError;
 use crate::types::{
@@ -886,6 +886,105 @@ pub fn get_early_cashout_bps(env: Env) -> Option<u32> {
     env.storage().persistent().get(&key)
 }
 
+// ─── Precision sealed-bid commit fee (Issue #534) ─────────────────────────
+
+/// Sets the optional fee charged on each Precision sealed-bid commitment,
+/// in basis points of the committed amount (admin only, **no timelock**).
+///
+/// The fee is the spam deterrent for commit-only rounds: a commitment is
+/// cheap to place and its stake is forfeit to the pot if it is never
+/// revealed, so a small per-commit charge makes bulk commitment spam
+/// economically irrational. Operators need to be able to raise it *during* an
+/// attack, which is why — unlike `set_protocol_fee_bps` — this applies
+/// immediately.
+///
+/// Passing `None` disables the fee entirely (the storage key is removed),
+/// restoring free commitments. `Some(0)` is rejected: use `None` to disable,
+/// so "configured but zero" is never a reachable state.
+pub fn set_precision_commit_fee_bps(env: Env, bps: Option<u32>) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("pc_fee"), e);
+    })?;
+
+    if let Some(v) = bps {
+        if v == 0 || v > MAX_COMMIT_FEE_BPS {
+            _emit_action_rejected(
+                &env,
+                &admin,
+                symbol_short!("pc_fee"),
+                ContractError::InvalidProtocolFeeBps,
+            );
+            return Err(ContractError::InvalidProtocolFeeBps);
+        }
+    }
+
+    let key = DataKeyCore::PrecisionCommitFeeBps;
+    let old_bps: Option<u32> = env.storage().persistent().get(&key);
+    if let Some(v) = bps {
+        env.storage().persistent().set(&key, &v);
+        _extend_persistent_ttl(&env, &key);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
+
+    #[allow(deprecated)]
+    env.events()
+        .publish((symbol_short!("config"), symbol_short!("pc_fee")), (bps,));
+    _emit_config_updated(
+        &env,
+        ConfigChangeKind::PrecisionCommitFeeBps,
+        ConfigChangePayload::PrecisionCommitFeeBps(old_bps),
+        ConfigChangePayload::PrecisionCommitFeeBps(bps),
+    );
+    Ok(())
+}
+
+/// Returns the configured sealed-bid commit fee in bps, or `None` when
+/// commitments are free (the default).
+pub fn get_precision_commit_fee_bps(env: Env) -> Option<u32> {
+    let key = DataKeyCore::PrecisionCommitFeeBps;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key)
+}
+
+/// TTL-aware reader for the hot commit path.
+pub fn _read_precision_commit_fee_bps(env: &Env) -> Option<u32> {
+    let key = DataKeyCore::PrecisionCommitFeeBps;
+    let v: Option<u32> = env.storage().persistent().get(&key);
+    if v.is_some() {
+        _extend_persistent_ttl(env, &key);
+    }
+    v
+}
+
+/// Computes the commit fee for a commitment of `amount`.
+///
+/// Returns `0` when the fee is disabled, which is the default and the
+/// pre-#534 behaviour. Integer flooring means tiny commitments can round down
+/// to a zero fee, which is safe: the fee is a deterrent, not a revenue line.
+pub fn _compute_commit_fee(env: &Env, amount: i128) -> Result<i128, ContractError> {
+    let bps = match _read_precision_commit_fee_bps(env) {
+        None => return Ok(0),
+        Some(bps) => bps,
+    };
+    if amount <= 0 {
+        return Ok(0);
+    }
+    // Payout arithmetic (Issue #405): fee derivation must surface as
+    // `PayoutOverflow`, not a generic `Overflow`.
+    amount
+        .checked_mul(bps as i128)
+        .ok_or(ContractError::PayoutOverflow)
+        .map(|scaled| scaled / BPS_DENOMINATOR)
+}
+
 // ─── Pending winnings expiry (Issue #269) ────────────────────────────────────
 
 /// Schedules a timelocked pending winnings expiry update.
@@ -1302,6 +1401,9 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
                 .persistent()
                 .get(&DataKeyCore::EarlyCashoutBps),
         ),
+        ConfigChangeKind::PrecisionCommitFeeBps => {
+            ConfigChangePayload::PrecisionCommitFeeBps(_read_precision_commit_fee_bps(env))
+        }
     }
 }
 
@@ -1561,6 +1663,23 @@ pub fn _apply_config_payload(
                 }
             }
             let key = DataKeyCore::EarlyCashoutBps;
+            if let Some(v) = bps {
+                env.storage().persistent().set(&key, v);
+                _extend_persistent_ttl(env, &key);
+            } else {
+                env.storage().persistent().remove(&key);
+            }
+        }
+        (
+            ConfigChangeKind::PrecisionCommitFeeBps,
+            ConfigChangePayload::PrecisionCommitFeeBps(bps),
+        ) => {
+            if let Some(v) = bps {
+                if *v == 0 || *v > MAX_COMMIT_FEE_BPS {
+                    return Err(ContractError::InvalidProtocolFeeBps);
+                }
+            }
+            let key = DataKeyCore::PrecisionCommitFeeBps;
             if let Some(v) = bps {
                 env.storage().persistent().set(&key, v);
                 _extend_persistent_ttl(env, &key);

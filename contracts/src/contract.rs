@@ -985,6 +985,30 @@ impl VirtualTokenContract {
         config::get_early_cashout_bps(env)
     }
 
+    /// Sets the optional Precision sealed-bid commit fee in basis points of
+    /// the committed amount (admin only, **not** timelocked).
+    ///
+    /// A commitment is cheap to place and its stake is forfeit to the pot if
+    /// it is never revealed, so a small per-commit charge makes bulk
+    /// commitment spam economically irrational. The fee is debited from the
+    /// committer's balance in addition to the stake, is **not** added to the
+    /// round pot, and is never refunded — including on the all-unrevealed
+    /// refund and round-cancellation paths. It is routed to the protocol fee
+    /// treasury like any other fee.
+    ///
+    /// `None` (the default) leaves commitments free, which is the pre-#534
+    /// behaviour. `Some(bps)` requires `1 <= bps <= 1000`; `Some(0)` is
+    /// rejected so "configured but zero" is never reachable — use `None`.
+    pub fn set_precision_commit_fee_bps(env: Env, bps: Option<u32>) -> Result<(), ContractError> {
+        config::set_precision_commit_fee_bps(env, bps)
+    }
+
+    /// Returns the configured sealed-bid commit fee in bps, or `None` when
+    /// commitments are free (the default).
+    pub fn get_precision_commit_fee_bps(env: Env) -> Option<u32> {
+        config::get_precision_commit_fee_bps(env)
+    }
+
     /// Creates a new prediction round (admin only)
     pub fn create_round(
         env: Env,

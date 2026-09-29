@@ -10,6 +10,7 @@ mod cancel_refund_matrix;
 mod cei_ordering;
 mod chaos_recovery;
 mod claim_many;
+mod commit_fee;
 mod commit_reveal_e2e;
 // mod commit_reveal_e2e; // upstream bug: all-unrevealed refunds test expects behavior contract doesn't implement
 mod config_helpers;
