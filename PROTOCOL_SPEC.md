@@ -209,6 +209,11 @@ identifiers are used in different places:
 - **Attestation signatures** cover `payload.round_id` — that is, `start_ledger` —
   so a signature does not disambiguate between rounds sharing a `start_ledger`.
 
+The multi-feed payload binds identically: `MultiFeedPayload.round_id` is
+matched against `Round.start_ledger` by `resolve_round_multi` and rejected
+with `InvalidOracleRound` on mismatch. Neither path ever accepts the monotonic
+`Round.round_id` as a payload binding value.
+
 #### I10-A. `start_ledger` uniquely identifies a round
 
 Because binding is by `start_ledger`, correctness requires that a ledger

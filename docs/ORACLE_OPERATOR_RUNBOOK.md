@@ -401,7 +401,7 @@ and requires a quorum of feeds to agree.
 |-----------------|---------------|----------|-------------|
 | `prices`        | `Vec<u128>`   | Yes      | N feed prices, 4 decimals, all non-zero. |
 | `sources`       | `Vec<u32>`    | Yes      | N feed identifiers, 0-based, must all be unique. |
-| `round_id`      | `u32`         | Yes      | Must match `ActiveRound.start_ledger`. |
+| `round_id`      | `u32`         | Yes      | Must match `ActiveRound.start_ledger`, not `Round.round_id` — same rule as the single-feed path; see [`round_id`](#field-requirements-in-detail). |
 | `nonce`         | `u64`         | Yes      | Per-round replay protection, unique per round. |
 | `network_id`    | `BytesN<32>`  | Yes      | SHA-256 of network passphrase. |
 | `contract_addr` | `Address`     | Yes      | Target contract address. |
