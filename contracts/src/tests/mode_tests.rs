@@ -487,8 +487,7 @@ fn test_predict_price_valid_scales() {
                 network_id: env.ledger().network_id(),
                 contract_addr: contract_id.clone(),
                 confidence: None,
-                attestation: None,
-            });
+                attestation: None,            });
         }
 
         // Create new Precision round for each test case
@@ -664,8 +663,7 @@ fn test_all_events_for_updown_round() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    });
+        attestation: None,    });
 
     let events = env.events().all();
     let resolved_event = events.iter().find(|e| {
@@ -787,8 +785,7 @@ fn test_all_events_for_precision_round() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
-    });
+        attestation: None,    });
 
     let events = env.events().all();
     let resolved_event = events.iter().find(|e| {
@@ -939,10 +936,9 @@ fn test_updown_bet_counts_precision_commitment_toward_exposure_cap() {
         revealed: false,
     };
     env.as_contract(&contract_id, || {
-        env.storage().persistent().set(
-            &DataKeyScoped::PrecisionCommitment(round.round_id, user.clone()),
-            &commitment,
-        );
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::PrecisionCommitment(round.round_id, user.clone()), &commitment);
     });
 
     let result = client.try_place_bet(&user, &30_0000000, &BetSide::Up);
@@ -972,10 +968,9 @@ fn test_precision_prediction_counts_updown_position_toward_exposure_cap() {
         side: BetSide::Up,
     };
     env.as_contract(&contract_id, || {
-        env.storage().persistent().set(
-            &DataKeyScoped::Position(round.round_id, user.clone()),
-            &position,
-        );
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Position(round.round_id, user.clone()), &position);
     });
 
     let result = client.try_place_precision_prediction(&user, &30_0000000, &2297u128);
@@ -983,7 +978,7 @@ fn test_precision_prediction_counts_updown_position_toward_exposure_cap() {
 }
 
 #[test]
-fn test_commit_prediction_counts_precision_prediction_toward_exposure_cap() {
+fn test_commit_prediction_counts_updown_position_toward_exposure_cap() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
@@ -1000,20 +995,24 @@ fn test_commit_prediction_counts_precision_prediction_toward_exposure_cap() {
     client.create_round(&1_0000000, &Some(1));
 
     let round = client.get_active_round().unwrap();
-    let prediction = PrecisionPrediction {
-        user: user.clone(),
-        predicted_price: 2297,
+    // Simulate an UpDown position from an earlier phase of the same round
+    // (mode alternation within one round id is only reachable this way in
+    // tests, but the cap must still account for both keys).
+    let position = UserPosition {
         amount: 75_0000000,
+        side: BetSide::Up,
     };
     env.as_contract(&contract_id, || {
-        env.storage().persistent().set(
-            &DataKeyScoped::PrecisionPosition(round.round_id, user.clone()),
-            &prediction,
-        );
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Position(round.round_id, user.clone()), &position);
     });
 
-    let result =
-        client.try_commit_prediction(&user, &BytesN::from_array(&env, &[11u8; 32]), &30_0000000);
+    let result = client.try_commit_prediction(
+        &user,
+        &BytesN::from_array(&env, &[11u8; 32]),
+        &30_0000000,
+    );
     assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
 }
 
@@ -1384,7 +1383,7 @@ fn test_precision_commit_rejects_zero_commitment_hash() {
 
     let zero = BytesN::from_array(&env, &[0u8; 32]);
     let result = client.try_commit_prediction(&user, &zero, &100_0000000);
-    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidCommitment)));
 }
 
 #[test]
@@ -1421,7 +1420,7 @@ fn test_precision_reveal_rejects_low_entropy_salt() {
     let zero_salt = BytesN::from_array(&env, &[0u8; 32]);
     assert_eq!(
         client.try_reveal_prediction(&user, &price, &zero_salt),
-        Err(Ok(ContractError::InvalidPrice))
+        Err(Ok(ContractError::InvalidSalt))
     );
 }
 
@@ -1755,15 +1754,12 @@ fn test_alternation_updown_after_precision_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2298,
         timestamp: env.ledger().timestamp(),
-        round_id: client
-            .get_active_round()
-            .map(|r| r.start_ledger)
-            .unwrap_or(0),
+        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
+    attestation: None,
     });
 
     // --- Step 2: Run an UpDown round (mode switch) ---
@@ -1776,15 +1772,12 @@ fn test_alternation_updown_after_precision_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
         timestamp: env.ledger().timestamp(),
-        round_id: client
-            .get_active_round()
-            .map(|r| r.start_ledger)
-            .unwrap_or(0),
+        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
         nonce: 2u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
+    attestation: None,
     });
 
     // --- Step 3: Verify no stale Precision data leaks into UpDown round ---
@@ -1819,19 +1812,10 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         );
 
         // Legacy keys should also be cleared
-        let has_legacy_updown = env
-            .storage()
-            .persistent()
-            .has(&DataKeyCore::UpDownPositions);
-        assert!(
-            !has_legacy_updown,
-            "Legacy UpDownPositions should be cleared"
-        );
+        let has_legacy_updown = env.storage().persistent().has(&DataKeyCore::UpDownPositions);
+        assert!(!has_legacy_updown, "Legacy UpDownPositions should be cleared");
 
-        let has_legacy_precision = env
-            .storage()
-            .persistent()
-            .has(&DataKeyCore::PrecisionPositions);
+        let has_legacy_precision = env.storage().persistent().has(&DataKeyCore::PrecisionPositions);
         assert!(
             !has_legacy_precision,
             "Legacy PrecisionPositions should be cleared"
@@ -1862,15 +1846,12 @@ fn test_alternation_precision_after_updown_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 1_5000000,
         timestamp: env.ledger().timestamp(),
-        round_id: client
-            .get_active_round()
-            .map(|r| r.start_ledger)
-            .unwrap_or(0),
+        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
+    attestation: None,
     });
 
     // --- Step 2: Run a Precision round (mode switch) ---
@@ -1882,15 +1863,12 @@ fn test_alternation_precision_after_updown_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2298,
         timestamp: env.ledger().timestamp(),
-        round_id: client
-            .get_active_round()
-            .map(|r| r.start_ledger)
-            .unwrap_or(0),
+        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
         nonce: 2u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
+    attestation: None,
     });
 
     // --- Step 3: Verify no stale UpDown data leaks into Precision round ---
@@ -1976,15 +1954,12 @@ fn test_alternation_three_round_cycle_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2100,
         timestamp: env.ledger().timestamp(),
-        round_id: client
-            .get_active_round()
-            .map(|r| r.start_ledger)
-            .unwrap_or(0),
+        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
+    attestation: None,
     });
 
     // Round 2: UpDown
@@ -1995,15 +1970,12 @@ fn test_alternation_three_round_cycle_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
         timestamp: env.ledger().timestamp(),
-        round_id: client
-            .get_active_round()
-            .map(|r| r.start_ledger)
-            .unwrap_or(0),
+        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
         nonce: 2u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
+    attestation: None,
     });
 
     // Round 3: Precision again
@@ -2014,15 +1986,12 @@ fn test_alternation_three_round_cycle_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 3000,
         timestamp: env.ledger().timestamp(),
-        round_id: client
-            .get_active_round()
-            .map(|r| r.start_ledger)
-            .unwrap_or(0),
+        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
         nonce: 3u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,
+    attestation: None,
     });
 
     // Verify NO stale data from any round

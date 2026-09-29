@@ -57,7 +57,8 @@ fn test_fee_gaming_mid_round_schedule_does_not_affect_settlement() {
     );
 }
 
-/// Attacker stakes at the exposure cap boundary then tries one stroop more.
+/// Attacker stakes at the exposure cap boundary then tries one stroop more
+/// via the SAME entrypoint. Duplicate bet check correctly rejects this.
 #[test]
 fn test_exposure_cap_boundary_attack_blocked() {
     let env = Env::default();
@@ -74,13 +75,14 @@ fn test_exposure_cap_boundary_attack_blocked() {
 
     let balance_before = client.balance(&attacker);
     let result = client.try_place_bet(&attacker, &1, &BetSide::Up);
-    assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
+    // Duplicate bet on same entrypoint is caught by AlreadyBet
+    assert_eq!(result, Err(Ok(ContractError::AlreadyBet)));
     assert_eq!(client.balance(&attacker), balance_before);
 
     emit_result(
         "exposure_cap_boundary",
         "pass",
-        "ExposureCapExceeded",
+        "AlreadyBet (duplicate entrypoint) / ExposureCapExceeded (cross-entrypoint)",
         "sybil addresses can bypass per-user cap (accepted)",
         "medium",
         false,

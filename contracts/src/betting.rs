@@ -4,7 +4,8 @@ use crate::admin::{_ensure_normal_mode, _ensure_not_paused, _require_supported_s
 use crate::common::{
     _accumulate_pending, _current_epoch_id, _emit_action_rejected, _enforce_min_bet,
     _extend_persistent_ttl, _set_balance, assert_no_active_round, balance, BPS_DENOMINATOR,
-    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_RUN_WINDOW_LEDGERS, MAX_START_PRICE, MIN_START_PRICE,
+    DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_RUN_WINDOW_LEDGERS, EPOCH_LEDGERS, MAX_START_PRICE,
+    MIN_START_PRICE,
 };
 use crate::config::{
     _collect_protocol_fee, _read_fee_model, get_early_cashout_bps, get_max_precision_participants,
@@ -17,6 +18,13 @@ use crate::types::{
 };
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{symbol_short, Address, Bytes, BytesN, Env, Symbol, Vec};
+
+/// TTL bounds for the faucet rate-limit counters in temporary storage
+/// (Issue #509). Temporary entries expire once their TTL elapses, so the
+/// per-ledger and per-epoch counters must be extended to outlive the window
+/// they bound — otherwise a quiet stretch silently resets the limit.
+const MINT_COUNTER_TTL_THRESHOLD: u32 = EPOCH_LEDGERS;
+const MINT_COUNTER_TTL_AMOUNT: u32 = EPOCH_LEDGERS.saturating_mul(2);
 
 /// Commitment preimage format (Precision commit-reveal):
 ///
@@ -327,8 +335,6 @@ pub fn place_bet(
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
-
     // Verify round is in Up/Down mode
     if round.mode != RoundMode::UpDown {
         return Err(ContractError::WrongModeForPrediction);
@@ -348,15 +354,17 @@ pub fn place_bet(
         return Err(ContractError::BettingClosed);
     }
 
-    let user_balance = balance(env.clone(), user.clone());
-    if user_balance < amount {
-        return Err(ContractError::InsufficientBalance);
-    }
-
-    // O(1) duplicate-bet check
+    // O(1) duplicate-bet check BEFORE exposure cap (consistent with precision entrypoints)
     let pos_key = DataKeyScoped::Position(round.round_id, user.clone());
     if env.storage().persistent().has(&pos_key) {
         return Err(ContractError::AlreadyBet);
+    }
+
+    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
+
+    let user_balance = balance(env.clone(), user.clone());
+    if user_balance < amount {
+        return Err(ContractError::InsufficientBalance);
     }
 
     // Deduct balance
@@ -454,8 +462,6 @@ pub fn place_precision_prediction(
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
-
     // Verify round is in Precision mode
     if round.mode != RoundMode::Precision {
         return Err(ContractError::WrongModeForPrediction);
@@ -475,11 +481,14 @@ pub fn place_precision_prediction(
         return Err(ContractError::BettingClosed);
     }
 
+    // Check duplicate bet or commitment BEFORE exposure cap (consistent with place_bet)
     let pred_key = DataKeyScoped::PrecisionPosition(round.round_id, user.clone());
     let commit_key = DataKeyScoped::PrecisionCommitment(round.round_id, user.clone());
     if env.storage().persistent().has(&pred_key) || env.storage().persistent().has(&commit_key) {
         return Err(ContractError::AlreadyBet);
     }
+
+    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
 
     let participants_key = DataKeyScoped::RoundParticipants(round.round_id);
     let mut participants: Vec<Address> = env
@@ -574,11 +583,21 @@ pub fn commit_prediction(
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
 
-    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
-
     // Verify round is in Precision mode
     if round.mode != RoundMode::Precision {
         return Err(ContractError::WrongModeForPrediction);
+    }
+
+    // Enforce max precision participants cap
+    let participants_key = DataKeyScoped::RoundParticipants(round.round_id);
+    let participants: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&participants_key)
+        .unwrap_or(Vec::new(&env));
+    let max_precision_participants = get_max_precision_participants(env.clone());
+    if participants.len() >= max_precision_participants {
+        return Err(ContractError::PrecisionCapExceeded);
     }
 
     let current_ledger = env.ledger().sequence();
@@ -595,16 +614,18 @@ pub fn commit_prediction(
         return Err(ContractError::BettingClosed);
     }
 
-    let user_balance = balance(env.clone(), user.clone());
-    if user_balance < amount {
-        return Err(ContractError::InsufficientBalance);
-    }
-
-    // Check duplicate bet or commitment
+    // Check duplicate bet or commitment BEFORE exposure cap (consistent with place_bet)
     let pred_key = DataKeyScoped::PrecisionPosition(round.round_id, user.clone());
     let commit_key = DataKeyScoped::PrecisionCommitment(round.round_id, user.clone());
     if env.storage().persistent().has(&pred_key) || env.storage().persistent().has(&commit_key) {
         return Err(ContractError::AlreadyBet);
+    }
+
+    _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
+
+    let user_balance = balance(env.clone(), user.clone());
+    if user_balance < amount {
+        return Err(ContractError::InsufficientBalance);
     }
 
     // Deduct balance
@@ -920,17 +941,29 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
     {
         if limit > 0 {
             let counter_key = DataKeyScoped::LedgerMintCounter(sequence);
-            let current_count = env
+            // Extend the counter's TTL to span the whole ledger window so a
+            // quiet stretch mid-ledger cannot expire the key and silently
+            // reset the per-ledger rate limit (Issue #509).
+            let counter: u32 = env
                 .storage()
                 .temporary()
                 .get::<_, u32>(&counter_key)
                 .unwrap_or(0);
-            if current_count >= limit {
+            if counter >= limit {
+                _emit_action_rejected(
+                    &env,
+                    &user,
+                    symbol_short!("mint"),
+                    ContractError::MintLimitExceeded,
+                );
                 soroban_sdk::panic_with_error!(&env, ContractError::MintLimitExceeded);
             }
             env.storage()
                 .temporary()
-                .set(&counter_key, &(current_count + 1));
+                .set(&counter_key, &(counter + 1));
+            env.storage()
+                .temporary()
+                .extend_ttl(&counter_key, MINT_COUNTER_TTL_THRESHOLD, MINT_COUNTER_TTL_AMOUNT);
         }
     }
 
@@ -956,8 +989,28 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
                 if stored_epoch != current_epoch {
                     env.storage().temporary().set(&EP_EPOCH_KEY, &current_epoch);
                 }
+                // Both counters must outlive the epoch they bound, or a quiet
+                // stretch would expire them mid-epoch and silently reset the
+                // budget cap (Issue #509). Extending both (regardless of which
+                // was just written) keeps the pair's lifetime in lockstep.
+                env.storage().temporary().extend_ttl(
+                    &EP_CONSUMED_KEY,
+                    MINT_COUNTER_TTL_THRESHOLD,
+                    MINT_COUNTER_TTL_AMOUNT,
+                );
+                env.storage().temporary().extend_ttl(
+                    &EP_EPOCH_KEY,
+                    MINT_COUNTER_TTL_THRESHOLD,
+                    MINT_COUNTER_TTL_AMOUNT,
+                );
             }
             _ => {
+                _emit_action_rejected(
+                    &env,
+                    &user,
+                    symbol_short!("mint"),
+                    ContractError::EpochBudgetExceeded,
+                );
                 soroban_sdk::panic_with_error!(&env, ContractError::EpochBudgetExceeded);
             }
         }
