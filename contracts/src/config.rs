@@ -897,10 +897,8 @@ pub fn set_early_cashout_bps(env: Env, bps: Option<u32>) -> Result<(), ContractE
     }
 
     #[allow(deprecated)]
-    env.events().publish(
-        (symbol_short!("config"), symbol_short!("ec_bps")),
-        (bps,),
-    );
+    env.events()
+        .publish((symbol_short!("config"), symbol_short!("ec_bps")), (bps,));
     _emit_config_updated(
         &env,
         ConfigChangeKind::EarlyCashoutBps,
@@ -945,7 +943,9 @@ pub fn get_pending_winnings_expiry(env: Env) -> u32 {
 // ─── Validation helpers ─────────────────────────────────────────────────────
 
 pub fn _validate_pending_winnings_expiry(ledgers: u32) -> Result<(), ContractError> {
-    if ledgers != 0 && (ledgers < MIN_PENDING_WINNINGS_EXPIRY || ledgers > MAX_PENDING_WINNINGS_EXPIRY) {
+    if ledgers != 0
+        && (ledgers < MIN_PENDING_WINNINGS_EXPIRY || ledgers > MAX_PENDING_WINNINGS_EXPIRY)
+    {
         return Err(ContractError::InvalidDuration);
     }
     Ok(())
@@ -1243,7 +1243,9 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
                 .get(&DataKeyCore::MaxUserRoundExposure),
         ),
         ConfigChangeKind::MaxPendingWinnings => ConfigChangePayload::MaxPendingWinnings(
-            env.storage().persistent().get(&DataKeyCore::MaxPendingWinnings),
+            env.storage()
+                .persistent()
+                .get(&DataKeyCore::MaxPendingWinnings),
         ),
         ConfigChangeKind::OracleStaleThreshold => ConfigChangePayload::OracleStaleThreshold(
             env.storage()
@@ -1260,7 +1262,9 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
             env.storage().persistent().get(&DataKeyCore::ProtocolFeeBps),
         ),
         ConfigChangeKind::MinParticipants => ConfigChangePayload::MinParticipants(
-            env.storage().persistent().get(&DataKeyCore::MinParticipants),
+            env.storage()
+                .persistent()
+                .get(&DataKeyCore::MinParticipants),
         ),
         ConfigChangeKind::MaxPrecisionParticipants => {
             ConfigChangePayload::MaxPrecisionParticipants(
@@ -1323,7 +1327,9 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
         ),
         ConfigChangeKind::FeeModel => ConfigChangePayload::FeeModel(_read_fee_model(env)),
         ConfigChangeKind::EarlyCashoutBps => ConfigChangePayload::EarlyCashoutBps(
-            env.storage().persistent().get(&DataKeyCore::EarlyCashoutBps),
+            env.storage()
+                .persistent()
+                .get(&DataKeyCore::EarlyCashoutBps),
         ),
     }
 }
@@ -1465,14 +1471,18 @@ pub fn _apply_config_payload(
             ConfigChangePayload::OracleTimestampSkew(seconds),
         ) => {
             _validate_oracle_timestamp_skew(*seconds)?;
-            env.storage().instance().set(&symbol_short!("otskew"), seconds);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("otskew"), seconds);
         }
         (
             ConfigChangeKind::PendingWinningsExpiry,
             ConfigChangePayload::PendingWinningsExpiry(ledgers),
         ) => {
             _validate_pending_winnings_expiry(*ledgers)?;
-            env.storage().persistent().set(&PENDING_WINNINGS_EXPIRY_KEY, ledgers);
+            env.storage()
+                .persistent()
+                .set(&PENDING_WINNINGS_EXPIRY_KEY, ledgers);
             _extend_persistent_ttl(env, &PENDING_WINNINGS_EXPIRY_KEY);
             #[allow(deprecated)]
             env.events().publish(
@@ -1533,9 +1543,7 @@ pub fn _apply_config_payload(
             if *budget < 0 {
                 return Err(ContractError::InvalidBetAmount);
             }
-            env.storage()
-                .instance()
-                .set(&EPOCH_MINT_BUDGET_KEY, budget);
+            env.storage().instance().set(&EPOCH_MINT_BUDGET_KEY, budget);
         }
         (ConfigChangeKind::MintLimit, ConfigChangePayload::MintLimit(limit)) => {
             env.storage()
@@ -1564,7 +1572,10 @@ pub fn _apply_config_payload(
                 env.storage().persistent().remove(&key);
             }
         }
-        (ConfigChangeKind::MaxPrecisionParticipants, ConfigChangePayload::MaxPrecisionParticipants(max)) => {
+        (
+            ConfigChangeKind::MaxPrecisionParticipants,
+            ConfigChangePayload::MaxPrecisionParticipants(max),
+        ) => {
             if *max == 0 || *max > MAX_PRECISION_PARTICIPANTS_LIMIT {
                 return Err(ContractError::InvalidPrecisionCap);
             }

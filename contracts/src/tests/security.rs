@@ -8,7 +8,7 @@ use crate::types::{DataKeyCore, DataKeyScoped, HbGateConfig, HbGateKey, OraclePa
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, BytesN, Env, IntoVal, TryIntoVal,
+    Address, BytesN, Env, IntoVal, Symbol, TryIntoVal,
 };
 
 #[test]
@@ -40,7 +40,8 @@ fn test_resolve_round_stale_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::StaleOracleData)));
@@ -73,7 +74,8 @@ fn test_resolve_round_invalid_round_id() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
@@ -107,7 +109,8 @@ fn test_resolve_round_valid_payload() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     client.resolve_round(&payload);
     assert_eq!(client.get_active_round(), None);
@@ -142,7 +145,8 @@ fn test_resolve_round_future_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::FutureOracleData)));
@@ -248,9 +252,10 @@ fn test_resolve_round_duplicate_nonce_rejected() {
 
     // Simulate a prior submission having consumed nonce 42 for this round.
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64),
+            &true,
+        );
     });
 
     let result = client.try_resolve_round(&OraclePayload {
@@ -959,7 +964,7 @@ fn test_heartbeat_override_emits_event() {
         let (_contract, topics, _data) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hoverride"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(Symbol::new(&env, "hb_override"))
     });
     assert!(
         hb_override_event.is_some(),
@@ -1009,10 +1014,9 @@ fn test_heartbeat_strict_mode_config() {
     assert!(!client.get_hb_strict_mode());
 }
 
-/// Arming the heartbeat override sets the one-shot flag. The contract does not
-/// emit a separate arm event; consumption emits `("oracle", "hoverride")`.
+/// Arming override emits hb_arm_ovr event.
 #[test]
-fn test_arm_heartbeat_override_sets_flag() {
+fn test_arm_heartbeat_override_emits_event() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let admin = Address::generate(&env);
@@ -1021,9 +1025,19 @@ fn test_arm_heartbeat_override_sets_flag() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
 
-    assert!(!client.get_hb_override_armed());
     client.arm_hb_override();
-    assert!(client.get_hb_override_armed());
+
+    let events = env.events().all();
+    let arm_event = events.iter().find(|e| {
+        let (_contract, topics, _data) = e;
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(Symbol::new(&env, "hb_arm_ovr"))
+    });
+    assert!(
+        arm_event.is_some(),
+        "hb_arm_ovr event must be emitted on arm"
+    );
 }
 
 // ─── Oracle deviation guardrails tests ───────────────────────────────────────
@@ -1248,9 +1262,10 @@ fn test_resolve_round_nonce_boundary_values() {
 
     // Pre-seed both boundary nonces as consumed for this round.
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64), &true);
+        env.storage().persistent().set(
+            &DataKeyScoped::ConsumedOracleNonce(round.round_id, 0u64),
+            &true,
+        );
         env.storage().persistent().set(
             &DataKeyScoped::ConsumedOracleNonce(round.round_id, u64::MAX),
             &true,
@@ -1998,13 +2013,16 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
         let config: HbGateConfig = env
             .storage()
             .persistent()
-            .get(&HbGateKey::HbGate)
+            .get(&HbGateKey::Config)
             .unwrap_or(HbGateConfig {
                 strict_mode: false,
                 override_armed: false,
                 grace_seconds: 0,
             });
-        assert!(!config.override_armed, "heartbeat override must be cleared after use");
+        assert!(
+            !config.override_armed,
+            "heartbeat override must be cleared after use"
+        );
     });
 }
 
@@ -2450,7 +2468,9 @@ fn test_resolve_round_timestamp_before_round_window() {
     // Default skew 300 -> window: [100-300, 160+300] = [0, 460] (lower saturates at 0)
     // Set a short skew of 30 via instance storage to make lower bound = 100-30 = 70
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("otskew"), &30u64);
     });
     // With skew=30: window = [70, 190]
     // Payload ts=10 is before the lower bound
@@ -2494,7 +2514,9 @@ fn test_resolve_round_timestamp_boundary_lower() {
 
     // Skew=30 -> window: [70, 190]
     env.as_contract(&contract_id, || {
-        env.storage().instance().set(&symbol_short!("otskew"), &30u64);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("otskew"), &30u64);
     });
 
     // Payload at exactly the lower bound (70) must be accepted

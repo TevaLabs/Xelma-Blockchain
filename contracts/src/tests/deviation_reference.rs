@@ -20,7 +20,11 @@ fn setup(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address, Addres
     (client, contract_id, admin, oracle)
 }
 
-fn schedule_and_apply_deviation_bps(env: &Env, client: &VirtualTokenContractClient, bps: Option<u32>) {
+fn schedule_and_apply_deviation_bps(
+    env: &Env,
+    client: &VirtualTokenContractClient,
+    bps: Option<u32>,
+) {
     client.set_oracle_max_deviation_bps(&bps);
     env.ledger().with_mut(|li| {
         li.sequence_number += crate::common::CONFIG_TIMELOCK_LEDGERS + 1;
