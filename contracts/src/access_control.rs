@@ -222,15 +222,21 @@ pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
     (enabled, get_access_state(env, user))
 }
 
-/// The single admission gate called by betting entrypoints (Issue #274).
+/// The single admission gate called by betting and participant mutator entrypoints
+/// (Issue #274).
 ///
-/// Rules (applied in this order):
+/// Ordering is intentionally strict to avoid ambiguous state:
 /// 1. A denylisted `user` is always rejected — this is an emergency block and
 ///    must win even on open deployments.
-/// 2. If allowlist mode is enabled, an `user` that is not allowlisted is rejected.
-/// 3. Otherwise, the call proceeds (default open).
+/// 2. If allowlist mode is enabled, a user that is not allowlisted is rejected.
+/// 3. Otherwise, the call proceeds in the default open state.
 ///
-/// Both rejection paths return the stable, dedicated
+/// The admin-only mutation helpers (`set_access_control_enabled`,
+/// `add_allowlisted`, `remove_allowlisted`, `add_denylisted`,
+/// `remove_denylisted`) require the configured admin key before they can change
+/// the policy. The mutator guard is intentionally placed before any staking or
+/// round-state mutation to prevent blocked addresses from reaching the core
+/// execution path. Both rejection paths return the stable, dedicated
 /// [`ContractError::AccessDenied`] error (code `79`).
 pub fn _enforce_access_control(env: &Env, user: &Address) -> Result<(), ContractError> {
     if env
