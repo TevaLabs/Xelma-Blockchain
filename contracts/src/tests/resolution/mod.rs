@@ -133,7 +133,7 @@ pub(super) fn collect_outcome_loss_events(
         .collect()
 }
 
-pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128, i128, u32)> {
+pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128, i128, u32, u32)> {
     env.events()
         .all()
         .iter()
@@ -145,8 +145,10 @@ pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128
             {
                 return None;
             }
-            let res: Result<(u64, i128, i128, u32), _> = data.try_into_val(env);
-            res.ok()
+            // Fee events are `(round_id, fee, treasury, bps, model)`.
+            // A length mismatch panics inside the SDK, so only decode the live shape.
+            let tuple: (u64, i128, i128, u32, u32) = data.try_into_val(env).ok()?;
+            Some(tuple)
         })
         .collect()
 }

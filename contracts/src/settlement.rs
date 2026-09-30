@@ -519,9 +519,13 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
 
     // Heartbeat health enforcement (Issue #264) — must come before any
     // state mutation (nonce consumption) so a stale oracle cannot race
-    // the admin override.
+    // the admin override. An armed one-shot override bypasses the block
+    // and is consumed here; the `hoverride` event is published once the
+    // round id is known.
     let hb_config = _load_hb_config(&env);
-    if _check_heartbeat_health_blocked(&env, &hb_config) {
+    let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
+    let consumed_hb_override = hb_blocked && hb_config.override_armed;
+    if hb_blocked && !hb_config.override_armed {
         _emit_action_rejected(
             &env,
             &oracle,
@@ -566,6 +570,15 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
             ContractError::OracleNetworkMismatch,
         );
         return Err(ContractError::OracleNetworkMismatch);
+    }
+
+    if consumed_hb_override {
+        crate::admin::_consume_hb_override(&env);
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("oracle"), symbol_short!("hoverride")),
+            (round.round_id,),
+        );
     }
 
     // Verify timestamp is inside the round-relative economic window.
@@ -778,7 +791,7 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
     // that the oracle heartbeat is live before allowing settlement.
     let hb_config = crate::admin::_load_hb_config(&env);
 
-    if hb_config.strict_mode {
+    if hb_config.strict_mode && !consumed_hb_override {
         let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
 
         if hb_blocked {
@@ -1550,7 +1563,7 @@ pub fn _apply_one_sided_policy(
             if !participants.is_empty() {
                 _record_refunds_indexed(env, round.round_id, 0, participants)?;
             } else if let Some(pos_map) = positions {
-                #[cfg(feature = "legacy-map-settlement")]
+                #[cfg(any(feature = "legacy-map-settlement", test))]
                 {
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
@@ -1561,7 +1574,7 @@ pub fn _apply_one_sided_policy(
             if !participants.is_empty() {
                 _record_refunds_indexed(env, round.round_id, 0, participants)?;
             } else if let Some(pos_map) = positions {
-                #[cfg(feature = "legacy-map-settlement")]
+                #[cfg(any(feature = "legacy-map-settlement", test))]
                 {
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
@@ -1660,7 +1673,7 @@ pub fn _resolve_updown_mode(
             )?;
         }
     } else {
-        #[cfg(feature = "legacy-map-settlement")]
+        #[cfg(any(feature = "legacy-map-settlement", test))]
         {
             let positions: Map<Address, UserPosition> = env
                 .storage()
@@ -1696,7 +1709,7 @@ pub fn _resolve_updown_mode(
     Ok((is_one_sided, fee_amount))
 }
 
-#[cfg(feature = "legacy-map-settlement")]
+#[cfg(any(feature = "legacy-map-settlement", test))]
 #[deprecated(
     note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
 )]
@@ -1731,7 +1744,7 @@ pub fn _record_refunds_legacy(
     Ok(())
 }
 
-#[cfg(feature = "legacy-map-settlement")]
+#[cfg(any(feature = "legacy-map-settlement", test))]
 #[deprecated(
     note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
 )]
@@ -1891,7 +1904,7 @@ pub fn _resolve_precision_mode(
         .unwrap_or(Vec::new(env));
     participants = sort_addresses(participants);
 
-    #[cfg(feature = "legacy-map-settlement")]
+    #[cfg(any(feature = "legacy-map-settlement", test))]
     if participants.is_empty() {
         let legacy: Map<Address, PrecisionPrediction> = env
             .storage()
@@ -1904,7 +1917,7 @@ pub fn _resolve_precision_mode(
         return _resolve_precision_legacy(env, round_id, &legacy, final_price);
     }
 
-    #[cfg(not(feature = "legacy-map-settlement"))]
+    #[cfg(not(any(feature = "legacy-map-settlement", test)))]
     if participants.is_empty() {
         return Ok((0, 0));
     }
@@ -2100,7 +2113,7 @@ pub fn _resolve_precision_mode(
     Ok((fee_amount, total_pot))
 }
 
-#[cfg(feature = "legacy-map-settlement")]
+#[cfg(any(feature = "legacy-map-settlement", test))]
 #[deprecated(
     note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
 )]
@@ -2399,7 +2412,7 @@ pub fn _archive_round(
                 .persistent()
                 .get(&DataKeyScoped::RoundParticipants(round.round_id))
                 .unwrap_or(Vec::new(env));
-            #[cfg(feature = "legacy-map-settlement")]
+            #[cfg(any(feature = "legacy-map-settlement", test))]
             if participants.is_empty() {
                 let legacy: Map<Address, PrecisionPrediction> = env
                     .storage()
@@ -2438,7 +2451,7 @@ pub fn _archive_round(
                     }
                 }
             }
-            #[cfg(not(feature = "legacy-map-settlement"))]
+            #[cfg(not(any(feature = "legacy-map-settlement", test)))]
             {
                 for i in 0..participants.len() {
                     if let Some(user) = participants.get(i) {
