@@ -54,6 +54,7 @@ declare -A STATUS_LABEL=(
   [4]="NO_ACTIVE_ROUND"
   [5]="MULTIPLE_ISSUES"
   [6]="CLAIMS_ONLY"
+  [7]="ACCESS_RESTRICTED"
 )
 
 declare -A STATUS_SEVERITY=(
@@ -64,6 +65,7 @@ declare -A STATUS_SEVERITY=(
   [4]="OK"
   [5]="CRIT"
   [6]="WARN"
+  [7]="OK"
 )
 
 declare -A ORACLE_STATUS_LABEL=(

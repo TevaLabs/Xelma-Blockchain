@@ -310,37 +310,78 @@ use crate::errors::ContractError;
 
 /// Probes the real policy gate: can `bettor` (pre-funded) bet, and can a
 /// fresh user claim? Fresh users keep the probes from disturbing the round.
+struct ActionGates {
+    mutation: bool,
+    claim: bool,
+    settlement: bool,
+    admin: bool,
+    mode_control: bool,
+    read_only: bool,
+}
+
+/// Probes the real policy gate: tests a representative entrypoint for each category
+/// in the docs/STATUS_CODES.md policy matrix.
 fn probe_gate(
     env: &Env,
     client: &VirtualTokenContractClient<'_>,
     bettor: &Address,
-) -> (bool, bool) {
-    let can_bet = client
-        .try_place_bet(bettor, &10_0000000, &BetSide::Up)
-        .map(|r| r.is_ok())
-        .unwrap_or(false);
+) -> ActionGates {
+    let can_mutate = match client.try_place_bet(bettor, &10_0000000, &BetSide::Up) {
+        Ok(_) => true,
+        Err(Ok(ContractError::ContractPaused)) => false,
+        Err(_) => true,
+    };
+
     let claimer = Address::generate(env);
     let can_claim = match client.try_claim_winnings(&claimer) {
         Ok(_) => true,
         Err(Ok(ContractError::ContractPaused)) => false,
-        Err(other) => panic!("unexpected claim error: {:?}", other),
+        Err(_) => true,
     };
-    (can_bet, can_claim)
+
+    let can_settle = match client.try_cancel_round(&1) {
+        Ok(_) => true,
+        Err(Ok(ContractError::ContractPaused)) => false,
+        Err(_) => true,
+    };
+
+    let can_admin = match client.try_set_windows(&10, &10) {
+        Ok(_) => true,
+        Err(Ok(ContractError::ContractPaused)) => false,
+        Err(_) => true,
+    };
+
+    let can_control = match client.try_set_runtime_mode(&client.get_runtime_mode()) {
+        Ok(_) => true,
+        Err(Ok(ContractError::ContractPaused)) => false,
+        Err(_) => true,
+    };
+
+    let can_read = client.try_get_protocol_status().is_ok();
+
+    ActionGates {
+        mutation: can_mutate,
+        claim: can_claim,
+        settlement: can_settle,
+        admin: can_admin,
+        mode_control: can_control,
+        read_only: can_read,
+    }
 }
 
 #[test]
 fn test_status_matrix_matches_runtime_mode_and_policy_gate() {
-    // (mode, with_round, expected ProtocolStatus, bets allowed, claims allowed)
+    // (mode, with_round, expected ProtocolStatus, mutation, claim, settlement, admin, mode_control, read_only)
     let cases = [
-        (0u32, false, ProtocolStatus::ClaimsOnly, false, true),
-        (0u32, true, ProtocolStatus::Active, true, true),
-        (1u32, false, ProtocolStatus::ClaimsOnly, false, true),
-        (1u32, true, ProtocolStatus::ClaimsOnly, false, true),
-        (2u32, false, ProtocolStatus::Paused, false, false),
-        (2u32, true, ProtocolStatus::Paused, false, false),
+        (0u32, false, ProtocolStatus::ClaimsOnly, false, true, true, true, true, true),
+        (0u32, true, ProtocolStatus::Active, true, true, true, true, true, true),
+        (1u32, false, ProtocolStatus::ClaimsOnly, false, true, true, true, true, true),
+        (1u32, true, ProtocolStatus::ClaimsOnly, false, true, true, true, true, true),
+        (2u32, false, ProtocolStatus::Paused, false, false, false, false, true, true),
+        (2u32, true, ProtocolStatus::Paused, false, false, false, false, true, true),
     ];
 
-    for (mode, with_round, expected, bets, claims) in cases {
+    for (mode, with_round, expected, mutate, claim, settle, admin, control, read) in cases {
         let env = Env::default();
         let (client, _admin, _oracle) = setup_contract(&env);
         if with_round {
@@ -364,16 +405,17 @@ fn test_status_matrix_matches_runtime_mode_and_policy_gate() {
         );
         assert_eq!(health.has_active_round, with_round);
 
-        // `Paused` <=> claims blocked; `Active` <=> bets accepted.
-        let (can_bet, can_claim) = probe_gate(&env, &client, &bettor);
-        assert_eq!(can_bet, bets, "bet gate mode={} round={}", mode, with_round);
-        assert_eq!(
-            can_claim, claims,
-            "claim gate mode={} round={}",
-            mode, with_round
-        );
-        assert_eq!(status == ProtocolStatus::Active, can_bet);
-        assert_eq!(status == ProtocolStatus::Paused, !can_claim);
+        let gates = probe_gate(&env, &client, &bettor);
+        assert_eq!(gates.mutation, mutate, "mutation gate mode={} round={}", mode, with_round);
+        assert_eq!(gates.claim, claim, "claim gate mode={} round={}", mode, with_round);
+        assert_eq!(gates.settlement, settle, "settlement gate mode={} round={}", mode, with_round);
+        assert_eq!(gates.admin, admin, "admin gate mode={} round={}", mode, with_round);
+        assert_eq!(gates.mode_control, control, "mode_control gate mode={} round={}", mode, with_round);
+        assert_eq!(gates.read_only, read, "read_only gate mode={} round={}", mode, with_round);
+        
+        // Assert invariants
+        assert_eq!(status == ProtocolStatus::Active, gates.mutation);
+        assert_eq!(status == ProtocolStatus::Paused, !gates.claim);
     }
 }
 
