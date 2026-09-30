@@ -896,6 +896,13 @@ pub(crate) fn _current_mode(env: &Env) -> RuntimeMode {
 /// [`PolicyAction`] variant rather than re-deriving the mode rules, so the
 /// gate cannot drift out of sync with individual call sites.
 ///
+/// The canonical, always-current form of this matrix — including the full
+/// per-class entrypoint inventory, the deliberate exemptions, and the known
+/// places where this doc comment and the implementation disagree — is
+/// `docs/PAUSE_POLICY.md`, and every cell in it is enforced by
+/// `tests/pause_policy_matrix.rs`. Prefer the doc over the comment below
+/// when they differ, and update both together when adding an entrypoint.
+///
 /// ## Mode × action matrix
 ///
 /// | action          | `Normal` | `ClaimsOnly` | `FullyPaused` |
@@ -952,6 +959,17 @@ pub(crate) fn _current_mode(env: &Env) -> RuntimeMode {
 /// intentionally not gated: heartbeat recording must keep flowing even while
 /// paused so `get_protocol_health` reflects live oracle status during an
 /// incident, and reads never mutate state.
+///
+/// ## Known divergences (Issue #551)
+///
+/// This comment describes the intended policy. Three surfaces do not currently
+/// match it. They are documented and pinned by tests rather than changed,
+/// because altering what an emergency stop blocks needs core-maintainer
+/// sign-off — see `docs/PAUSE_POLICY.md` §5 for the full write-up:
+/// - `cancel_round` is listed under `Settlement` above but has no gate call,
+///   so `FullyPaused` does not stop a cancellation.
+/// - `announce_next_schema` / `clear_next_schema` are ungated admin writes.
+/// - Nothing in `governance.rs` calls the policy gate.
 pub fn _policy_gate(env: &Env, action: PolicyAction) -> Result<(), ContractError> {
     let mode = _current_mode(env);
     let blocked = match action {

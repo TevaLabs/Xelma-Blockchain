@@ -2,6 +2,13 @@
 
 This runbook documents the Xelma protocol's incident-mode protections, operational matrix across runtime states, automated emergency drill procedures, and the operator checklist for managing emergency mode transitions and protocol recovery.
 
+> **The table in §1 below is an operator summary, not the canonical reference.**
+> For the complete mode × action matrix, the full entrypoint inventory, the
+> deliberate exemptions, and the known places where the implementation
+> diverges from policy, see
+> **[PAUSE_POLICY.md](./PAUSE_POLICY.md)**. Where the two disagree,
+> `PAUSE_POLICY.md` is authoritative.
+
 ---
 
 ## 1. Protocol Operational Matrix
