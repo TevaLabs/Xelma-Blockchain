@@ -14,7 +14,7 @@
 #   0  OK     — HEALTHY (0) or NO_ACTIVE_ROUND (4)
 #   1  WARN   — ORACLE_STALE (2), ROUND_STALE (3), or CLAIMS_ONLY (6)
 #   2  CRIT   — PAUSED (1) or MULTIPLE_ISSUES (5)
-#   3  UNKNOWN — CLI not found / contract unreachable / parse failure
+#   3  UNKNOWN — CLI not found / contract unreachable / parse failure / unrecognized status code
 #
 # No-round policy:
 #   `status_code = 4` (NO_ACTIVE_ROUND) is treated as OK (exit 0) because
@@ -24,7 +24,7 @@
 #
 # Prerequisites: stellar CLI (>=22), jq.
 #
-# Issue: #303
+# Issue: #303, #569
 #
 set -euo pipefail
 
@@ -103,9 +103,9 @@ Environment:
 
 Exit codes:
   0  OK     — HEALTHY or NO_ACTIVE_ROUND (protocol nominal / idle)
-  1  WARN   — ORACLE_STALE or ROUND_STALE (attention needed soon)
+  1  WARN   — ORACLE_STALE, ROUND_STALE, or CLAIMS_ONLY (attention needed soon)
   2  CRIT   — PAUSED or MULTIPLE_ISSUES (immediate operator action required)
-  3  UNKNOWN — Prerequisite missing or contract unreachable
+  3  UNKNOWN — Prerequisite missing, contract unreachable, or unrecognized status code
 
 Sample alerts (Prometheus-style):
   # Critical: contract is paused
@@ -318,8 +318,27 @@ LEDGER_SEQUENCE=$(echo "$HEALTH_JSON" | jq -r '.ledger_sequence')
 LEDGER_TIMESTAMP=$(echo "$HEALTH_JSON" | jq -r '.ledger_timestamp')
 STATUS_CODE=$(echo "$HEALTH_JSON" | jq -r '.status_code')
 
-# ── Severity mapping ──────────────────────────────────────────────────────────
-SEVERITY="${STATUS_SEVERITY[$STATUS_CODE]:-UNKNOWN}"
+# ── Severity mapping & validation ─────────────────────────────────────────────
+if [[ -z "${STATUS_LABEL[$STATUS_CODE]+_}" ]]; then
+  echo "UNKNOWN: unrecognized protocol health status_code '$STATUS_CODE' from contract (expected 0..6)" >&2
+  SEVERITY="UNKNOWN"
+  if [[ "$JSON_OUT" -eq 1 ]]; then
+    emit_json \
+      "$PAUSED" "$ORACLE_LIVE" "$ORACLE_STATUS" \
+      "$HAS_ACTIVE_ROUND" "$ACTIVE_ROUND_PHASE" \
+      "$SCHEMA_VERSION" "$LEDGER_SEQUENCE" "$LEDGER_TIMESTAMP" \
+      "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID" "$SOURCE_ID"
+  else
+    emit_text \
+      "$PAUSED" "$ORACLE_LIVE" "$ORACLE_STATUS" \
+      "$HAS_ACTIVE_ROUND" "$ACTIVE_ROUND_PHASE" \
+      "$SCHEMA_VERSION" "$LEDGER_SEQUENCE" "$LEDGER_TIMESTAMP" \
+      "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID"
+  fi
+  exit 3
+fi
+
+SEVERITY="${STATUS_SEVERITY[$STATUS_CODE]}"
 
 # ── Output ────────────────────────────────────────────────────────────────────
 if [[ "$JSON_OUT" -eq 1 ]]; then
