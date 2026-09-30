@@ -27,8 +27,8 @@ if (contractSegments.length > 1) {
     const implBlock = contractSegments[1];
     const lines = implBlock.split('\n');
     for (const line of lines) {
-        const match = line.match(/^\s*pubs\+fn\s+([a-zA-Z0-9_]+)\s*\(/);
-        const isPubCrate = line.match(/^\s*pub\(crate\)\s+pubs\+fn/);
+        const match = line.match(/^\s*pub\s+fn\s+([a-zA-Z0-9_]+)\s*\(/);
+        const isPubCrate = line.match(/^\s*pub\(crate\)\s+fn/);
         if (match && !isPubCrate) {
             contractFns.push(match[1]);
         }
@@ -116,7 +116,7 @@ for (const [name, val] of Object.entries(errorVariants)) {
     }
 }
 
-// Parse the canonical documentation table: `| 94 | PageSizeExceeded |.
+// Parse the canonical documentation table: `| 94 | PageSizeExceeded |`.
 const documentedErrors = {};
 for (const line of errorDocsCode.split('\n')) {
     const match = line.match(/^\|\s*([0-9]+)\s*\|\s*`?([a-zA-Z0-9_]+)`?\s*\|/);

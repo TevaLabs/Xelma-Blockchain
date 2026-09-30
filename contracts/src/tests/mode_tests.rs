@@ -1384,7 +1384,7 @@ fn test_precision_commit_rejects_zero_commitment_hash() {
 
     let zero = BytesN::from_array(&env, &[0u8; 32]);
     let result = client.try_commit_prediction(&user, &zero, &100_0000000);
-    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
+    assert_eq!(result, Err(Ok(ContractError::InvalidCommitment)));
 }
 
 #[test]
@@ -1421,7 +1421,7 @@ fn test_precision_reveal_rejects_low_entropy_salt() {
     let zero_salt = BytesN::from_array(&env, &[0u8; 32]);
     assert_eq!(
         client.try_reveal_prediction(&user, &price, &zero_salt),
-        Err(Ok(ContractError::InvalidPrice))
+        Err(Ok(ContractError::InvalidSalt))
     );
 }
 
@@ -1742,6 +1742,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
     client.mint_initial(&bob);
 
@@ -1851,6 +1852,7 @@ fn test_alternation_precision_after_updown_no_stale_data() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
 
     // --- Step 1: Run an UpDown round ---
@@ -1925,6 +1927,7 @@ fn test_alternation_cancel_clears_both_modes() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
 
     // Run a Precision round then cancel it
@@ -1964,6 +1967,7 @@ fn test_alternation_three_round_cycle_no_stale_data() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
 
     let mut round_ids: Vec<u64> = Vec::new(&env);

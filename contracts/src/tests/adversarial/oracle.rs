@@ -11,7 +11,8 @@ use soroban_sdk::{
 };
 
 /// Attacker (or compromised oracle service) marks heartbeat offline to block settlement.
-/// Defense: `OracleNotLive` — admin may arm override as recovery path.
+/// Defense: the unconditional heartbeat-health gate rejects the resolve with
+/// `OracleHeartbeatUnhealthy`; an admin may arm an override as recovery path.
 #[test]
 fn test_oracle_heartbeat_griefing_blocks_settlement() {
     let env = Env::default();
@@ -30,13 +31,13 @@ fn test_oracle_heartbeat_griefing_blocks_settlement() {
     });
 
     let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 0, 1));
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
     assert!(client.get_active_round().is_some());
 
     emit_result(
         "oracle_heartbeat_griefing",
         "pass",
-        "OracleNotLive",
+        "OracleHeartbeatUnhealthy",
         "admin heartbeat override available",
         "high",
         false,
@@ -70,8 +71,8 @@ fn test_oracle_nonce_replay_blocked() {
         li.timestamp = 200;
     });
 
-    let replay = client.try_resolve_round(&payload);
-    assert_eq!(replay, Err(Ok(ContractError::OracleNonceReused)));
+    let cross_round = client.try_resolve_round(&payload);
+    assert_eq!(cross_round, Err(Ok(ContractError::InvalidOracleRound)));
 
     emit_result(
         "oracle_nonce_replay",
@@ -141,12 +142,16 @@ fn test_stale_oracle_timestamp_griefing_blocked() {
         li.sequence_number = 12;
         li.timestamp = 1000;
     });
+    // Keep the oracle live so the timestamp window check is what rejects this.
+    client.update_oracle_heartbeat(&0u32);
 
     let mut payload = oracle_payload(&env, &contract_id, 1_5000000, 0, 1);
     payload.timestamp = 600;
 
     let result = client.try_resolve_round(&payload);
-    assert_eq!(result, Err(Ok(ContractError::StaleOracleData)));
+    // A timestamp outside the round-relative window is rejected before any
+    // settlement work happens.
+    assert_eq!(result, Err(Ok(ContractError::OracleTimestampOutsideWindow)));
     assert!(client.get_active_round().is_some());
 
     emit_result(

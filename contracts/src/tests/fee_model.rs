@@ -26,6 +26,7 @@ fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Addres
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     (client, contract_id, admin, oracle)
 }
@@ -55,6 +56,11 @@ fn resolve_at(
     let round = client
         .get_active_round()
         .expect("active round required to resolve");
+    // Advance to the round's end so it is resolvable (the contract rejects
+    // resolution before end_ledger with RoundNotEnded).
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+    });
     client.resolve_round(&OraclePayload {
         price: final_price,
         timestamp: env.ledger().timestamp(),
@@ -556,6 +562,7 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &None);
 
         let alice = Address::generate(&env);
@@ -634,6 +641,7 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &Some(1));
 
         let alice = Address::generate(&env);

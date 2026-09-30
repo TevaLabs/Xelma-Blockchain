@@ -3,6 +3,9 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
+/// Mirrors the contract's private `MIN_ROTATION_DELAY_SECONDS` (1 hour).
+const MIN_ROTATION_DELAY_SECONDS: u64 = 3_600;
+
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger},
@@ -16,6 +19,7 @@ fn init(env: &Env, client: &VirtualTokenContractClient) -> (Address, Address, Ad
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     (admin, oracle, new_oracle)
 }
@@ -59,8 +63,10 @@ fn test_propose_and_accept_before_expiry_succeeds() {
     assert_eq!(proposal.proposed_at, 1000);
     assert_eq!(proposal.expires_at, 4600);
 
+    // The contract enforces a mandatory one-hour delay between proposal and
+    // acceptance (MIN_ROTATION_DELAY_SECONDS), so advance past it.
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        li.timestamp = 1000 + MIN_ROTATION_DELAY_SECONDS;
     });
 
     client.accept_oracle_rotation();
@@ -86,10 +92,11 @@ fn test_accept_after_expiry_fails() {
         li.timestamp = 500;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    client.propose_oracle_rotation(&new_oracle, &3_600);
 
+    // Past the proposal's expiry window (and past the mandatory delay).
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 5_000;
     });
 
     let result = client.try_accept_oracle_rotation();
@@ -214,8 +221,10 @@ fn test_propose_and_accept_emits_events() {
         "propose event should be emitted"
     );
 
+    // The contract enforces a mandatory one-hour delay between proposal and
+    // acceptance (MIN_ROTATION_DELAY_SECONDS), so advance past it.
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        li.timestamp = 1000 + MIN_ROTATION_DELAY_SECONDS;
     });
 
     client.accept_oracle_rotation();
@@ -239,10 +248,12 @@ fn test_accept_after_expiry_emits_expired_event() {
         li.timestamp = 500;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    client.propose_oracle_rotation(&new_oracle, &3_600);
 
+    // Past the mandatory delay *and* past the proposal's expiry, so the
+    // contract takes the expiry branch (it checks the delay first).
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 5_000;
     });
 
     let _ = client.try_accept_oracle_rotation();

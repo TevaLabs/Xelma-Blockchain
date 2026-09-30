@@ -110,32 +110,23 @@ cd Xelma-Blockchain
 pip install pre-commit
 pre-commit install
 ```
-## Snapshot Tests
 
-The project uses storage-snapshot golden files (`contracts/test_snapshots/`) to detect
-unintentional changes to contract state, event emissions, and error behavior.
+## Test Snapshots (informational)
 
-### When snapshots should change
+The Soroban SDK automatically writes `contracts/test_snapshots/*.json` files whenever
+tests run (one per `Env`). These files are **debug artifacts, not golden files**: the
+SDK never compares them against anything, they are gitignored, and no CI step checks
+them. Do not commit them.
 
-- You modified contract logic, storage keys, event payloads, or error variants.
-- You made non-semantic refactors that still cause snapshot output to differ (rare).
+There is currently **no snapshot-drift CI gate**. Golden-value regression protection
+is provided instead by checked-in expected-value tests:
 
-### When snapshots should NOT change
+- `contracts/src/tests/reference_model.rs` — production settlement reference model
+- `contracts/src/tests/settlement_math_vectors.rs` — fixed payout/deviation vectors
+- `contracts/src/tests/event_order_golden.rs` — canonical event ordering
 
-- Your change is in an unrelated module, test infrastructure, or documentation.
-- CI reports snapshot drift that you did not intend — investigate before regenerating.
-
-### Updating snapshots
-
-After an intentional behavior change, regenerate golden files from the repo root:
-
-```bash
-./scripts/update_snapshots.sh
-```
-
-Then review the diff, run the full suite, and commit the updated snapshots alongside
-your logic change. See [`contracts/test_snapshots/README.md`](./contracts/test_snapshots/README.md)
-for a step-by-step guide.
+If a change intentionally alters settlement, storage, or event behavior, update the
+expected values in those tests in the same PR and explain why in the PR description.
 
 ## Security Checks (local)
 

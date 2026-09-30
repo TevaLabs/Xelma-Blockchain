@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // ============================================================================
 // These tests exercise the optional protocol fee: default (ProtocolFeeBps
 // storage key absent) is byte-for-byte the pre-#162 behaviour; activating

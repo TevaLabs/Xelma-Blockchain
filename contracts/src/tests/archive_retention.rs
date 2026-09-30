@@ -34,13 +34,16 @@ fn create_and_resolve_round(
     });
     client.create_round(&1_0000000, &None);
 
+    // Resolve at the round's end ledger with a timestamp consistent with the
+    // contract's 5s-per-ledger model (12-ledger run window => +60s), which
+    // keeps the payload inside the round-relative timestamp window.
     env.ledger().with_mut(|li| {
-        li.sequence_number = start_ledger + 100;
-        li.timestamp = 2000;
+        li.sequence_number = start_ledger + 12;
+        li.timestamp = 1060;
     });
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
-        timestamp: 1800,
+        timestamp: 1060,
         round_id: start_ledger,
         nonce,
         network_id: env.ledger().network_id(),
@@ -109,6 +112,7 @@ fn test_fifo_pruning_with_small_limit() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     // Set retention to 2
     client.set_archive_retention(&2);
@@ -288,6 +292,7 @@ fn test_user_archived_participation_returns_none_after_prune() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     let user = Address::generate(&env);
 
     client.mint_initial(&user);
@@ -302,12 +307,12 @@ fn test_user_archived_participation_returns_none_after_prune() {
     client.place_bet(&user, &100_0000000, &crate::types::BetSide::Up);
 
     env.ledger().with_mut(|li| {
-        li.sequence_number = 100;
-        li.timestamp = 2000;
+        li.sequence_number = 12;
+        li.timestamp = 1060;
     });
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
-        timestamp: 1800,
+        timestamp: 1060,
         round_id: 0,
         nonce: 0,
         network_id: env.ledger().network_id(),
@@ -317,24 +322,24 @@ fn test_user_archived_participation_returns_none_after_prune() {
     });
 
     // User participation is available before prune
-    let outcome = client.get_user_archived_participation(&user, &0);
+    let outcome = client.get_user_archived_participation(&user, &1);
     assert!(outcome.is_some(), "outcome should exist before prune");
 
     // Create and resolve round 2 — this should prune round 1
     create_and_resolve_round(&env, &client, &contract_id_obj, 200, 1);
 
     // After prune, get_user_archived_participation should return None
-    let outcome = client.get_user_archived_participation(&user, &0);
+    let outcome = client.get_user_archived_participation(&user, &1);
     assert!(
         outcome.is_none(),
         "get_user_archived_participation should return None for pruned round"
     );
 
-    // Round 2 still has its outcome
-    let outcome2 = client.get_user_archived_participation(&user, &1);
+    // Round 2 is retained (the user never bet in it, so there is no per-user
+    // outcome to read, but the round archive itself must survive the prune).
     assert!(
-        outcome2.is_some(),
-        "outcome should exist for retained round"
+        client.get_archived_round(&2).is_some(),
+        "retained round archive should still exist"
     );
 }
 
@@ -350,6 +355,7 @@ fn test_prune_cleans_cancelled_round_marker() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     client.set_archive_retention(&1);
 
@@ -359,6 +365,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         li.timestamp = 1000;
     });
     client.create_round(&1_0000000, &None);
+    let cancelled_round_id = client.get_active_round().unwrap().round_id;
     client.cancel_round(&0);
 
     // CancelledRound marker exists before prune
@@ -366,7 +373,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         assert!(env
             .storage()
             .persistent()
-            .has(&DataKeyScoped::CancelledRound(0u64)));
+            .has(&DataKeyScoped::CancelledRound(cancelled_round_id)));
     });
 
     // Create and cancel round 2 — this should prune round 1
@@ -382,7 +389,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         assert!(
             !env.storage()
                 .persistent()
-                .has(&DataKeyScoped::CancelledRound(0u64)),
+                .has(&DataKeyScoped::CancelledRound(cancelled_round_id)),
             "CancelledRound marker should be cleaned up during prune"
         );
     });
@@ -400,6 +407,7 @@ fn test_prune_multiple_rounds_cleans_associated_data() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     // Create 3 rounds with retention 1 — each new round prunes the previous
     client.set_archive_retention(&1);

@@ -4,7 +4,7 @@
 use super::config_helpers::apply_windows;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, ConfigChangeKind, ConfigChangePayload, OraclePayload};
+use crate::types::{BetSide, ConfigChangeKind, ConfigChangePayload, OraclePayload, RoundMode};
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     symbol_short,
@@ -388,18 +388,18 @@ fn test_event_coverage_resolve_round() {
     });
 
     let events = env.events().all();
-    let last_event = events.last().unwrap();
-    let (_contract, topics, data) = last_event;
-
-    assert_eq!(topics.len(), 2);
-    assert_eq!(
-        topics.get(0).unwrap().try_into_val(&env),
-        Ok(symbol_short!("round"))
-    );
-    assert_eq!(
-        topics.get(1).unwrap().try_into_val(&env),
-        Ok(symbol_short!("summary"))
-    );
+    let summary_event = events
+        .iter()
+        .rev()
+        .find(|(_contract, topics, _data)| {
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("summary"))
+        })
+        .expect("summary event should exist");
+    let (_contract, _topics, data) = summary_event;
+    // Payload: (round_id, status, mode, final_price, participant_count,
+    //            total_pot, fee_amount, settled_at_ledger, confidence, fee_model)
     let canon: (u64, u32, u32, u128, u32, i128, i128, u32, u32, u32) =
         data.try_into_val(&env).unwrap();
     assert_eq!(canon.0, 1u64);
@@ -412,6 +412,26 @@ fn test_event_coverage_resolve_round() {
     assert_eq!(canon.7, 12u32);
     assert_eq!(canon.8, 0u32);
     assert_eq!(canon.9, 0u32);
+
+    // Resolution is announced last, after the summary.
+    let last_event = events.last().unwrap();
+    let (_contract, topics, data) = last_event;
+    assert_eq!(topics.len(), 2);
+    assert_eq!(
+        topics.get(0).unwrap().try_into_val(&env),
+        Ok(symbol_short!("round"))
+    );
+    assert_eq!(
+        topics.get(1).unwrap().try_into_val(&env),
+        Ok(symbol_short!("resolved"))
+    );
+    // Payload: (round_id, final_price, mode, confidence, payout_policy)
+    let resolved: (u64, u128, u32, Option<u32>, u32) = data.try_into_val(&env).unwrap();
+    assert_eq!(resolved.0, 1u64);
+    assert_eq!(resolved.1, 1_2000000u128);
+    assert_eq!(resolved.2, 0u32);
+    assert_eq!(resolved.3, None);
+    assert_eq!(resolved.4, 0u32);
 }
 
 #[test]
@@ -434,33 +454,18 @@ fn test_event_coverage_cancel_round() {
         topics.get(1).unwrap().try_into_val(&env),
         Ok(symbol_short!("summary"))
     );
-    let canon: (
-        u32,
-        u64,
-        u32,
-        u32,
-        u128,
-        u128,
-        i128,
-        i128,
-        u32,
-        i128,
-        i128,
-        u32,
-        Option<u32>,
-    ) = data.try_into_val(&env).unwrap();
-    assert_eq!(canon.0, 0u32); // version
-    assert_eq!(canon.1, 1u64); // round_id
-    assert_eq!(canon.2, 1u32); // status (Cancelled)
-    assert_eq!(canon.3, 0u32); // mode (UpDown)
-    assert_eq!(canon.4, 1_0000000u128); // price_start
-    assert_eq!(canon.5, 0u128); // price_final (0 for cancelled)
-    assert_eq!(canon.6, 0i128); // pool_up
-    assert_eq!(canon.7, 0i128); // pool_down
-    assert_eq!(canon.8, 0u32); // participant_count
-    assert_eq!(canon.9, 0i128); // total_pot
-    assert_eq!(canon.10, 0i128); // fee_amount
-    assert_eq!(canon.12, None); // confidence
+    let canon: (u64, u32, u32, u128, u32, i128, i128, u32, u32, u32) =
+        data.try_into_val(&env).unwrap();
+    assert_eq!(canon.0, 1u64); // round_id
+    assert_eq!(canon.1, 1u32); // status (Cancelled)
+    assert_eq!(canon.2, 0u32); // mode (UpDown)
+    assert_eq!(canon.3, 0u128); // final_price (0 for cancelled)
+    assert_eq!(canon.4, 0u32); // participant_count
+    assert_eq!(canon.5, 0i128); // total_pot
+    assert_eq!(canon.6, 0i128); // fee_amount
+    assert_eq!(canon.7, 0u32); // settled_at_ledger
+    assert_eq!(canon.8, 0u32); // confidence
+    assert_eq!(canon.9, 0u32); // fee_model
 }
 
 #[test]
@@ -813,6 +818,9 @@ fn test_action_rejected_resolve_round_timestamp_outside_window() {
         li.sequence_number = 12;
         li.timestamp = 1_700_000_000;
     });
+    // Re-record the heartbeat at the advanced timestamp so the oracle is live:
+    // the heartbeat gate is evaluated before the timestamp-window check.
+    client.update_oracle_heartbeat(&0u32);
 
     // Round started at ts=0, end_ledger=12 -> end_estimate = 60
     // Default skew 300 -> window: [0, 360]
@@ -935,35 +943,20 @@ fn test_event_coverage_round_summary() {
         .expect("Up/Down summary event should exist");
 
     let (_contract, _topics, data) = summary_event;
-    // Payload: (version: u32, round_id: u64, status: u32, mode: u32, price_start: u128, price_final: u128, pool_up: i128, pool_down: i128, participant_count: u32, total_pot: i128, fee_amount: i128, settled_at_ledger: u32, confidence: Option<u32>)
-    let canon: (
-        u32,
-        u64,
-        u32,
-        u32,
-        u128,
-        u128,
-        i128,
-        i128,
-        u32,
-        i128,
-        i128,
-        u32,
-        Option<u32>,
-    ) = data.try_into_val(&env).unwrap();
-    assert_eq!(canon.0, 0u32); // version
-    assert_eq!(canon.1, 1u64); // round_id
-    assert_eq!(canon.2, 0u32); // status (Resolved)
-    assert_eq!(canon.3, 0u32); // mode (UpDown)
-    assert_eq!(canon.4, 1_0000000u128); // price_start
-    assert_eq!(canon.5, 1_2000000u128); // price_final
-    assert_eq!(canon.6, 100_0000000i128); // pool_up
-    assert_eq!(canon.7, 200_0000000i128); // pool_down
-    assert_eq!(canon.8, 2u32); // participant_count
-    assert_eq!(canon.9, 300_0000000i128); // total_pot
-    assert_eq!(canon.10, 0i128); // fee_amount
-    assert_eq!(canon.11, 12u32); // settled_at_ledger
-    assert_eq!(canon.12, None); // confidence
+    // Payload: (round_id, status, mode, final_price, participant_count,
+    //            total_pot, fee_amount, settled_at_ledger, confidence, fee_model)
+    let canon: (u64, u32, u32, u128, u32, i128, i128, u32, u32, u32) =
+        data.try_into_val(&env).unwrap();
+    assert_eq!(canon.0, 1u64); // round_id
+    assert_eq!(canon.1, 0u32); // status (Resolved)
+    assert_eq!(canon.2, 0u32); // mode (UpDown)
+    assert_eq!(canon.3, 1_2000000u128); // final_price
+    assert_eq!(canon.4, 2u32); // participant_count
+    assert_eq!(canon.5, 300_0000000i128); // total_pot
+    assert_eq!(canon.6, 0i128); // fee_amount
+    assert_eq!(canon.7, 12u32); // settled_at_ledger
+    assert_eq!(canon.8, 0u32); // confidence
+    assert_eq!(canon.9, 0u32); // fee_model
 
     // 2. Precision Mode Resolution Summary Event
     let start_price: u128 = 2000;
@@ -973,6 +966,7 @@ fn test_event_coverage_round_summary() {
 
     // Get info of the active round
     let round = client.get_active_round().unwrap();
+    assert_eq!(round.mode, RoundMode::Precision);
     let round_id = round.round_id;
     let start_ledger = round.start_ledger;
 
@@ -995,68 +989,33 @@ fn test_event_coverage_round_summary() {
     let summary_event = events
         .iter()
         .rev()
-        .find(|e| {
-            let (_contract, topics, data) = e;
-            if topics.len() == 2
+        .find(|(_contract, topics, _data)| {
+            topics.len() == 2
                 && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
                 && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("summary"))
-            {
-                #[allow(clippy::type_complexity)]
-                let parsed_opt: Result<
-                    (
-                        u32,
-                        u64,
-                        u32,
-                        u32,
-                        u128,
-                        u128,
-                        i128,
-                        i128,
-                        u32,
-                        i128,
-                        i128,
-                        u32,
-                        Option<u32>,
-                    ),
-                    _,
-                > = data.try_into_val(&env);
-                if let Ok((_, r_id, _, _, _, _, _, _, _, _, _, _, _)) = parsed_opt {
-                    return r_id == round_id;
-                }
-            }
-            false
         })
         .expect("Precision summary event should exist");
 
     let (_contract, _topics, data) = summary_event;
-    let canon: (
-        u32,
-        u64,
-        u32,
-        u32,
-        u128,
-        u128,
-        i128,
-        i128,
-        u32,
-        i128,
-        i128,
-        u32,
-        Option<u32>,
-    ) = data.try_into_val(&env).unwrap();
-    assert_eq!(canon.0, 0u32); // version
-    assert_eq!(canon.1, round_id); // round_id
-    assert_eq!(canon.2, 0u32); // status (Resolved)
-    assert_eq!(canon.3, 1u32); // mode (Precision)
-    assert_eq!(canon.4, 2000u128); // price_start
-    assert_eq!(canon.5, 2150u128); // price_final
-    assert_eq!(canon.6, 0i128); // pool_up
-    assert_eq!(canon.7, 0i128); // pool_down
-    assert_eq!(canon.8, 2u32); // participant_count
-    assert_eq!(canon.9, 400_0000000i128); // total_pot
-    assert_eq!(canon.10, 0i128); // fee_amount
-    assert_eq!(canon.11, round.end_ledger); // settled_at_ledger
-    assert_eq!(canon.12, None); // confidence
+    // Payload: (round_id, status, mode, final_price, participant_count,
+    //            total_pot, fee_amount, settled_at_ledger, confidence, fee_model)
+    // Decoded field-wise: a whole-tuple conversion of this event panics inside
+    // the SDK's tuple TryFromVal, so assert each element explicitly.
+    let canon: soroban_sdk::Vec<soroban_sdk::Val> = data.try_into_val(&env).unwrap();
+    assert_eq!(canon.len(), 10u32);
+    assert_eq!(canon.get(0).unwrap().try_into_val(&env), Ok(round_id));
+    assert_eq!(canon.get(1).unwrap().try_into_val(&env), Ok(0u32)); // status
+    assert_eq!(canon.get(2).unwrap().try_into_val(&env), Ok(1u32)); // mode (Precision)
+    assert_eq!(canon.get(3).unwrap().try_into_val(&env), Ok(2150u128)); // final_price
+    assert_eq!(canon.get(4).unwrap().try_into_val(&env), Ok(2u32)); // participants
+    assert_eq!(
+        canon.get(5).unwrap().try_into_val(&env),
+        Ok(400_0000000i128)
+    ); // pot
+    assert_eq!(canon.get(6).unwrap().try_into_val(&env), Ok(0i128)); // fee
+    assert_eq!(canon.get(7).unwrap().try_into_val(&env), Ok(24u32)); // settled_at_ledger
+    assert_eq!(canon.get(8).unwrap().try_into_val(&env), Ok(0u32)); // confidence
+    assert_eq!(canon.get(9).unwrap().try_into_val(&env), Ok(0u32)); // fee_model
 
     // 3. Cancelled Round Summary Event
     client.create_round(&1_0000000, &None);
@@ -1069,65 +1028,29 @@ fn test_event_coverage_round_summary() {
     let summary_event = events
         .iter()
         .rev()
-        .find(|e| {
-            let (_contract, topics, data) = e;
-            if topics.len() == 2
+        .find(|(_contract, topics, _data)| {
+            topics.len() == 2
                 && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
                 && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("summary"))
-            {
-                #[allow(clippy::type_complexity)]
-                let parsed_opt: Result<
-                    (
-                        u32,
-                        u64,
-                        u32,
-                        u32,
-                        u128,
-                        u128,
-                        i128,
-                        i128,
-                        u32,
-                        i128,
-                        i128,
-                        u32,
-                        Option<u32>,
-                    ),
-                    _,
-                > = data.try_into_val(&env);
-                if let Ok((_, r_id, _, _, _, _, _, _, _, _, _, _, _)) = parsed_opt {
-                    return r_id == cancel_round_id;
-                }
-            }
-            false
         })
         .expect("Cancelled summary event should exist");
 
     let (_contract, _topics, data) = summary_event;
-    let canon: (
-        u32,
-        u64,
-        u32,
-        u32,
-        u128,
-        u128,
-        i128,
-        i128,
-        u32,
-        i128,
-        i128,
-        u32,
-        Option<u32>,
-    ) = data.try_into_val(&env).unwrap();
-    assert_eq!(canon.0, 0u32); // version
-    assert_eq!(canon.1, cancel_round_id); // round_id
-    assert_eq!(canon.2, 1u32); // status (Cancelled)
-    assert_eq!(canon.3, 0u32); // mode (UpDown)
-    assert_eq!(canon.4, 1_0000000u128); // price_start
-    assert_eq!(canon.5, 0u128); // price_final (0 for cancelled)
-    assert_eq!(canon.6, 50_0000000i128); // pool_up
-    assert_eq!(canon.7, 0i128); // pool_down
-    assert_eq!(canon.8, 1u32); // participant_count
-    assert_eq!(canon.9, 50_0000000i128); // total_pot
-    assert_eq!(canon.10, 0i128); // fee_amount
-    assert_eq!(canon.12, None); // confidence
+    // Payload: (round_id, status, mode, final_price, participant_count,
+    //            total_pot, fee_amount, settled_at_ledger, confidence, fee_model)
+    let canon: soroban_sdk::Vec<soroban_sdk::Val> = data.try_into_val(&env).unwrap();
+    assert_eq!(canon.len(), 10u32);
+    assert_eq!(
+        canon.get(0).unwrap().try_into_val(&env),
+        Ok(cancel_round_id)
+    );
+    assert_eq!(canon.get(1).unwrap().try_into_val(&env), Ok(1u32)); // status (Cancelled)
+    assert_eq!(canon.get(2).unwrap().try_into_val(&env), Ok(0u32)); // mode (UpDown)
+    assert_eq!(canon.get(3).unwrap().try_into_val(&env), Ok(0u128)); // final_price
+    assert_eq!(canon.get(4).unwrap().try_into_val(&env), Ok(1u32)); // participants
+    assert_eq!(canon.get(5).unwrap().try_into_val(&env), Ok(50_0000000i128)); // total_pot
+    assert_eq!(canon.get(6).unwrap().try_into_val(&env), Ok(0i128)); // fee_amount
+    assert_eq!(canon.get(7).unwrap().try_into_val(&env), Ok(24u32)); // settled_at_ledger
+    assert_eq!(canon.get(8).unwrap().try_into_val(&env), Ok(0u32)); // confidence
+    assert_eq!(canon.get(9).unwrap().try_into_val(&env), Ok(0u32)); // fee_model
 }

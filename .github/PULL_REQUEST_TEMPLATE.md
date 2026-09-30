@@ -74,5 +74,4 @@
 
 ## Snapshot policy
 
-- [ ] If snapshot files under `contracts/test_snapshots/` changed, I reviewed the diff and confirmed every change is intentional
-- [ ] If snapshot drift was reported in CI, I either regenerated snapshots or marked the drift as expected in the PR description
+- [ ] I did **not** commit files under `contracts/test_snapshots/` (auto-generated, gitignored SDK debug output — not golden files; there is no snapshot-drift CI gate). Golden-value regressions are guarded by `reference_model.rs`, `settlement_math_vectors.rs`, and `event_order_golden.rs`.

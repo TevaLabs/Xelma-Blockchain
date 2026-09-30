@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::{BetSide, OraclePayload, RoundArchiveStatus};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
@@ -39,6 +40,7 @@ fn test_archived_participation_after_resolve() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -78,6 +80,7 @@ fn test_archived_participation_after_cancel() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     client.mint_initial(&alice);
@@ -106,6 +109,7 @@ fn test_archived_participation_after_fallback_refund() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user = Address::generate(&env);
     client.mint_initial(&user);
@@ -137,6 +141,7 @@ fn test_archived_participation_no_history() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let stranger = Address::generate(&env);
 
@@ -153,6 +158,7 @@ fn test_archived_participation_non_participant_after_round() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -177,6 +183,7 @@ fn test_archived_participation_newest_first() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user = Address::generate(&env);
     client.mint_initial(&user);
@@ -213,6 +220,7 @@ fn test_archived_participation_page_respects_offset_and_limit() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user = Address::generate(&env);
     client.mint_initial(&user);
@@ -251,6 +259,7 @@ fn test_archived_participation_full_page_matches_all() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user = Address::generate(&env);
     client.mint_initial(&user);
@@ -276,6 +285,7 @@ fn test_archived_participation_offset_past_end_is_empty() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user = Address::generate(&env);
     client.mint_initial(&user);
@@ -300,6 +310,7 @@ fn test_archived_participation_zero_limit_is_rejected() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user = Address::generate(&env);
     client.mint_initial(&user);
@@ -322,6 +333,7 @@ fn test_archived_participation_over_limit_rejected() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let user = Address::generate(&env);
     client.mint_initial(&user);
@@ -352,6 +364,7 @@ fn test_archived_participation_multi_user_isolation() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -386,6 +399,7 @@ fn test_archived_participation_precision_mode() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);

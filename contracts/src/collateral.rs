@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Collateral Adapter Module (SAC / Token Collateral Integration)
 //!
 //! Provides abstract collateral operations for escrow, release, payout, and protocol fee collection.

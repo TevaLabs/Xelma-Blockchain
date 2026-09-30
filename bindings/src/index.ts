@@ -34,6 +34,116 @@ if (typeof window !== "undefined") {
 
 
 
+/** Protected administrative action types. */
+export enum PolicyAction {
+  RoundMutation = 0,
+  Claim = 1,
+  AdminConfig = 2,
+  Settlement = 3,
+}
+
+/** Governance action carried by a proposal. */
+export type GovAction =
+  | { tag: 'PauseProtocol' }
+  | { tag: 'UnpauseProtocol' }
+  | { tag: 'SetProtocolFeeBps', values: Option<number> }
+  | { tag: 'WithdrawProtocolFee', values: [string, i128] }
+  | { tag: 'SetTreasuryAddress', values: string }
+  | { tag: 'SetAdmin', values: string }
+  | { tag: 'SetOracle', values: string }
+  | { tag: 'WithdrawInsuranceFund', values: [string, i128] }
+  | { tag: 'SetInsuranceSplitBps', values: number }
+  | { tag: 'SetInsuranceCoverageBps', values: number }
+
+/** Status of a governance proposal. */
+export enum GovProposalStatus {
+  Pending = 0,
+  Approved = 1,
+  Executed = 2,
+  Cancelled = 3,
+  Expired = 4,
+}
+
+/** Status of a constitution amendment. */
+export enum AmendmentStatus {
+  Pending = 0,
+  Vetoed = 1,
+  ActivationReady = 2,
+  Activated = 3,
+  Expired = 4,
+}
+
+/** Parameterless system/config storage keys. */
+export type DataKeyCore = string;
+
+/** Outcome of a deviating price feed (TAP-12 style). */
+export enum DeviationReferenceMode {
+  StartPrice = 0,
+  Twap = 1,
+}
+
+/** Access-control state for an address. */
+export enum AccessState {
+  Open = 0,
+  Allowlisted = 1,
+  Denylisted = 2,
+}
+
+/** Policy applied to a one-sided (no counterparty) round. */
+export enum OneSidedPolicy {
+  Refund = 0,
+  Void = 1,
+  CarryForward = 2,
+}
+
+/** A single TWAP price sample. */
+export interface PriceSample {
+  price: bigint;
+  timestamp: bigint;
+}
+
+/** Read-only view of the active market. */
+export interface MarketSnapshot {
+  phase: Array<RoundPhase>;
+  pool_stats: Array<RoundPoolStats>;
+  bet_window_ledgers: number;
+  run_window_ledgers: number;
+  close_buffer_ledgers: number;
+  protocol_fee_bps: Option<number>;
+  fee_model: FeeModel;
+}
+
+/** Status of a governance proposal. */
+export interface GovProposal {
+  id: bigint;
+  proposer: string;
+  approver: Option<string>;
+  action: GovAction;
+  created_at_ledger: number;
+  expires_at_ledger: number;
+  status: GovProposalStatus;
+}
+
+/** Status of a constitution amendment. */
+export interface Amendment {
+  id: bigint;
+  proposer: string;
+  parameter_name: string;
+  new_value: string;
+  created_at_ledger: number;
+  veto_deadline_ledger: number;
+  activation_deadline_ledger: number;
+  status: AmendmentStatus;
+}
+
+/** On-chain constitution parameters. */
+export interface ConstitutionMetadata {
+  veto_window_ledgers: number;
+  timelock_ledgers: number;
+  dual_approval_required: boolean;
+  established_at_ledger: number;
+}
+
 export interface Round {
   bet_end_ledger: u32;
   end_ledger: u32;
@@ -829,7 +939,6 @@ export interface Client {
   /**
    * Sets multi-feed oracle quorum configuration (admin only).
    */
-  set_oracle_quorum_config: ({cfg}: {cfg: OracleQuorumConfig}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Gets multi-feed oracle quorum configuration if configured.
@@ -1390,6 +1499,78 @@ export class Client extends ContractClient {
       options
     )
   }
+  announce_next_schema: ({ target_version }: { target_version: number }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_next_schema: (options?: MethodOptions) => Promise<AssembledTransaction<Option<number>>>
+  clear_next_schema: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  is_action_allowed: ({ action }: { action: PolicyAction }, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+  set_deviation_ref_mode: ({ mode, window_samples }: { mode: DeviationReferenceMode, window_samples: number }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_deviation_ref_mode: (options?: MethodOptions) => Promise<AssembledTransaction<DeviationReferenceMode>>
+  get_deviation_window_samples: (options?: MethodOptions) => Promise<AssembledTransaction<number>>
+  get_twap_samples: (options?: MethodOptions) => Promise<AssembledTransaction<PriceSample[]>>
+  set_attestation_key: ({ key }: { key: Option<string> }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_attestation_key: (options?: MethodOptions) => Promise<AssembledTransaction<Option<string>>>
+  batch_touch_ttl: ({ keys }: { keys: DataKeyCore[] }, options?: MethodOptions) => Promise<AssembledTransaction<Result<number>>>
+  set_access_control_enabled: ({ enabled }: { enabled: boolean }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  is_access_control_enabled: (options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+  add_allowlisted: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  remove_allowlisted: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  add_denylisted: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  remove_denylisted: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  is_allowlisted: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+  is_denylisted: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+  get_access_state: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<AccessState>>
+  get_access_policy: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<[boolean, AccessState]>>
+  set_gov_approver: ({ approver }: { approver: string }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_gov_approver: (options?: MethodOptions) => Promise<AssembledTransaction<Option<string>>>
+  set_gov_proposal_ttl: ({ ttl_ledgers }: { ttl_ledgers: number }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_gov_proposal_ttl: (options?: MethodOptions) => Promise<AssembledTransaction<number>>
+  propose_gov_action: ({ proposer, action, custom_ttl }: { proposer: string, action: GovAction, custom_ttl: Option<number> }, options?: MethodOptions) => Promise<AssembledTransaction<Result<bigint>>>
+  approve_gov_proposal: ({ approver, proposal_id }: { approver: string, proposal_id: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  execute_gov_proposal: ({ executor, proposal_id }: { executor: string, proposal_id: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  cancel_gov_proposal: ({ canceller, proposal_id }: { canceller: string, proposal_id: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_gov_proposal: ({ proposal_id }: { proposal_id: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Option<GovProposal>>>
+  establish_constitution: ({ veto_window_ledgers, timelock_ledgers, dual_approval_required }: { veto_window_ledgers: number, timelock_ledgers: number, dual_approval_required: boolean }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_constitution: (options?: MethodOptions) => Promise<AssembledTransaction<Option<ConstitutionMetadata>>>
+  propose_amendment: ({ proposer, parameter_name, new_value }: { proposer: string, parameter_name: string, new_value: string }, options?: MethodOptions) => Promise<AssembledTransaction<Result<bigint>>>
+  veto_amendment: ({ vetoer, amendment_id }: { vetoer: string, amendment_id: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  activate_amendment: ({ activator, amendment_id }: { activator: string, amendment_id: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_amendment: ({ amendment_id }: { amendment_id: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Option<Amendment>>>
+  set_min_bet: ({ min_amount }: { min_amount: Option<i128> }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  schedule_min_bet: ({ min_amount }: { min_amount: Option<i128> }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_min_bet: (options?: MethodOptions) => Promise<AssembledTransaction<Option<i128>>>
+  schedule_oracle_timestamp_skew: ({ seconds }: { seconds: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_oracle_timestamp_skew: (options?: MethodOptions) => Promise<AssembledTransaction<bigint>>
+  set_pending_winnings_expiry: ({ ledgers }: { ledgers: number }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  schedule_pending_winnings_expiry: ({ ledgers }: { ledgers: number }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_pending_winnings_expiry: (options?: MethodOptions) => Promise<AssembledTransaction<number>>
+  reclaim_expired_pending_winnings: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<Result<i128>>>
+  set_oracle_quorum_config: ({ config }: { config: Option<OracleQuorumConfig> }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_oracle_quorum_config: (options?: MethodOptions) => Promise<AssembledTransaction<Option<OracleQuorumConfig>>>
+  get_bet_window_ledgers: (options?: MethodOptions) => Promise<AssembledTransaction<number>>
+  get_run_window_ledgers: (options?: MethodOptions) => Promise<AssembledTransaction<number>>
+  set_early_cashout_bps: ({ bps }: { bps: Option<number> }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_early_cashout_bps: (options?: MethodOptions) => Promise<AssembledTransaction<Option<number>>>
+  resolve_round_multi: ({ payload }: { payload: MultiFeedPayload }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  claim_many: ({ users }: { users: string[] }, options?: MethodOptions) => Promise<AssembledTransaction<Result<i128[]>>>
+  cash_out_early: ({ user }: { user: string }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  set_dispute_ledgers: ({ ledgers }: { ledgers: number }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_dispute_ledgers: (options?: MethodOptions) => Promise<AssembledTransaction<number>>
+  void_round: ({ round_id }: { round_id: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  finalize_round: ({ round_id }: { round_id: bigint }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_one_sided_policy: (options?: MethodOptions) => Promise<AssembledTransaction<OneSidedPolicy>>
+  get_market_snapshot: (options?: MethodOptions) => Promise<AssembledTransaction<MarketSnapshot>>
+  set_fee_model: ({ model }: { model: FeeModel }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_fee_model: (options?: MethodOptions) => Promise<AssembledTransaction<FeeModel>>
+  set_insurance_split_bps: ({ bps }: { bps: number }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_insurance_split_bps: (options?: MethodOptions) => Promise<AssembledTransaction<number>>
+  set_insurance_coverage_bps: ({ bps }: { bps: number }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_insurance_coverage_bps: (options?: MethodOptions) => Promise<AssembledTransaction<number>>
+  set_insurance_eligible_events: ({ events }: { events: number[] }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_insurance_eligible_events: (options?: MethodOptions) => Promise<AssembledTransaction<number[]>>
+  get_insurance_fund_balance: (options?: MethodOptions) => Promise<AssembledTransaction<i128>>
+  top_up_insurance_fund: ({ amount }: { amount: i128 }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  withdraw_insurance_fund: ({ recipient, amount }: { recipient: string, amount: i128 }, options?: MethodOptions) => Promise<AssembledTransaction<Result<i128>>>
+
   public readonly fromJSON = {
     balance: this.txFromJSON<i128>,
         get_admin: this.txFromJSON<Option<string>>,
@@ -1502,6 +1683,78 @@ export class Client extends ContractClient {
         reset_leaderboard_season: this.txFromJSON<Result<u32>>,
         get_season_archive: this.txFromJSON<Option<SeasonArchive>>,
         get_season_leaderboard_by_wins: this.txFromJSON<Array<SeasonLeaderboardEntry>>,
-        get_season_leaderboard_by_streak: this.txFromJSON<Array<SeasonLeaderboardEntry>>
+        get_season_leaderboard_by_streak: this.txFromJSON<Array<SeasonLeaderboardEntry>>,
+    announce_next_schema: this.txFromJSON<Result<void>>,
+    get_next_schema: this.txFromJSON<Option<number>>,
+    clear_next_schema: this.txFromJSON<Result<void>>,
+    is_action_allowed: this.txFromJSON<boolean>,
+    set_deviation_ref_mode: this.txFromJSON<Result<void>>,
+    get_deviation_ref_mode: this.txFromJSON<DeviationReferenceMode>,
+    get_deviation_window_samples: this.txFromJSON<number>,
+    get_twap_samples: this.txFromJSON<PriceSample[]>,
+    set_attestation_key: this.txFromJSON<Result<void>>,
+    get_attestation_key: this.txFromJSON<Option<string>>,
+    batch_touch_ttl: this.txFromJSON<Result<number>>,
+    set_access_control_enabled: this.txFromJSON<Result<void>>,
+    is_access_control_enabled: this.txFromJSON<boolean>,
+    add_allowlisted: this.txFromJSON<Result<void>>,
+    remove_allowlisted: this.txFromJSON<Result<void>>,
+    add_denylisted: this.txFromJSON<Result<void>>,
+    remove_denylisted: this.txFromJSON<Result<void>>,
+    is_allowlisted: this.txFromJSON<boolean>,
+    is_denylisted: this.txFromJSON<boolean>,
+    get_access_state: this.txFromJSON<AccessState>,
+    get_access_policy: this.txFromJSON<[boolean, AccessState]>,
+    set_gov_approver: this.txFromJSON<Result<void>>,
+    get_gov_approver: this.txFromJSON<Option<string>>,
+    set_gov_proposal_ttl: this.txFromJSON<Result<void>>,
+    get_gov_proposal_ttl: this.txFromJSON<number>,
+    propose_gov_action: this.txFromJSON<Result<bigint>>,
+    approve_gov_proposal: this.txFromJSON<Result<void>>,
+    execute_gov_proposal: this.txFromJSON<Result<void>>,
+    cancel_gov_proposal: this.txFromJSON<Result<void>>,
+    get_gov_proposal: this.txFromJSON<Option<GovProposal>>,
+    establish_constitution: this.txFromJSON<Result<void>>,
+    get_constitution: this.txFromJSON<Option<ConstitutionMetadata>>,
+    propose_amendment: this.txFromJSON<Result<bigint>>,
+    veto_amendment: this.txFromJSON<Result<void>>,
+    activate_amendment: this.txFromJSON<Result<void>>,
+    get_amendment: this.txFromJSON<Option<Amendment>>,
+    set_min_bet: this.txFromJSON<Result<void>>,
+    schedule_min_bet: this.txFromJSON<Result<void>>,
+    get_min_bet: this.txFromJSON<Option<i128>>,
+    schedule_oracle_timestamp_skew: this.txFromJSON<Result<void>>,
+    get_oracle_timestamp_skew: this.txFromJSON<bigint>,
+    set_pending_winnings_expiry: this.txFromJSON<Result<void>>,
+    schedule_pending_winnings_expiry: this.txFromJSON<Result<void>>,
+    get_pending_winnings_expiry: this.txFromJSON<number>,
+    reclaim_expired_pending_winnings: this.txFromJSON<Result<i128>>,
+    set_oracle_quorum_config: this.txFromJSON<Result<void>>,
+    get_oracle_quorum_config: this.txFromJSON<Option<OracleQuorumConfig>>,
+    get_bet_window_ledgers: this.txFromJSON<number>,
+    get_run_window_ledgers: this.txFromJSON<number>,
+    set_early_cashout_bps: this.txFromJSON<Result<void>>,
+    get_early_cashout_bps: this.txFromJSON<Option<number>>,
+    resolve_round_multi: this.txFromJSON<Result<void>>,
+    claim_many: this.txFromJSON<Result<i128[]>>,
+    cash_out_early: this.txFromJSON<Result<void>>,
+    set_dispute_ledgers: this.txFromJSON<Result<void>>,
+    get_dispute_ledgers: this.txFromJSON<number>,
+    void_round: this.txFromJSON<Result<void>>,
+    finalize_round: this.txFromJSON<Result<void>>,
+    get_one_sided_policy: this.txFromJSON<OneSidedPolicy>,
+    get_market_snapshot: this.txFromJSON<MarketSnapshot>,
+    set_fee_model: this.txFromJSON<Result<void>>,
+    get_fee_model: this.txFromJSON<FeeModel>,
+    set_insurance_split_bps: this.txFromJSON<Result<void>>,
+    get_insurance_split_bps: this.txFromJSON<number>,
+    set_insurance_coverage_bps: this.txFromJSON<Result<void>>,
+    get_insurance_coverage_bps: this.txFromJSON<number>,
+    set_insurance_eligible_events: this.txFromJSON<Result<void>>,
+    get_insurance_eligible_events: this.txFromJSON<number[]>,
+    get_insurance_fund_balance: this.txFromJSON<i128>,
+    top_up_insurance_fund: this.txFromJSON<Result<void>>,
+    withdraw_insurance_fund: this.txFromJSON<Result<i128>>
+
   }
 }

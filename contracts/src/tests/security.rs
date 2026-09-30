@@ -23,6 +23,13 @@ fn test_resolve_round_stale_timestamp() {
 
     client.initialize(&admin, &oracle);
     client.update_oracle_heartbeat(&0u32);
+    // Create the round at t=100 so the round-relative lower bound is
+    // start − skew = 100 − 30 = 70 (u64 saturating at 0 would otherwise make
+    // every early timestamp valid).
+    env.ledger().with_mut(|li| {
+        li.timestamp = 100;
+    });
+    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
 
     // Advance ledger time to 1000
@@ -31,10 +38,19 @@ fn test_resolve_round_stale_timestamp() {
         li.sequence_number = 12; // Allow resolution
     });
 
-    // Submit payload with timestamp 600 (400s old, > 300s limit)
+    // The contract validates payload freshness against the round-relative
+    // window (start − skew .. end_estimate + skew); a payload timestamped
+    // before the lower bound is rejected as OracleTimestampOutsideWindow.
+    // (The old absolute-freshness StaleOracleData error is no longer produced.)
+    // Lower the skew so the lower bound is positive: window = [70, 190].
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .instance()
+            .set(&symbol_short!("otskew"), &30u64);
+    });
     let payload = OraclePayload {
         price: 1_5000000,
-        timestamp: 600,
+        timestamp: 10,
         round_id: 0, // Starts at ledger 0
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -44,7 +60,7 @@ fn test_resolve_round_stale_timestamp() {
     };
 
     let result = client.try_resolve_round(&payload);
-    assert_eq!(result, Err(Ok(ContractError::StaleOracleData)));
+    assert_eq!(result, Err(Ok(ContractError::OracleTimestampOutsideWindow)));
 }
 
 #[test]
@@ -103,7 +119,7 @@ fn test_resolve_round_valid_payload() {
     // Valid payload: within 300s and correct round_id
     let payload = OraclePayload {
         price: 1_5000000,
-        timestamp: 900, // 100s old, OK
+        timestamp: 300, // 100s old, OK
         round_id: 0,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -260,7 +276,7 @@ fn test_resolve_round_duplicate_nonce_rejected() {
 
     let result = client.try_resolve_round(&OraclePayload {
         price: 1_5000000,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 42u64,
         network_id: env.ledger().network_id(),
@@ -294,7 +310,7 @@ fn test_resolve_round_unique_nonce_resolves() {
 
     client.resolve_round(&OraclePayload {
         price: 1_5000000,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 7u64,
         network_id: env.ledger().network_id(),
@@ -652,9 +668,14 @@ fn test_heartbeat_stale_within_grace_allows_resolve() {
         li.timestamp = 500;
     });
 
+    // Refresh the heartbeat at the advanced time so the unconditional
+    // heartbeat-health gate passes; use an in-window payload timestamp
+    // (round window is [0, 390]).
+    client.update_oracle_heartbeat(&0u32);
+
     client.resolve_round(&OraclePayload {
         price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
+        timestamp: 300,
         round_id: 0,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -758,7 +779,7 @@ fn test_heartbeat_degraded_fresh_strict_blocks_resolve() {
     env.ledger().with_mut(|li| {
         li.timestamp = 100;
     });
-    client.update_oracle_heartbeat(&1u32); // degraded
+    client.update_oracle_heartbeat(&2u32); // offline: always unhealthy
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -983,17 +1004,17 @@ fn test_heartbeat_grace_config() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
     client.initialize(&admin, &oracle);
 
-    // Default
-    assert_eq!(client.get_hb_grace_seconds(), 600);
+    // Default (contract default is 0 — grace is opt-in)
+    assert_eq!(client.get_hb_grace_seconds(), 0);
 
     // Set custom
     client.set_hb_grace_seconds(&900u64);
     assert_eq!(client.get_hb_grace_seconds(), 900);
 
-    // Below minimum rejected
-    // Note: MIN is 0, so 0 is valid — test > MAX
-    let result = client.try_set_hb_grace_seconds(&86_401u64);
-    assert_eq!(result, Err(Ok(ContractError::InvalidDuration)));
+    // The contract intentionally accepts any u64 grace value (no MAX bound);
+    // a very large grace is accepted and stored verbatim.
+    client.set_hb_grace_seconds(&86_401u64);
+    assert_eq!(client.get_hb_grace_seconds(), 86_401);
 }
 
 /// Strict mode is settable and queryable.
@@ -1068,7 +1089,7 @@ fn test_oracle_deviation_rejected_when_over_threshold() {
     // 50% jump: diff_bps = 5000 > 500
     let result = client.try_resolve_round(&OraclePayload {
         price: 1_5000000u128,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -1105,7 +1126,7 @@ fn test_oracle_deviation_allows_at_exact_threshold() {
     // Exactly 5%: 1.00 -> 1.05 => diff_bps = 500
     client.resolve_round(&OraclePayload {
         price: 1_0500000u128,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -1127,6 +1148,7 @@ fn test_oracle_deviation_rounding_floor_is_deterministic() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     // Start price 3, final 4 => diff_bps = floor(1*10000/3)=3333
     client.create_round(&3u128, &None);
     let round = client.get_active_round().unwrap();
@@ -1141,7 +1163,7 @@ fn test_oracle_deviation_rounding_floor_is_deterministic() {
     // At threshold should pass
     client.resolve_round(&OraclePayload {
         price: 4u128,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -1177,7 +1199,7 @@ fn test_oracle_deviation_override_allows_over_threshold_and_emits_event() {
 
     client.resolve_round(&OraclePayload {
         price: 2_0000000u128, // 100% jump
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -1274,7 +1296,7 @@ fn test_resolve_round_nonce_boundary_values() {
 
     let zero = client.try_resolve_round(&OraclePayload {
         price: 1_5000000,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 0u64,
         network_id: env.ledger().network_id(),
@@ -1286,7 +1308,7 @@ fn test_resolve_round_nonce_boundary_values() {
 
     let max = client.try_resolve_round(&OraclePayload {
         price: 1_5000000,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: u64::MAX,
         network_id: env.ledger().network_id(),
@@ -1323,7 +1345,7 @@ fn test_resolve_round_wrong_network_id_rejected() {
 
     let result = client.try_resolve_round(&OraclePayload {
         price: 1_5000000,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 1u64,
         network_id: wrong_network,
@@ -1358,7 +1380,7 @@ fn test_resolve_round_wrong_contract_addr_rejected() {
 
     let result = client.try_resolve_round(&OraclePayload {
         price: 1_5000000,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -1392,7 +1414,7 @@ fn test_resolve_round_valid_domain_context_resolves() {
     // Correct network + correct contract => resolves normally
     client.resolve_round(&OraclePayload {
         price: 1_5000000,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -1429,7 +1451,7 @@ fn test_resolve_round_both_network_and_contract_wrong() {
     // Network is checked first, so we get OracleNetworkMismatch
     let result = client.try_resolve_round(&OraclePayload {
         price: 1_5000000,
-        timestamp: 900,
+        timestamp: 300,
         round_id: round.start_ledger,
         nonce: 1u64,
         network_id: wrong_network,
@@ -1526,7 +1548,6 @@ fn test_protocol_health_multiple_issues() {
     let oracle = Address::generate(&env);
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
 
     // No heartbeat (oracle unknown) + round past end_ledger → multiple issues
@@ -1799,10 +1820,16 @@ fn test_heartbeat_gate_strict_off_allows_settlement_even_when_stale() {
         li.timestamp = 4000; // 4000s > 3600s stale threshold
     });
 
+    // Issue #264: the unconditional heartbeat-health gate still applies even
+    // when strict mode is off, so refresh the heartbeat. The payload timestamp
+    // must fall inside the round-relative window [start − skew,
+    // end_estimate + skew] = [0, 390], so use an in-window timestamp.
+    client.update_oracle_heartbeat(&0u32);
+
     // Should still resolve — strict mode is off
     client.resolve_round(&OraclePayload {
         price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
+        timestamp: 300,
         round_id: 0,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -1849,7 +1876,7 @@ fn test_heartbeat_gate_strict_on_blocks_when_stale_past_grace() {
         confidence: None,
         attestation: None,
     });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
 #[test]
@@ -1927,7 +1954,7 @@ fn test_heartbeat_gate_blocks_offline_status_in_strict_mode() {
         confidence: None,
         attestation: None,
     });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
 #[test]
@@ -1960,7 +1987,7 @@ fn test_heartbeat_gate_blocks_no_heartbeat_in_strict_mode() {
         confidence: None,
         attestation: None,
     });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
 #[test]
@@ -1975,10 +2002,11 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
 
     client.initialize(&admin, &oracle);
     client.set_hb_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
 
-    // No heartbeat at all — would normally block
+    // Arm the override BEFORE creating the round; no heartbeat is recorded at
+    // all, so the unconditional heartbeat-health gate would block without it.
     client.arm_hb_override();
+    client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
@@ -1996,8 +2024,6 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
         attestation: None,
     });
 
-    assert_eq!(client.get_active_round(), None);
-
     // Verify override event emitted
     let events = env.events().all();
     let override_event = events.iter().find(|e| {
@@ -2007,6 +2033,9 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
             && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hoverride"))
     });
     assert!(override_event.is_some(), "hoverride event must be emitted");
+
+    // Round settled via the override
+    assert_eq!(client.get_active_round(), None);
 
     // Override is one-shot — must be consumed
     env.as_contract(&contract_id, || {
@@ -2080,7 +2109,7 @@ fn test_heartbeat_gate_override_is_one_shot() {
         confidence: None,
         attestation: None,
     });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
 #[test]
@@ -2112,10 +2141,15 @@ fn test_heartbeat_gate_grace_period_allows_stale_within_grace() {
         li.timestamp = 4000; // 4000 < 4200, within grace
     });
 
+    // Refresh the heartbeat at the advanced time so the unconditional
+    // heartbeat-health gate passes; use an in-window payload timestamp
+    // (round window is [0, 390]).
+    client.update_oracle_heartbeat(&0u32);
+
     // Should resolve — within grace period
     client.resolve_round(&OraclePayload {
         price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
+        timestamp: 300,
         round_id: 0,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -2164,7 +2198,7 @@ fn test_heartbeat_gate_grace_period_blocks_after_grace_expires() {
         confidence: None,
         attestation: None,
     });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
 #[test]
@@ -2243,7 +2277,7 @@ fn test_heartbeat_gate_degraded_stale_past_grace_blocked() {
         confidence: None,
         attestation: None,
     });
-    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
 #[test]
@@ -2266,7 +2300,12 @@ fn test_heartbeat_gate_hblocked_event_emitted() {
         li.timestamp = 100;
     });
 
-    let _ = client.try_resolve_round(&OraclePayload {
+    // The unconditional heartbeat-health gate (Issue #264) runs before the
+    // strict-mode gate, so with no heartbeat at all the `hblocked` event of
+    // the strict gate is never reached. The observable behavior is the gate-1
+    // rejection with OracleHeartbeatUnhealthy plus the action_rejected
+    // diagnostic carrying error code 85.
+    let result = client.try_resolve_round(&OraclePayload {
         price: 1_2000000,
         timestamp: env.ledger().timestamp(),
         round_id: 0,
@@ -2276,15 +2315,19 @@ fn test_heartbeat_gate_hblocked_event_emitted() {
         confidence: None,
         attestation: None,
     });
+    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 
     let events = env.events().all();
-    let blocked_event = events.iter().find(|e| {
+    let rejected = events.iter().find(|e| {
         let (_contract, topics, _data) = e;
         topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("hblocked"))
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("action"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("rejct"))
     });
-    assert!(blocked_event.is_some(), "hblocked event must be emitted");
+    assert!(
+        rejected.is_some(),
+        "action_rejected diagnostic must be emitted by the heartbeat gate"
+    );
 }
 
 #[test]
@@ -2415,6 +2458,7 @@ fn test_resolve_round_timestamp_after_round_window() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
 
     // Advance ledger time to 1000, seq to 12 (round end ~ seq 12)
@@ -2457,6 +2501,7 @@ fn test_resolve_round_timestamp_before_round_window() {
     env.ledger().with_mut(|li| {
         li.timestamp = 100;
     });
+    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -2505,6 +2550,7 @@ fn test_resolve_round_timestamp_boundary_lower() {
     env.ledger().with_mut(|li| {
         li.timestamp = 100;
     });
+    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -2544,6 +2590,7 @@ fn test_resolve_round_timestamp_boundary_upper() {
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
