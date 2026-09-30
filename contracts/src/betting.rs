@@ -828,6 +828,9 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
         .persistent()
         .set(&DataKeyCore::ActiveRound, &round);
 
+    // Remove position to prevent double cash-outs
+    env.storage().persistent().remove(&pos_key);
+
     // Credit cashout to user's pending winnings
     if cashout > 0 {
         _accumulate_pending(&env, user.clone(), cashout)?;
