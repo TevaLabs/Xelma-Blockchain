@@ -1,5 +1,10 @@
 # Migration Notes
 
+> **Operators:** for the guarded entrypoints and the step-by-step
+> **pause → dry-run → migrate** procedure (including the testnet checklist),
+> see [`docs/MIGRATION.md`](docs/MIGRATION.md). This file records the schema
+> history and consumer-facing migration steps.
+
 ## Dry-run mode (Schema v3+)
 
 **Introduced in:** `feat/292-upgradeability-migration-dry-run-next-schema-template`
