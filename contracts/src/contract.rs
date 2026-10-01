@@ -3,31 +3,33 @@
 
 #![allow(dead_code)]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, Address, BytesN, Env, Map, Symbol, Val, Vec,
+};
 
 use crate::access_control;
 use crate::errors::ContractError;
 use crate::governance;
 use crate::insurance;
 use crate::types::{
-    ArchivedRoundSummary, AccessState, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
-    DataKeyScoped, DeviationReferenceMode, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy,
-    MarketSnapshot, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, OracleRotationProposal, PendingConfigChange,
-    PolicyAction, PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
+    AccessState, ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
+    DataKeyScoped, DeviationReferenceMode, FeeModel, GovAction, GovProposal, LeaderboardEntry,
+    MarketSnapshot, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord, OraclePayload,
+    OracleQuorumConfig, OracleRotationProposal, PendingConfigChange, PolicyAction,
+    PrecisionPrediction, PriceSample, ProtocolHealthStatus, ProtocolStatus, Round,
     RoundArchiveStatus, RoundPhase, RoundPoolStats, RoundStatus, RoundTemplate, RuntimeMode,
-    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition,
-    UserRoundOutcome, UserStats, FeeModel, GovAction, GovProposal,
+    SeasonArchive, SeasonLeaderboardEntry, SimulationResult, UserPosition, UserRoundOutcome,
+    UserStats,
 };
 
 use crate::common::{
-    CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
+    BPS_DENOMINATOR, CONFIG_TIMELOCK_LEDGERS, CURRENT_SCHEMA_VERSION, DEFAULT_ARCHIVE_RETENTION,
     DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_MAX_PRECISION_PARTICIPANTS, DEFAULT_ORACLE_STALE_THRESHOLD,
-    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS, MAX_MIN_PARTICIPANTS,
-    MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
+    DEFAULT_RUN_WINDOW_LEDGERS, MAX_ARCHIVE_RETENTION, MAX_BET_WINDOW_LEDGERS,
+    MAX_MIN_PARTICIPANTS, MAX_ORACLE_DEVIATION_BPS, MAX_ORACLE_STALE_THRESHOLD, MAX_PAGE_SIZE,
     MAX_PRECISION_PARTICIPANTS_LIMIT, MAX_PROTOCOL_FEE_BPS, MAX_RUN_WINDOW_LEDGERS,
     MAX_START_PRICE, MIN_ARCHIVE_RETENTION, MIN_CAP_VALUE, MIN_ORACLE_STALE_THRESHOLD,
-    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD, BPS_DENOMINATOR,
+    MIN_START_PRICE, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
 
 // ─── Oracle rotation expiry ───────────────────────────────────────────────────
@@ -281,28 +283,32 @@ impl VirtualTokenContract {
         admin::get_protocol_health(env)
     }
 
-    /// Returns the configured oracle stale threshold, or the default if not set.
     /// Returns the global status of the protocol.
     ///
     /// This is the canonical single-call status endpoint for frontends and
-    /// monitoring dashboards. The returned [`ProtocolStatus`] maps directly to
-    /// the three mutually-exclusive states visible to end users:
+    /// monitoring dashboards. It is a pure projection of [`RuntimeMode`]
+    /// plus "is a round active" (see `docs/STATUS_CODES.md`):
     ///
-    /// | return value      | meaning                                             |
-    /// |-------------------|-----------------------------------------------------|
-    /// | `Active`      (0) | A round is live; bets or reveals are accepted.      |
-    /// | `Paused`      (1) | Emergency pause active; mutations rejected.          |
-    /// | `ClaimsOnly`  (2) | No active round; only `claim_winnings` is useful.   |
+    /// | `RuntimeMode`       | active round? | return value      |
+    /// |---------------------|---------------|-------------------|
+    /// | `FullyPaused` (2)   | any           | `Paused`      (1) |
+    /// | `ClaimsOnly`  (1)   | any           | `ClaimsOnly`  (2) |
+    /// | `Normal`      (0)   | no            | `ClaimsOnly`  (2) |
+    /// | `Normal`      (0)   | yes           | `Active`      (0) |
     ///
-    /// **Priority**: `Paused` is always returned first when the contract is
-    /// paused, regardless of whether an active round exists.
+    /// `Active` is returned only when round mutations (bets, reveals) would
+    /// actually pass the policy gate; `Paused` only when claims are blocked.
     pub fn get_protocol_status(env: Env) -> ProtocolStatus {
-        if Self::is_paused(env.clone()) {
-            ProtocolStatus::Paused
-        } else if env.storage().persistent().has(&DataKeyCore::ActiveRound) {
-            ProtocolStatus::Active
-        } else {
-            ProtocolStatus::ClaimsOnly
+        match admin::_current_mode(&env) {
+            RuntimeMode::FullyPaused => ProtocolStatus::Paused,
+            RuntimeMode::ClaimsOnly => ProtocolStatus::ClaimsOnly,
+            RuntimeMode::Normal => {
+                if env.storage().persistent().has(&DataKeyCore::ActiveRound) {
+                    ProtocolStatus::Active
+                } else {
+                    ProtocolStatus::ClaimsOnly
+                }
+            }
         }
     }
 
@@ -326,6 +332,10 @@ impl VirtualTokenContract {
     /// | `Resolved`       (4)  | Settled normally; pot distributed.                           |
     /// | `Cancelled`      (5)  | Admin-cancelled; stakes refunded.                            |
     /// | `FallbackRefund` (6)  | Settled with insufficient participants; stakes refunded.     |
+    /// | `Voided`         (7)  | Dispute window voided the result; stakes refunded.           |
+    ///
+    /// `RuntimeMode` never changes this value: a paused contract still reports
+    /// the round's ledger-derived phase. Combine with `get_protocol_status`.
     ///
     /// Note: `Betting`, `Running`, and `AwaitingResolve` are **derived** from
     /// ledger sequence — they do not involve additional storage writes.
@@ -476,11 +486,7 @@ impl VirtualTokenContract {
             #[allow(deprecated)]
             env.events().publish(
                 (symbol_short!("oracle"), symbol_short!("early")),
-                (
-                    proposal.new_oracle.clone(),
-                    current_ts,
-                    earliest_accept,
-                ),
+                (proposal.new_oracle.clone(), current_ts, earliest_accept),
             );
             return Err(ContractError::RotationDelayNotElapsed);
         }
@@ -686,7 +692,12 @@ impl VirtualTokenContract {
         timelock_ledgers: u32,
         dual_approval_required: bool,
     ) -> Result<(), ContractError> {
-        governance::establish_constitution(env, veto_window_ledgers, timelock_ledgers, dual_approval_required)
+        governance::establish_constitution(
+            env,
+            veto_window_ledgers,
+            timelock_ledgers,
+            dual_approval_required,
+        )
     }
 
     /// Returns the on-chain constitution metadata, if established.
@@ -699,18 +710,26 @@ impl VirtualTokenContract {
         env: Env,
         proposer: Address,
         parameter_name: Symbol,
-        new_value: Val,
+        new_value: i128,
     ) -> Result<u64, ContractError> {
         governance::propose_amendment(env, proposer, parameter_name, new_value)
     }
 
     /// Vetoes a pending amendment before its veto window expires.
-    pub fn veto_amendment(env: Env, vetoer: Address, amendment_id: u64) -> Result<(), ContractError> {
+    pub fn veto_amendment(
+        env: Env,
+        vetoer: Address,
+        amendment_id: u64,
+    ) -> Result<(), ContractError> {
         governance::veto_amendment(env, vetoer, amendment_id)
     }
 
     /// Activates an amendment after timelock expires.
-    pub fn activate_amendment(env: Env, activator: Address, amendment_id: u64) -> Result<(), ContractError> {
+    pub fn activate_amendment(
+        env: Env,
+        activator: Address,
+        amendment_id: u64,
+    ) -> Result<(), ContractError> {
         governance::activate_amendment(env, activator, amendment_id)
     }
 
@@ -801,10 +820,7 @@ impl VirtualTokenContract {
     }
 
     /// Schedules a timelocked update to the oracle timestamp skew (admin only).
-    pub fn schedule_oracle_timestamp_skew(
-        env: Env,
-        seconds: u64,
-    ) -> Result<(), ContractError> {
+    pub fn schedule_oracle_timestamp_skew(env: Env, seconds: u64) -> Result<(), ContractError> {
         config::schedule_oracle_timestamp_skew(env, seconds)
     }
 
@@ -1064,10 +1080,7 @@ impl VirtualTokenContract {
     /// Requires `OracleQuorumConfig` to be configured by the admin before
     /// this path is available. The legacy single-oracle `resolve_round`
     /// remains available independently.
-    pub fn resolve_round_multi(
-        env: Env,
-        payload: MultiFeedPayload,
-    ) -> Result<(), ContractError> {
+    pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), ContractError> {
         settlement::resolve_round_multi(env, payload)
     }
 
@@ -1215,7 +1228,6 @@ impl VirtualTokenContract {
         limit: u32,
     ) -> Vec<(Address, UserPosition)> {
         queries::get_updown_positions_page(env, offset, limit)
-
     }
 
     /// Returns user's vXLM balance
@@ -1696,7 +1708,10 @@ impl VirtualTokenContract {
         config::_apply_config_payload(env, kind, payload)
     }
 
-    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(env: &Env, key: &T) {
+    fn _extend_persistent_ttl<T: soroban_sdk::IntoVal<soroban_sdk::Env, soroban_sdk::Val>>(
+        env: &Env,
+        key: &T,
+    ) {
         if env.storage().persistent().has(key) {
             env.storage()
                 .persistent()

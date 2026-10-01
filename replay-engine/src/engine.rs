@@ -70,11 +70,17 @@ pub fn replay_round(transcript: &RoundTranscript) -> Result<ReplayResult, Replay
     }
 
     match transcript.terminal {
-        TerminalAction::Cancel => replay_full_refund(transcript, ArchiveStatus::Cancelled, OutcomeKind::Void),
-        TerminalAction::Void => replay_full_refund(transcript, ArchiveStatus::Voided, OutcomeKind::Void),
-        TerminalAction::FallbackRefund => {
-            replay_full_refund(transcript, ArchiveStatus::FallbackRefund, OutcomeKind::Refund)
+        TerminalAction::Cancel => {
+            replay_full_refund(transcript, ArchiveStatus::Cancelled, OutcomeKind::Void)
         }
+        TerminalAction::Void => {
+            replay_full_refund(transcript, ArchiveStatus::Voided, OutcomeKind::Void)
+        }
+        TerminalAction::FallbackRefund => replay_full_refund(
+            transcript,
+            ArchiveStatus::FallbackRefund,
+            OutcomeKind::Refund,
+        ),
         TerminalAction::Resolve => {
             if let Some(min) = transcript.min_participants {
                 if transcript.participant_count < min {
@@ -182,8 +188,8 @@ fn replay_resolve(transcript: &RoundTranscript) -> Result<ReplayResult, ReplayEr
                 .collect();
 
             let total_pot: i128 = entries.iter().map(|e| e.amount).sum();
-            let (_, fee_amount) = compute_precision_fee(total_pot, transcript.fee_bps)
-                .unwrap_or((0, 0));
+            let (_, fee_amount) =
+                compute_precision_fee(total_pot, transcript.fee_bps).unwrap_or((0, 0));
 
             let math = compute_precision_payouts(&entries, final_price, transcript.fee_bps)?;
 
