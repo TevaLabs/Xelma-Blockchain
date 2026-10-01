@@ -216,17 +216,57 @@ fn test_protected_action_role_transfers() {
 
 #[test]
 fn test_audit_event_emission() {
+    use soroban_sdk::TryIntoVal;
+
     let (env, client, admin, approver, _oracle, _user) = setup_governance_env();
 
+    // Verify propose emits a gov.proposed event.
     let pid = client.propose_gov_action(&admin, &GovAction::PauseProtocol, &None);
+    let propose_events = env.events().all();
+    let has_proposed = propose_events.iter().any(|(_contract, topics, _data)| {
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env)
+                == Ok(soroban_sdk::symbol_short!("gov"))
+            && topics.get(1).unwrap().try_into_val(&env)
+                == Ok(soroban_sdk::symbol_short!("proposed"))
+    });
+    assert!(has_proposed, "propose_gov_action must emit gov.proposed event");
+
+    // Verify approve emits a gov.approved event.
     client.approve_gov_proposal(&approver, &pid);
+    let approve_events = env.events().all();
+    let has_approved = approve_events.iter().any(|(_contract, topics, _data)| {
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env)
+                == Ok(soroban_sdk::symbol_short!("gov"))
+            && topics.get(1).unwrap().try_into_val(&env)
+                == Ok(soroban_sdk::symbol_short!("approved"))
+    });
+    assert!(has_approved, "approve_gov_proposal must emit gov.approved event");
+
+    // Verify execute emits a gov.executed event (and optionally a mode.transition event).
     client.execute_gov_proposal(&admin, &pid);
-
-    let events = env.events().all();
-    let gov_events: std::vec::Vec<_> = events
-        .into_iter()
-        .filter(|e| e.0 == client.address)
-        .collect();
-
-    assert!(gov_events.len() >= 3);
+    let execute_events = env.events().all();
+    let has_executed = execute_events.iter().any(|(_contract, topics, _data)| {
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env)
+                == Ok(soroban_sdk::symbol_short!("gov"))
+            && topics.get(1).unwrap().try_into_val(&env)
+                == Ok(soroban_sdk::symbol_short!("executed"))
+    });
+    assert!(has_executed, "execute_gov_proposal must emit gov.executed event");
+    // At least the executed event is present; the mode-transition event may also be emitted.
+    let gov_events_count = execute_events
+        .iter()
+        .filter(|(_contract, topics, _data)| {
+            topics.len() == 2
+                && topics
+                    .get(0)
+                    .unwrap()
+                    .try_into_val(&env)
+                    .ok()
+                    == Some(soroban_sdk::symbol_short!("gov"))
+        })
+        .count();
+    assert!(gov_events_count >= 1, "execute step must emit at least one gov event");
 }
