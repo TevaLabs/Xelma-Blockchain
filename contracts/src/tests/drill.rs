@@ -3,7 +3,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKey, OraclePayload, ProtocolStatus};
+use crate::types::{BetSide, DataKeyCore, OraclePayload, ProtocolStatus};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, BytesN, Env,

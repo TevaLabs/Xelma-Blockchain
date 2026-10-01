@@ -3,7 +3,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::DataKey;
+use crate::types::DataKeyScoped;
 use soroban_sdk::testutils::{storage::Persistent as _, Address as _};
 use soroban_sdk::{Address, Env, Vec};
 
@@ -28,7 +28,7 @@ fn set_pending(env: &Env, contract_id: &Address, user: &Address, amount: i128) {
     env.as_contract(contract_id, || {
         env.storage()
             .persistent()
-            .set(&DataKey::PendingWinnings(user.clone()), &amount);
+            .set(&DataKeyScoped::PendingWinnings(user.clone()), &amount);
     });
 }
 
@@ -36,7 +36,7 @@ fn get_pending(env: &Env, contract_id: &Address, user: &Address) -> i128 {
     env.as_contract(contract_id, || {
         env.storage()
             .persistent()
-            .get(&DataKey::PendingWinnings(user.clone()))
+            .get(&DataKeyScoped::PendingWinnings(user.clone()))
             .unwrap_or(0)
     })
 }

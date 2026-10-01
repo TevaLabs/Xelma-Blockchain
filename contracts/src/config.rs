@@ -15,7 +15,7 @@ use crate::common::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ConfigChangeKind, ConfigChangePayload, DataKey, DataKeyCore, DataKeyScoped, FeeModel,
+    ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, FeeModel,
     PendingConfigChange, PrecisionPayoutPolicy, RoundTemplate, PENDING_WINNINGS_EXPIRY_KEY,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol};

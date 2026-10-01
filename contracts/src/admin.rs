@@ -1233,7 +1233,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
     }
 
     // Read pending winnings.
-    let pending_key = DataKey::PendingWinnings(user.clone());
+    let pending_key = DataKeyScoped::PendingWinnings(user.clone());
     let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
     if pending == 0 {
         _emit_action_rejected(

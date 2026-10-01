@@ -4,7 +4,7 @@
 use super::config_helpers::apply_pending_winnings_expiry;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKey, OraclePayload, PendingWinningsUpdatedAtKey};
+use crate::types::{BetSide, DataKeyScoped, OraclePayload, PendingWinningsUpdatedAtKey};
 use soroban_sdk::testutils::{storage::Persistent as _, Address as _, Events as _, Ledger as _};
 use soroban_sdk::{symbol_short, Address, Env, TryIntoVal};
 
@@ -25,7 +25,7 @@ fn setup() -> (Env, Address, Address, VirtualTokenContractClient<'static>) {
 fn set_pending_at_current_ledger(env: &Env, contract_id: &Address, user: &Address, amount: i128) {
     let ledger = env.ledger().sequence();
     env.as_contract(contract_id, || {
-        let key = DataKey::PendingWinnings(user.clone());
+        let key = DataKeyScoped::PendingWinnings(user.clone());
         env.storage().persistent().set(&key, &amount);
         let updated_key = PendingWinningsUpdatedAtKey(user.clone());
         env.storage().persistent().set(&updated_key, &ledger);
