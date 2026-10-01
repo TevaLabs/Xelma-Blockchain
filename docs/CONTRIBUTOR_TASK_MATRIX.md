@@ -160,6 +160,7 @@ and the participant list.
 | Change | Additional requirement |
 |---|---|
 | Any create/cancel/resolve change | Add or update a test in `chaos_recovery.rs` covering pause-then-resume or cancel-then-create across the change |
+| Settlement orchestrator refactoring | Verify `contracts/src/settlement/` module structure; `cargo build --package xelma-contract` passes; public API unchanged; test suite passes |
 | New `DataKey` variant (persistent, long-lived) | Add a TTL extension test in `ttl_tests.rs`; call `_extend_persistent_ttl` at every read/write site |
 | New `DataKey` variant (short-lived, round-scoped) | Verify the key is deleted in `resolve_round` and `cancel_round`; add an assertion to `storage_benchmarks.rs` |
 | `#[contracttype]` struct field added or removed | MAJOR version bump (XDR encoding changes); add a migration path in `MIGRATION.md`; bump `CURRENT_SCHEMA_VERSION`; add a test in `migration_versioning.rs` |

@@ -21,6 +21,12 @@ Xelma-Blockchain/
 │   │   ├── common.rs              # Shared utilities, constants & helper functions
 │   │   ├── errors.rs              # 50 contract error variants
 │   │   ├── types.rs               # DataKey, Round, OraclePayload, etc.
+│   │   ├── settlement.rs          # Stable settlement exports, claims & dispute state
+│   │   └── settlement/
+│   │       ├── resolve.rs         # Oracle validation, payout math & resolution
+│   │       ├── multi_feed.rs      # Quorum/multi-feed oracle resolution
+│   │       ├── cancel.rs          # Cancellation, voids & dispute finalization
+│   │       └── archive.rs         # Round archive & user outcome persistence
 
 ---
 
@@ -137,7 +143,7 @@ helpers, and the business logic for dual-mode prediction markets.
 | Commit-reveal flow | `commit_prediction`, `reveal_prediction` |
 | Position queries | `get_user_position`, `get_user_precision_prediction`, `get_precision_predictions` |
 | Paginated queries | `get_updown_positions_paginated`, `get_precision_predictions_paginated`, `get_round_participants_paginated` |
-| Resolution & settlement | `resolve_round` (UpDown + Precision payout logic), `cancel_round`, `_accumulate_pending` |
+| Resolution & settlement | `settlement/resolve.rs` (oracle validation, UpDown + Precision payout logic), `settlement/multi_feed.rs`, `settlement/cancel.rs`, `settlement/archive.rs`; stable exports and claim/dispute orchestration in `settlement.rs`; `_accumulate_pending` in `common.rs` |
 | Balance & minting | `balance`, `mint_initial`, `_set_balance`, `_add_balance` |
 | Claim winnings | `claim_winnings` |
 | Private helpers | `assert_no_active_round`, `_ensure_not_paused`, `_require_supported_schema`, `_schema_version`, `_extend_persistent_ttl`, `_validate_windows`, `_validate_max_stake`, `_validate_oracle_stale_threshold`, `_validate_oracle_max_deviation_bps`, `_schedule_config_change`, `_apply_config_payload`, `_validate_oracle_payload_context`, `_update_stats_win`, `_update_stats_loss`, `_archive_round`, `payout_add`, `payout_mul` |
