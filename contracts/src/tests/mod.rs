@@ -3,6 +3,7 @@
 
 mod access_control;
 mod adversarial;
+mod governance;
 mod archive_retention;
 mod attestation;
 mod betting;
