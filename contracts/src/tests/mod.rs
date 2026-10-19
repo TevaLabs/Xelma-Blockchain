@@ -12,6 +12,7 @@ mod chaos_recovery;
 mod claim_many;
 mod commit_reveal_e2e;
 // mod commit_reveal_e2e; // upstream bug: all-unrevealed refunds test expects behavior contract doesn't implement
+mod config_boundaries;
 mod config_helpers;
 // mod config_timelock; // upstream bug
 mod conservation;
