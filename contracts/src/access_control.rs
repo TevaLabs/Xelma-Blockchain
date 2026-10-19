@@ -222,11 +222,13 @@ pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
     (enabled, get_access_state(env, user))
 }
 
-/// The single admission gate called by betting entrypoints (Issue #274).
+/// The single admission gate called by betting entrypoints (Issue #274, Issue #702).
 ///
 /// Rules (applied in this order):
 /// 1. A denylisted `user` is always rejected — this is an emergency block and
-///    must win even on open deployments.
+///    must win even on open deployments. If an address is both allowlisted and
+///    denylisted, the denylist strictly wins over the allowlist and participation
+///    is blocked (Issue #702: both listed → blocked).
 /// 2. If allowlist mode is enabled, an `user` that is not allowlisted is rejected.
 /// 3. Otherwise, the call proceeds (default open).
 ///

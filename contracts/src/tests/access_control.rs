@@ -3,7 +3,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{AccessState, BetSide};
+use crate::types::{AccessState, BetSide, DataKeyScoped};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -306,4 +306,96 @@ fn test_protocol_health_reports_access_mode() {
         after.status_code, 7,
         "allowlist mode should surface ACCESS_RESTRICTED"
     );
+}
+
+/// `test_both_listed_denylist_wins_on_bet` (Issue #702) — when an address is
+/// simultaneously present on both the allowlist and the denylist in contract storage,
+/// the denylist strictly wins and the user is refused with `AccessDenied` on bet.
+#[test]
+fn test_both_listed_denylist_wins_on_bet() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.mint_initial(&user);
+    client.set_access_control_enabled(&true);
+
+    // Set both markers in persistent storage
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Allowlisted(user.clone()), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Denylisted(user.clone()), &true);
+    });
+
+    assert!(client.is_allowlisted(&user));
+    assert!(client.is_denylisted(&user));
+    // Precedence rule: denylist wins
+    assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
+
+    client.create_round(&1_0000000, &None);
+
+    // Both listed → blocked on UpDown bet
+    let bet_result = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
+    assert_eq!(bet_result, Err(Ok(ContractError::AccessDenied)));
+}
+
+/// `test_both_listed_denylist_wins_in_open_mode` (Issue #702) — in open mode
+/// (allowlist disabled), an address with both markers set is still blocked by denylist.
+#[test]
+fn test_both_listed_denylist_wins_in_open_mode() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.mint_initial(&user);
+    assert!(!client.is_access_control_enabled());
+
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Allowlisted(user.clone()), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Denylisted(user.clone()), &true);
+    });
+
+    assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
+
+    client.create_round(&1_0000000, &None);
+
+    let bet_result = client.try_place_bet(&user, &100_0000000, &BetSide::Down);
+    assert_eq!(bet_result, Err(Ok(ContractError::AccessDenied)));
+}
+
+/// `test_both_listed_denylist_blocks_precision_and_commit` (Issue #702) —
+/// precision predictions and commits are blocked when both markers exist.
+#[test]
+fn test_both_listed_denylist_blocks_precision_and_commit() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.mint_initial(&user);
+    client.set_access_control_enabled(&true);
+
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Allowlisted(user.clone()), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKeyScoped::Denylisted(user.clone()), &true);
+    });
+
+    client.create_round(&1_0000000, &Some(1));
+
+    let predict = client.try_place_precision_prediction(&user, &125_0000000, &1_1000000);
+    assert_eq!(predict, Err(Ok(ContractError::AccessDenied)));
+
+    let commit = client.try_commit_prediction(
+        &user,
+        &soroban_sdk::BytesN::from_array(&env, &[9; 32]),
+        &75_0000000,
+    );
+    assert_eq!(commit, Err(Ok(ContractError::AccessDenied)));
 }
