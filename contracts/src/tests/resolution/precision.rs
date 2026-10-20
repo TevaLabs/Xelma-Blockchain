@@ -1328,3 +1328,89 @@ fn test_precision_remainder_3way_tie_goes_to_lexicographically_lowest_winner() {
         + client.get_pending_winnings(&highest);
     assert_eq!(total, 100_0000000);
 }
+
+/// Extends remainder ordering verification to a 5-way tie with an indivisible remainder
+/// (Issue #660). Proves that among 5 tied precision winners, the remainder
+/// strictly lands on the lexicographically-lowest address winner in resolution order,
+/// preserving total pot conservation.
+#[test]
+fn test_precision_remainder_5way_tie_goes_to_lexicographically_lowest_winner() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+
+    let mut users: alloc::vec::Vec<Address> = alloc::vec![
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+    ];
+    users.sort();
+    let (lowest, u1, u2, u3, u4) = (
+        users[0].clone(),
+        users[1].clone(),
+        users[2].clone(),
+        users[3].clone(),
+        users[4].clone(),
+    );
+
+    for u in &users {
+        client.mint_initial(u);
+    }
+
+    client.create_round(&1_0000000, &Some(1)); // Precision mode
+
+    // 5-way tie: All 5 predict identical price (2000).
+    // Stakes: lowest=20_0000000, u1=20_0000000, u2=20_0000000, u3=20_0000000, u4=20_0000003.
+    // Total pot = 100_0000003.
+    // 100_0000003 / 5 = 20_0000000 with remainder 3 stroops.
+    // Even though u4 staked the most, the indivisible 3-stroop remainder MUST go to
+    // lowest (the lexicographically lowest address).
+    let price = 2000u128;
+    client.place_precision_prediction(&lowest, &20_0000000, &price);
+    client.place_precision_prediction(&u1, &20_0000000, &price);
+    client.place_precision_prediction(&u2, &20_0000000, &price);
+    client.place_precision_prediction(&u3, &20_0000000, &price);
+    client.place_precision_prediction(&u4, &20_0000003, &price);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price,
+        timestamp: env.ledger().timestamp(),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    // lowest winner receives split + remainder: 20_0000000 + 3 = 20_0000003
+    assert_eq!(client.get_pending_winnings(&lowest), 20_0000003);
+    assert_eq!(client.get_pending_winnings(&u1), 20_0000000);
+    assert_eq!(client.get_pending_winnings(&u2), 20_0000000);
+    assert_eq!(client.get_pending_winnings(&u3), 20_0000000);
+    assert_eq!(client.get_pending_winnings(&u4), 20_0000000);
+
+    // Conservation invariant: exact sum of all payouts matches total pot.
+    let total: i128 = client.get_pending_winnings(&lowest)
+        + client.get_pending_winnings(&u1)
+        + client.get_pending_winnings(&u2)
+        + client.get_pending_winnings(&u3)
+        + client.get_pending_winnings(&u4);
+    assert_eq!(total, 100_0000003);
+}

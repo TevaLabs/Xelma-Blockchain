@@ -32,7 +32,7 @@ of stake size or who bet first. See
 section for pure-math golden vectors (2/3/5-way ties, including one with an
 unrevealed non-winner) and
 `tests::resolution::precision::test_precision_remainder_goes_to_lexicographically_lowest_winner`
-(plus its 3-way sibling) for the end-to-end contract-level proof with real
+(plus its 3-way and 5-way siblings) for the end-to-end contract-level proof with real
 addresses.
 
 ### Precision commit-reveal (user-visible rules)
