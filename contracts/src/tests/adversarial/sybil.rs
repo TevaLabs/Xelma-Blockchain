@@ -22,7 +22,9 @@ fn test_critical_sybil_faucet_abuse_mint_limit() {
     assert_eq!(client.mint_initial(&sybil_2), 1000_0000000);
 
     let blocked = client.try_mint_initial(&sybil_3);
-    let blocked_err = blocked.unwrap().unwrap_err();
+    // mint_initial uses panic_with_error! so try_mint_initial returns
+    // Err(Ok(sdk_error)) on failure — unwrap_err().unwrap() extracts the error.
+    let blocked_err = blocked.unwrap_err().unwrap();
     assert_eq!(
         blocked_err,
         soroban_sdk::Error::from_contract_error(ContractError::MintLimitExceeded as u32)
@@ -56,7 +58,9 @@ fn test_sybil_faucet_abuse_epoch_budget() {
     client.mint_initial(&sybil_2);
 
     let blocked = client.try_mint_initial(&sybil_3);
-    let blocked_err = blocked.unwrap().unwrap_err();
+    // mint_initial uses panic_with_error! so try_mint_initial returns
+    // Err(Ok(sdk_error)) on failure — unwrap_err().unwrap() extracts the error.
+    let blocked_err = blocked.unwrap_err().unwrap();
     assert_eq!(
         blocked_err,
         soroban_sdk::Error::from_contract_error(ContractError::EpochBudgetExceeded as u32)

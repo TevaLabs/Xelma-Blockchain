@@ -26,7 +26,7 @@ use crate::types::{
 };
 use alloc::vec::Vec as StdVec;
 use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
+use soroban_sdk::{contracttype, symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Vec};
 
 #[contracttype]
 #[derive(Clone)]
@@ -274,7 +274,7 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
 
     // Clean up participant list and mark round as cancelled
     let participant_count = participants.len();
-    let total_pot = match round.mode {
+    let _total_pot = match round.mode {
         RoundMode::UpDown => round.pool_up.checked_add(round.pool_down).unwrap_or(0),
         RoundMode::Precision => {
             let mut pot = 0i128;
@@ -519,9 +519,18 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
 
     // Heartbeat health enforcement (Issue #264) — must come before any
     // state mutation (nonce consumption) so a stale oracle cannot race
-    // the admin override.
+    // the admin override. An armed one-shot override bypasses the block
+    // and is consumed here; the `hoverride` event is published once the
+    // round id is known.
     let hb_config = _load_hb_config(&env);
-    if _check_heartbeat_health_blocked(&env, &hb_config) {
+    let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
+    let consumed_hb_override = hb_blocked && hb_config.override_armed;
+    if hb_blocked && !hb_config.override_armed {
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("oracle"), symbol_short!("hblocked")),
+            (payload.round_id,),
+        );
         _emit_action_rejected(
             &env,
             &oracle,
@@ -568,6 +577,20 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         return Err(ContractError::OracleNetworkMismatch);
     }
 
+    if consumed_hb_override {
+        crate::admin::_consume_hb_override(&env);
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("oracle"), symbol_short!("hoverride")),
+            (round.round_id,),
+        );
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("oracle"), Symbol::new(&env, "hb_override")),
+            (round.round_id,),
+        );
+    }
+
     // Verify timestamp is inside the round-relative economic window.
     // This replaces the old absolute-freshness (300 s) check which could
     // accept wrong-phase prices from outside the round's active period.
@@ -588,9 +611,9 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
                 &env,
                 &oracle,
                 symbol_short!("resolve"),
-                ContractError::WindowOutOfRange,
+                ContractError::InvalidAttestation,
             );
-            ContractError::WindowOutOfRange
+            ContractError::InvalidAttestation
         })?;
 
         let message = _build_attestation_message(&env, &payload);
@@ -778,7 +801,7 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
     // that the oracle heartbeat is live before allowing settlement.
     let hb_config = crate::admin::_load_hb_config(&env);
 
-    if hb_config.strict_mode {
+    if hb_config.strict_mode && !consumed_hb_override {
         let hb_blocked = _check_heartbeat_health_blocked(&env, &hb_config);
 
         if hb_blocked {
@@ -917,6 +940,48 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
             ContractError::OracleNetworkMismatch,
         );
         return Err(ContractError::OracleNetworkMismatch);
+    }
+
+    // ── Domain-separated signed attestation gate (Issue #720) ─────────────
+    let attestation_config = _load_attestation_config(&env);
+    if let Some(pubkey) = attestation_config.key {
+        let signatures = payload.attestations.clone().ok_or_else(|| {
+            _emit_action_rejected(
+                &env,
+                &oracle,
+                symbol_short!("resolve"),
+                ContractError::InvalidAttestation,
+            );
+            ContractError::InvalidAttestation
+        })?;
+
+        if signatures.len() != payload.sources.len() {
+            _emit_action_rejected(
+                &env,
+                &oracle,
+                symbol_short!("resolve"),
+                ContractError::InvalidAttestation,
+            );
+            return Err(ContractError::InvalidAttestation);
+        }
+
+        for i in 0..payload.sources.len() {
+            let source = payload.sources.get(i).ok_or(ContractError::Overflow)?;
+            let price = payload.prices.get(i).ok_or(ContractError::Overflow)?;
+            let sig = signatures.get(i).ok_or(ContractError::InvalidAttestation)?;
+
+            let message = _build_feed_attestation_message(
+                &env,
+                &payload.network_id,
+                &payload.contract_addr,
+                payload.round_id,
+                source,
+                price,
+                payload.timestamp,
+                payload.nonce,
+            );
+            env.crypto().ed25519_verify(&pubkey, &message, &sig);
+        }
     }
 
     // ── Timestamp window check (round-relative economic window) ───────────
@@ -1549,10 +1614,10 @@ pub fn _apply_one_sided_policy(
         OneSidedPolicy::Refund | OneSidedPolicy::Void => {
             if !participants.is_empty() {
                 _record_refunds_indexed(env, round.round_id, 0, participants)?;
-            } else if let Some(pos_map) = positions {
-                #[cfg(feature = "legacy-map-settlement")]
+            } else if let Some(_pos_map) = positions {
+                #[cfg(any(test, feature = "legacy-map-settlement"))]
                 {
-                    _record_refunds_legacy(env, round.round_id, pos_map)?;
+                    _record_refunds_legacy(env, round.round_id, _pos_map)?;
                 }
             }
             (round.pool_up.saturating_add(round.pool_down), 0i128)
@@ -1560,10 +1625,10 @@ pub fn _apply_one_sided_policy(
         OneSidedPolicy::CarryForward => {
             if !participants.is_empty() {
                 _record_refunds_indexed(env, round.round_id, 0, participants)?;
-            } else if let Some(pos_map) = positions {
-                #[cfg(feature = "legacy-map-settlement")]
+            } else if let Some(_pos_map) = positions {
+                #[cfg(any(test, feature = "legacy-map-settlement"))]
                 {
-                    _record_refunds_legacy(env, round.round_id, pos_map)?;
+                    _record_refunds_legacy(env, round.round_id, _pos_map)?;
                 }
             }
             (0i128, round.pool_up.saturating_add(round.pool_down))
@@ -1660,7 +1725,7 @@ pub fn _resolve_updown_mode(
             )?;
         }
     } else {
-        #[cfg(feature = "legacy-map-settlement")]
+        #[cfg(any(test, feature = "legacy-map-settlement"))]
         {
             let positions: Map<Address, UserPosition> = env
                 .storage()
@@ -1696,7 +1761,7 @@ pub fn _resolve_updown_mode(
     Ok((is_one_sided, fee_amount))
 }
 
-#[cfg(feature = "legacy-map-settlement")]
+#[cfg(any(test, feature = "legacy-map-settlement"))]
 #[deprecated(
     note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
 )]
@@ -1731,7 +1796,7 @@ pub fn _record_refunds_legacy(
     Ok(())
 }
 
-#[cfg(feature = "legacy-map-settlement")]
+#[cfg(any(test, feature = "legacy-map-settlement"))]
 #[deprecated(
     note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
 )]
@@ -1891,7 +1956,7 @@ pub fn _resolve_precision_mode(
         .unwrap_or(Vec::new(env));
     participants = sort_addresses(participants);
 
-    #[cfg(feature = "legacy-map-settlement")]
+    #[cfg(any(test, feature = "legacy-map-settlement"))]
     if participants.is_empty() {
         let legacy: Map<Address, PrecisionPrediction> = env
             .storage()
@@ -1904,7 +1969,7 @@ pub fn _resolve_precision_mode(
         return _resolve_precision_legacy(env, round_id, &legacy, final_price);
     }
 
-    #[cfg(not(feature = "legacy-map-settlement"))]
+    #[cfg(not(any(test, feature = "legacy-map-settlement")))]
     if participants.is_empty() {
         return Ok((0, 0));
     }
@@ -2100,7 +2165,7 @@ pub fn _resolve_precision_mode(
     Ok((fee_amount, total_pot))
 }
 
-#[cfg(feature = "legacy-map-settlement")]
+#[cfg(any(test, feature = "legacy-map-settlement"))]
 #[deprecated(
     note = "Legacy map settlement is disabled by default and must be removed no later than 2026-12-31; enable the legacy-map-settlement feature only for migration proofs."
 )]
@@ -2399,7 +2464,7 @@ pub fn _archive_round(
                 .persistent()
                 .get(&DataKeyScoped::RoundParticipants(round.round_id))
                 .unwrap_or(Vec::new(env));
-            #[cfg(feature = "legacy-map-settlement")]
+            #[cfg(any(test, feature = "legacy-map-settlement"))]
             if participants.is_empty() {
                 let legacy: Map<Address, PrecisionPrediction> = env
                     .storage()
@@ -2438,7 +2503,7 @@ pub fn _archive_round(
                     }
                 }
             }
-            #[cfg(not(feature = "legacy-map-settlement"))]
+            #[cfg(not(any(test, feature = "legacy-map-settlement")))]
             {
                 for i in 0..participants.len() {
                     if let Some(user) = participants.get(i) {
@@ -2706,6 +2771,29 @@ pub fn _build_attestation_message(env: &Env, payload: &OraclePayload) -> Bytes {
     message
 }
 
+/// Builds the canonical domain-separated message for an individual feed observation
+/// in a multi-feed oracle payload (Issue #720).
+pub fn _build_feed_attestation_message(
+    env: &Env,
+    network_id: &BytesN<32>,
+    contract_addr: &Address,
+    round_id: u32,
+    source: u32,
+    price: u128,
+    timestamp: u64,
+    nonce: u64,
+) -> Bytes {
+    let mut message = Bytes::from_slice(env, ATTESTATION_DOMAIN_PREFIX);
+    message.append(&network_id.clone().into());
+    message.append(&contract_addr.clone().to_xdr(env));
+    message.append(&round_id.to_xdr(env));
+    message.append(&source.to_xdr(env));
+    message.append(&price.to_xdr(env));
+    message.append(&timestamp.to_xdr(env));
+    message.append(&nonce.to_xdr(env));
+    message
+}
+
 /// Computes the TWAP reference price from the last `window_samples` recorded
 /// settlement prices (Issue #266). Simple arithmetic mean — samples are
 /// recorded once per settled round (not on a continuous clock), so a
@@ -2780,11 +2868,16 @@ pub fn _check_heartbeat_health_blocked(env: &Env, config: &HbGateConfig) -> bool
     _extend_persistent_ttl(env, &heartbeat_key);
     let record: OracleHeartbeatRecord = match env.storage().persistent().get(&heartbeat_key) {
         Some(r) => r,
-        None => return true, // No heartbeat → blocked
+        None => return config.strict_mode, // No heartbeat -> blocked only in strict mode
     };
 
     // Offline status always blocks
     if record.status == 2 {
+        return true;
+    }
+
+    // Degraded status (1) blocks if strict mode is enabled
+    if config.strict_mode && record.status == 1 {
         return true;
     }
 
@@ -2797,7 +2890,13 @@ pub fn _check_heartbeat_health_blocked(env: &Env, config: &HbGateConfig) -> bool
         .get(&threshold_key)
         .unwrap_or(DEFAULT_ORACLE_STALE_THRESHOLD);
 
-    let grace: u64 = config.grace_seconds;
+    let grace: u64 = if config.strict_mode {
+        config.grace_seconds
+    } else if config.grace_seconds == 0 {
+        crate::common::DEFAULT_ORACLE_HEARTBEAT_GRACE_SECONDS
+    } else {
+        config.grace_seconds
+    };
 
     let current_time = env.ledger().timestamp();
     let deadline = record

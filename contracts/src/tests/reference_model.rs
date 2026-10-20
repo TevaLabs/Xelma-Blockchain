@@ -409,7 +409,13 @@ pub fn ref_precision_settle_with_model(
                 compute_fee_with_model(profit, fee_bps)
             }
         }
-        _ => compute_fee(total_pot, fee_bps),
+        _ => {
+            if winner_stakes >= total_pot {
+                0
+            } else {
+                compute_fee(total_pot, fee_bps)
+            }
+        }
     };
     let distributable = total_pot - fee;
     // Remainder goes to first winner, so sum == distributable exactly.

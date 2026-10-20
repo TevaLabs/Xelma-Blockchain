@@ -1071,7 +1071,7 @@ pub fn calculate_protocol_fee_updown(
     winning_pool: i128,
     losing_pool: i128,
 ) -> Result<(i128, i128, i128), ContractError> {
-    if bps.is_none() {
+    if bps.is_none() || winning_pool <= 0 || losing_pool <= 0 {
         return Ok((winning_pool, losing_pool, 0));
     }
     let bps_value = bps.unwrap();
@@ -1141,7 +1141,7 @@ pub fn calculate_protocol_fee_precision(
     total_pot: i128,
     winner_stakes: i128,
 ) -> Result<(i128, i128), ContractError> {
-    if bps.is_none() || total_pot <= 0 {
+    if bps.is_none() || total_pot <= 0 || winner_stakes >= total_pot || winner_stakes <= 0 {
         return Ok((total_pot, 0));
     }
     let bps_value = bps.unwrap();

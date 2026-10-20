@@ -374,7 +374,7 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
 
 /// Loads the deviation guardrail config, returning the `StartPrice` default if unset (Issue #266).
 pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
-    let key = DeviationConfigKey::Config;
+    let key = DeviationConfigKey::DevCfg;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -390,7 +390,7 @@ pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
 }
 
 fn _save_deviation_config(env: &Env, config: &DeviationConfig) {
-    let key = DeviationConfigKey::Config;
+    let key = DeviationConfigKey::DevCfg;
     env.storage().persistent().set(&key, config);
     env.storage()
         .persistent()
@@ -457,7 +457,7 @@ pub fn get_deviation_window_samples(env: Env) -> u32 {
 
 /// Loads the attestation config, returning `key: None` (disabled) if unset (Issue #263).
 pub fn _load_attestation_config(env: &Env) -> AttestationConfig {
-    let key = AttestationConfigKey::Config;
+    let key = AttestationConfigKey::Attest;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -484,7 +484,7 @@ pub fn set_attestation_key(env: Env, key: Option<BytesN<32>>) -> Result<(), Cont
         _emit_action_rejected(&env, &admin, symbol_short!("attkey"), e);
     })?;
 
-    let storage_key = AttestationConfigKey::Config;
+    let storage_key = AttestationConfigKey::Attest;
     env.storage()
         .persistent()
         .set(&storage_key, &AttestationConfig { key: key.clone() });
@@ -617,6 +617,11 @@ pub fn arm_hb_override(env: Env) -> Result<(), ContractError> {
     let mut config = _load_hb_config(&env);
     config.override_armed = true;
     _save_hb_config(&env, &config);
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("oracle"), Symbol::new(&env, "hb_arm_ovr")),
+        (),
+    );
     Ok(())
 }
 
@@ -641,6 +646,11 @@ pub fn set_hb_grace_seconds(env: Env, seconds: u64) -> Result<(), ContractError>
     _ensure_not_paused(&env).inspect_err(|&e| {
         _emit_action_rejected(&env, &admin, symbol_short!("hbgrace"), e);
     })?;
+    if !(crate::common::MIN_ORACLE_HEARTBEAT_GRACE_SECONDS..=crate::common::MAX_ORACLE_HEARTBEAT_GRACE_SECONDS)
+        .contains(&seconds)
+    {
+        return Err(ContractError::InvalidDuration);
+    }
     let mut config = _load_hb_config(&env);
     config.grace_seconds = seconds;
     _save_hb_config(&env, &config);
@@ -649,7 +659,12 @@ pub fn set_hb_grace_seconds(env: Env, seconds: u64) -> Result<(), ContractError>
 
 /// Returns the configured heartbeat grace period in seconds (default 0).
 pub fn get_hb_grace_seconds(env: Env) -> u64 {
-    _load_hb_config(&env).grace_seconds
+    let key = HbGateKey::HbGate;
+    if !env.storage().persistent().has(&key) {
+        crate::common::DEFAULT_ORACLE_HEARTBEAT_GRACE_SECONDS
+    } else {
+        _load_hb_config(&env).grace_seconds
+    }
 }
 
 /// Consumes the heartbeat override if armed (called from settlement).
@@ -668,7 +683,7 @@ pub fn _consume_hb_override(env: &Env) -> bool {
 
 /// Loads the heartbeat gate config, returning defaults if unset.
 pub fn _load_hb_config(env: &Env) -> HbGateConfig {
-    let key = HbGateKey::Config;
+    let key = HbGateKey::HbGate;
     if env.storage().persistent().has(&key) {
         env.storage()
             .persistent()
@@ -686,7 +701,7 @@ pub fn _load_hb_config(env: &Env) -> HbGateConfig {
 
 /// Saves the heartbeat gate config to persistent storage.
 pub fn _save_hb_config(env: &Env, config: &HbGateConfig) {
-    let key = HbGateKey::Config;
+    let key = HbGateKey::HbGate;
     env.storage().persistent().set(&key, config);
     env.storage()
         .persistent()

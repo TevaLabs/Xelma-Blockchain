@@ -17,6 +17,7 @@ fn setup(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address, Addres
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     (client, contract_id, admin, oracle)
 }
 

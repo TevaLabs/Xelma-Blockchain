@@ -607,6 +607,18 @@ pub fn commit_prediction(
         return Err(ContractError::AlreadyBet);
     }
 
+    // Enforce precision participant cap (same guard as place_precision_prediction)
+    let participants_key = DataKeyScoped::RoundParticipants(round.round_id);
+    let participants: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&participants_key)
+        .unwrap_or(Vec::new(&env));
+    let max_precision_participants = get_max_precision_participants(env.clone());
+    if participants.len() >= max_precision_participants {
+        return Err(ContractError::PrecisionCapExceeded);
+    }
+
     // Deduct balance
     let new_balance = user_balance
         .checked_sub(amount)
@@ -621,7 +633,7 @@ pub fn commit_prediction(
     };
     env.storage().persistent().set(&commit_key, &commitment);
 
-    // Append to shared participant list
+    // Append to shared participant list (reuses the Vec loaded during cap check)
     let participants_key = DataKeyScoped::RoundParticipants(round.round_id);
     let mut participants: Vec<Address> = env
         .storage()

@@ -861,6 +861,7 @@ pub struct MultiFeedPayload {
     pub network_id: BytesN<32>,
     pub contract_addr: Address,
     pub timestamp: u64,
+    pub attestations: Option<Vec<BytesN<64>>>,
 }
 
 #[contracttype]
@@ -902,7 +903,7 @@ pub struct DeviationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum DeviationConfigKey {
-    Config,
+    DevCfg,
 }
 
 #[contracttype]
@@ -914,7 +915,7 @@ pub struct AttestationConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum AttestationConfigKey {
-    Config,
+    Attest,
 }
 
 #[contracttype]
@@ -928,7 +929,7 @@ pub struct HbGateConfig {
 #[contracttype]
 #[derive(Clone)]
 pub enum HbGateKey {
-    Config,
+    HbGate,
 }
 
 #[contracttype]

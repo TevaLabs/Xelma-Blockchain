@@ -235,6 +235,7 @@ export interface MultiFeedPayload {
   round_id: u32;
   sources: Array<u32>;
   timestamp: u64;
+  attestations?: Array<Buffer>;
 }
 
 export interface OracleQuorumConfig {
@@ -645,7 +646,9 @@ export const ContractError = {
   /** The supplied token amount is invalid. */
   101: {message:"InvalidAmount"},
   /** The close-buffer has frozen betting before the betting window ends. */
-  102: {message:"BettingClosed"}
+  102: {message:"BettingClosed"},
+  /** Oracle attestation signature is missing or invalid when attestation is required */
+  103: {message:"InvalidAttestation"}
 }
 
 /**

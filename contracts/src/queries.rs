@@ -10,7 +10,7 @@ use crate::config::{
 };
 use crate::errors::ContractError;
 use crate::types::{
-    ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyScoped, LeaderboardEntry,
+    ArchivedRoundSummary, BetSide, DataKey, DataKeyCore, DataKeyExt, DataKeyScoped, LeaderboardEntry,
     MarketSnapshot, PendingWinningsUpdatedAtKey, PrecisionCommitment, PrecisionPayoutPolicy,
     PrecisionPrediction, Round, RoundMode, RoundPhase, RoundPoolStats, RoundTemplate,
     SeasonArchive, SimulationResult, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
@@ -839,8 +839,8 @@ fn _find_cursor_position(sorted: &Vec<Address>, cursor: &Option<Address>) -> u32
     sorted.len()
 }
 
-/// Finds the index of the first entry in a sorted leaderboard Vec whose user
-/// address is strictly greater than `cursor`. Returns 0 when `cursor` is `None`.
+/// Finds the index in a sorted leaderboard Vec right after `cursor`.
+/// Returns 0 when `cursor` is `None`.
 fn _find_cursor_in_leaderboard(sorted: &Vec<LeaderboardEntry>, cursor: &Option<Address>) -> u32 {
     let cursor_addr = match cursor {
         Some(a) => a,
@@ -849,8 +849,8 @@ fn _find_cursor_in_leaderboard(sorted: &Vec<LeaderboardEntry>, cursor: &Option<A
 
     for i in 0..sorted.len() {
         if let Some(entry) = sorted.get(i) {
-            if &entry.user > cursor_addr {
-                return i;
+            if &entry.user == cursor_addr {
+                return i + 1;
             }
         }
     }
@@ -991,6 +991,55 @@ fn _collect_leaderboard_entries(env: &Env) -> Vec<LeaderboardEntry> {
             .unwrap_or(Vec::new(env));
         for i in 0..participants.len() {
             if let Some(user) = participants.get(i) {
+                let mut found = false;
+                for j in 0..seen.len() {
+                    if let Some(s) = seen.get(j) {
+                        if s == user {
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if !found {
+                    seen.push_back(user);
+                }
+            }
+        }
+    }
+
+    // Include any users indexed in lifetime LeaderboardWins or LeaderboardStreak.
+    let wins_key = DataKeyCore::Ext(DataKeyExt::LeaderboardWins);
+    if let Some(list) = env
+        .storage()
+        .persistent()
+        .get::<_, Vec<Address>>(&wins_key)
+    {
+        for i in 0..list.len() {
+            if let Some(user) = list.get(i) {
+                let mut found = false;
+                for j in 0..seen.len() {
+                    if let Some(s) = seen.get(j) {
+                        if s == user {
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if !found {
+                    seen.push_back(user);
+                }
+            }
+        }
+    }
+
+    let streak_key = DataKeyCore::Ext(DataKeyExt::LeaderboardStreak);
+    if let Some(list) = env
+        .storage()
+        .persistent()
+        .get::<_, Vec<Address>>(&streak_key)
+    {
+        for i in 0..list.len() {
+            if let Some(user) = list.get(i) {
                 let mut found = false;
                 for j in 0..seen.len() {
                     if let Some(s) = seen.get(j) {

@@ -69,6 +69,10 @@ fn resolve_at(
     let round = client
         .get_active_round()
         .expect("active round required to resolve");
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+        li.timestamp = round.start_timestamp + 60;
+    });
     client.resolve_round(&OraclePayload {
         price: final_price,
         timestamp: env.ledger().timestamp(),
@@ -167,6 +171,8 @@ fn coverage_only_for_whitelisted_events() {
     let (client, contract_id, _admin, oracle) = setup_contract(&env);
 
     // Fund the insurance pool
+    set_fee_bps_now(&env, &contract_id, 200);
+    set_fee_model_now(&env, &contract_id, FeeModel::FeeOnPot);
     client.set_insurance_split_bps(&5000);
     client.set_insurance_coverage_bps(&1000); // 10% coverage
     let mut whitelist: SorobanVec<u32> = SorobanVec::new(&env);
@@ -431,12 +437,12 @@ fn fee_conservation_insurance_fee_on_winnings() {
     let insurance_balance = client.get_insurance_fund_balance();
     let total_fee = ops_treasury + insurance_balance;
 
-    // Fee on winnings: fee = losing_pool * bps / 10000 = 1000 * 200 / 10000 = 20
-    assert_eq!(total_fee, 20, "fee-on-winnings total should be correct");
+    // Fee on winnings: fee = losing_pool * bps / 10000 = 2000 * 200 / 10000 = 40
+    assert_eq!(total_fee, 40, "fee-on-winnings total should be correct");
 
     // Each gets 50%
-    assert_eq!(insurance_balance, 10);
-    assert_eq!(ops_treasury, 10);
+    assert_eq!(insurance_balance, 20);
+    assert_eq!(ops_treasury, 20);
 }
 
 // ─── Top-up tests ────────────────────────────────────────────────────────────
