@@ -442,3 +442,197 @@ fn test_health_claims_only_does_not_mask_stale_oracle() {
     client.set_runtime_mode(&2u32);
     assert_eq!(client.get_protocol_health().status_code, 1); // PAUSED
 }
+
+// ─── ProtocolHealthStatus degraded paths (Issue #718) ────────────────────────
+//
+// These integration tests drive the *degraded* branches of
+// `get_protocol_health` end-to-end through the public query surface and pin the
+// composite `status_code` for each, alongside the raw component fields that
+// produced it. They complement the matrix test above (which asserts the
+// `paused` invariant) by covering HEALTHY, ORACLE_STALE (degraded *and*
+// offline), ROUND_STALE, ACCESS_RESTRICTED and the missing-heartbeat path.
+
+/// A fresh, live round with a live oracle and no restrictions reads HEALTHY and
+/// reports every component field consistently.
+#[test]
+fn test_health_healthy_all_components_nominal() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    client.create_round(&10_0000u128, &None);
+
+    let health = client.get_protocol_health();
+    assert_eq!(health.status_code, 0); // HEALTHY
+    assert!(!health.paused);
+    assert!(health.oracle_live);
+    assert_eq!(health.oracle_status, 0); // active
+    assert!(health.has_active_round);
+    assert_eq!(health.active_round_phase, 1); // betting
+    assert!(health.schema_version >= 1);
+}
+
+/// No active round + live oracle is the idle-but-nominal NO_ACTIVE_ROUND state,
+/// and its phase component is 0 (`no_round`).
+#[test]
+fn test_health_no_active_round_phase_is_zero() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+
+    let health = client.get_protocol_health();
+    assert_eq!(health.status_code, 4); // NO_ACTIVE_ROUND
+    assert!(!health.has_active_round);
+    assert_eq!(health.active_round_phase, 0);
+    assert!(health.oracle_live);
+}
+
+/// A heartbeat marked `degraded` (status 1) still counts as live while the
+/// timestamp is fresh — ORACLE_STALE is driven by staleness, not by the raw
+/// degraded flag. The raw `oracle_status` is still surfaced for operators.
+#[test]
+fn test_health_degraded_heartbeat_is_live_and_healthy() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    client.update_oracle_heartbeat(&1u32); // degraded
+    client.create_round(&10_0000u128, &None);
+
+    let health = client.get_protocol_health();
+    assert_eq!(health.oracle_status, 1); // degraded surfaced
+    assert!(health.oracle_live);
+    assert_eq!(health.status_code, 0); // HEALTHY — degraded-but-fresh
+}
+
+/// An `offline` heartbeat (status 2) is never live, regardless of timestamp:
+/// the probe must report ORACLE_STALE and reflect `oracle_status == 2`.
+#[test]
+fn test_health_offline_heartbeat_is_stale() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    client.update_oracle_heartbeat(&2u32); // offline
+
+    let health = client.get_protocol_health();
+    assert_eq!(health.oracle_status, 2); // offline surfaced
+    assert!(!health.oracle_live);
+    // No active round: oracle-not-live alone is the single degradation.
+    assert_eq!(health.status_code, 2); // ORACLE_STALE
+}
+
+/// A missing heartbeat record reports `oracle_status == 3` (unknown) and is
+/// treated as not live, yielding ORACLE_STALE for an otherwise idle protocol.
+#[test]
+fn test_health_missing_heartbeat_reports_unknown_status() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    // Intentionally do NOT call update_oracle_heartbeat.
+
+    let health = client.get_protocol_health();
+    assert_eq!(health.oracle_status, 3); // unknown
+    assert!(!health.oracle_live);
+    assert_eq!(health.status_code, 2); // ORACLE_STALE
+}
+
+/// Staleness is measured against the configured threshold: one second past it
+/// flips the oracle to not-live and escalates an idle protocol to ORACLE_STALE.
+#[test]
+fn test_health_stale_threshold_boundary() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    let threshold = client.get_oracle_stale_threshold();
+
+    // Exactly at the threshold: still live.
+    env.ledger().with_mut(|li| li.timestamp += threshold);
+    let at = client.get_protocol_health();
+    assert!(at.oracle_live, "heartbeat at the threshold is still live");
+    assert_eq!(at.status_code, 4); // NO_ACTIVE_ROUND (idle, fresh oracle)
+
+    // One second past: stale.
+    env.ledger().with_mut(|li| li.timestamp += 1);
+    let past = client.get_protocol_health();
+    assert!(!past.oracle_live);
+    assert_eq!(past.status_code, 2); // ORACLE_STALE
+}
+
+/// An active round past its `end_ledger` (phase 3 `resolvable`) with a live
+/// oracle is ROUND_STALE, and the phase component reflects `resolvable`.
+#[test]
+fn test_health_round_stale_when_past_end_ledger() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    client.create_round(&10_0000u128, &None);
+
+    // start_ledger=1, bet_end=7, end=19 → advance beyond end_ledger.
+    env.ledger().with_mut(|li| li.sequence_number = 25);
+
+    let health = client.get_protocol_health();
+    assert!(health.has_active_round);
+    assert_eq!(health.active_round_phase, 3); // resolvable
+    assert!(health.oracle_live);
+    assert_eq!(health.status_code, 3); // ROUND_STALE
+}
+
+/// ROUND_STALE combined with a stale oracle escalates to MULTIPLE_ISSUES
+/// (two simultaneous degradations), never misleadingly reporting one alone.
+#[test]
+fn test_health_round_stale_plus_oracle_stale_is_multiple_issues() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    client.create_round(&10_0000u128, &None);
+    env.ledger().with_mut(|li| li.sequence_number = 25); // past end_ledger
+
+    let threshold = client.get_oracle_stale_threshold();
+    env.ledger().with_mut(|li| li.timestamp += threshold + 1);
+
+    let health = client.get_protocol_health();
+    assert_eq!(health.active_round_phase, 3);
+    assert!(!health.oracle_live);
+    assert_eq!(health.status_code, 5); // MULTIPLE_ISSUES
+}
+
+/// With allowlist access control enabled and everything else healthy, the probe
+/// reports ACCESS_RESTRICTED (7) — an informational, non-alerting state — while
+/// still being an active, live round.
+#[test]
+fn test_health_access_restricted_when_allowlist_enabled() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    client.create_round(&10_0000u128, &None);
+    client.set_access_control_enabled(&true);
+
+    let health = client.get_protocol_health();
+    assert!(!health.paused);
+    assert!(health.oracle_live);
+    assert!(health.has_active_round);
+    assert_eq!(health.status_code, 7); // ACCESS_RESTRICTED
+}
+
+/// When an active round exists, no round degradation fires while the round is
+/// still in its betting phase (phase 1), keeping the protocol HEALTHY.
+#[test]
+fn test_health_round_phase_betting_is_not_stale() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    client.create_round(&10_0000u128, &None);
+
+    let health = client.get_protocol_health();
+    assert_eq!(health.active_round_phase, 1); // betting
+    assert_eq!(health.status_code, 0); // HEALTHY
+}
+
+/// The snapshot's ledger coordinates echo the current ledger, so monitoring can
+/// correlate a health reading with the exact ledger that produced it.
+#[test]
+fn test_health_snapshot_ledger_coordinates_match() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 777;
+        li.timestamp = 1_700_000_000;
+    });
+
+    let health = client.get_protocol_health();
+    assert_eq!(health.ledger_sequence, 777);
+    assert_eq!(health.ledger_timestamp, 1_700_000_000);
+}

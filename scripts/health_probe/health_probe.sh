@@ -8,13 +8,18 @@
 # triage protocol liveness.
 #
 # Usage:
-#   ./scripts/health_probe/health_probe.sh <CONTRACT_ID> [--network <net>] [--source <id>] [--json]
+#   ./scripts/health_probe/health_probe.sh <CONTRACT_ID> [--network <net>] [--source <id>] [--json] [--prometheus]
 #
 # Exit codes:
 #   0  OK     — HEALTHY (0) or NO_ACTIVE_ROUND (4)
 #   1  WARN   — ORACLE_STALE (2), ROUND_STALE (3), or CLAIMS_ONLY (6)
 #   2  CRIT   — PAUSED (1) or MULTIPLE_ISSUES (5)
 #   3  UNKNOWN — CLI not found / contract unreachable / parse failure
+#
+# Output formats:
+#   (default)     Human-readable scorecard
+#   --json        Machine-readable JSON (see docs below / README)
+#   --prometheus  Prometheus text exposition format (Issue #719)
 #
 # No-round policy:
 #   `status_code = 4` (NO_ACTIVE_ROUND) is treated as OK (exit 0) because
@@ -24,7 +29,7 @@
 #
 # Prerequisites: stellar CLI (>=22), jq.
 #
-# Issue: #303
+# Issues: #303, #717, #719
 #
 set -euo pipefail
 
@@ -35,6 +40,7 @@ PROG="$(basename "$0")"
 NETWORK="${NETWORK:-local}"
 SOURCE_ID="${SOURCE_ID:-health-probe-$$}"
 JSON_OUT=0
+PROM_OUT=0
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -80,6 +86,12 @@ declare -A PHASE_LABEL=(
   [3]="resolvable"
 )
 
+# Precision payout policy codes (contracts/src/config.rs:get_precision_payout_policy).
+declare -A POLICY_LABEL=(
+  [0]="Equal"
+  [1]="StakeWeighted"
+)
+
 # ── Help ──────────────────────────────────────────────────────────────────────
 usage() {
   cat <<EOF
@@ -95,6 +107,7 @@ Options:
   --network, -n NAME   Soroban network to query (default: local)
   --source, -s ID      Identity alias for the source account (default: auto-generated)
   --json, -j           Output JSON to stdout instead of human-readable text
+  --prometheus, -p     Output Prometheus text exposition format instead of text
   --help, -h           Show this help and exit
 
 Environment:
@@ -106,6 +119,11 @@ Exit codes:
   1  WARN   — ORACLE_STALE or ROUND_STALE (attention needed soon)
   2  CRIT   — PAUSED or MULTIPLE_ISSUES (immediate operator action required)
   3  UNKNOWN — Prerequisite missing or contract unreachable
+
+Prometheus output (--prometheus):
+  Emits xelma_health_* gauges in the Prometheus text exposition format. See
+  scripts/health_probe/README.md §"Prometheus text format" for the full metric
+  list and scrape/alerting examples.
 
 Sample alerts (Prometheus-style):
   # Critical: contract is paused
@@ -125,15 +143,22 @@ EOF
 }
 
 # ── JSON emitter ──────────────────────────────────────────────────────────────
+# Args (positional):
+#   1 paused  2 oracle_live  3 oracle_status  4 has_active_round
+#   5 active_round_phase  6 schema_version  7 ledger_sequence
+#   8 ledger_timestamp  9 status_code  10 severity  11 contract_id  12 source
+#   13 policy_code  14 dispute_ledgers
 emit_json() {
   local paused="$1" oracle_live="$2" oracle_status="$3"
   local has_active_round="$4" active_round_phase="$5"
   local schema_version="$6" ledger_sequence="$7" ledger_timestamp="$8"
   local status_code="$9" severity="${10}" contract_id="${11}" source="${12}"
+  local policy_code="${13}" dispute_ledgers="${14}"
 
   local oracle_status_str="${ORACLE_STATUS_LABEL[$oracle_status]:-unknown}"
   local phase_str="${PHASE_LABEL[$active_round_phase]:-unknown}"
   local label="${STATUS_LABEL[$status_code]:-UNKNOWN}"
+  local policy_str="${POLICY_LABEL[$policy_code]:-unknown}"
 
   jq -nc \
     --arg contract_id "$contract_id" \
@@ -152,6 +177,9 @@ emit_json() {
     --argjson status_code "$status_code" \
     --arg status_label "$label" \
     --arg severity "$severity" \
+    --argjson policy_code "$policy_code" \
+    --arg policy_label "$policy_str" \
+    --argjson dispute_ledgers "$dispute_ledgers" \
     '{
       contract_id: $contract_id,
       network: $network,
@@ -159,10 +187,87 @@ emit_json() {
       paused: $paused,
       oracle: { live: $oracle_live, status_code: $oracle_status, status_label: $oracle_status_label },
       round: { active: $has_active_round, phase_code: $active_round_phase, phase_label: $round_phase_label },
+      policy: { code: $policy_code, label: $policy_label },
+      dispute_ledgers: $dispute_ledgers,
       schema_version: $schema_version,
       ledger: { sequence: $ledger_sequence, timestamp: $ledger_timestamp },
       health: { code: $status_code, label: $status_label, severity: $severity }
     }'
+}
+
+# ── Prometheus emitter ────────────────────────────────────────────────────────
+# Emits the Prometheus text exposition format (Issue #719). Kept dependency-free
+# of jq so it can also run when the caller pipes straight to their textfile
+# collector. Booleans are exposed as 0/1 gauges; labels carry the contract id.
+#
+# Args: same prefix as emit_json (1..12), plus policy_code (13).
+emit_prometheus() {
+  local paused="$1" oracle_live="$2" oracle_status="$3"
+  local has_active_round="$4" active_round_phase="$5"
+  local schema_version="$6" ledger_sequence="$7" ledger_timestamp="$8"
+  local status_code="$9" severity="${10}" contract_id="${11}"
+  local policy_code="${13}"
+
+  local b_paused b_oracle_live b_active_round
+  b_paused=$([[ "$paused" == "true" ]] && echo 1 || echo 0)
+  b_oracle_live=$([[ "$oracle_live" == "true" ]] && echo 1 || echo 0)
+  b_active_round=$([[ "$has_active_round" == "true" ]] && echo 1 || echo 0)
+
+  # Prometheus exposition requires a numeric value; a missing config read maps
+  # to 0 so the metric line stays parseable.
+  local policy_metric="${policy_code/null/0}"
+
+  local severity_code
+  case "$severity" in
+    OK)   severity_code=0;;
+    WARN) severity_code=1;;
+    CRIT) severity_code=2;;
+    *)    severity_code=3;;
+  esac
+
+  local lbl="contract=\"$contract_id\",network=\"$NETWORK\""
+
+  cat <<EOF
+# HELP xelma_health_up 1 if the protocol health probe reached the contract, else 0.
+# TYPE xelma_health_up gauge
+xelma_health_up{$lbl} 1
+# HELP xelma_health_status_code Composite ProtocolHealthStatus status code.
+# TYPE xelma_health_status_code gauge
+xelma_health_status_code{$lbl} $status_code
+# HELP xelma_health_severity OK=0, WARN=1, CRIT=2, UNKNOWN=3.
+# TYPE xelma_health_severity gauge
+xelma_health_severity{$lbl} $severity_code
+# HELP xelma_health_paused 1 if the contract is emergency-paused.
+# TYPE xelma_health_paused gauge
+xelma_health_paused{$lbl} $b_paused
+# HELP xelma_health_oracle_live 1 if the oracle heartbeat is non-stale and online.
+# TYPE xelma_health_oracle_live gauge
+xelma_health_oracle_live{$lbl} $b_oracle_live
+# HELP xelma_health_oracle_status Raw oracle status: 0=active, 1=degraded, 2=offline, 3=unknown.
+# TYPE xelma_health_oracle_status gauge
+xelma_health_oracle_status{$lbl} $oracle_status
+# HELP xelma_health_has_active_round 1 if a round is currently active.
+# TYPE xelma_health_has_active_round gauge
+xelma_health_has_active_round{$lbl} $b_active_round
+# HELP xelma_health_round_phase 0=no_round, 1=betting, 2=running, 3=resolvable.
+# TYPE xelma_health_round_phase gauge
+xelma_health_round_phase{$lbl} $active_round_phase
+# HELP xelma_health_policy Precision payout policy: 0=Equal, 1=StakeWeighted.
+# TYPE xelma_health_policy gauge
+xelma_health_policy{$lbl} $policy_metric
+# HELP xelma_health_dispute_ledgers Configured dispute-window length in ledgers.
+# TYPE xelma_health_dispute_ledgers gauge
+xelma_health_dispute_ledgers{$lbl} $DISPUTE_LEDGERS
+# HELP xelma_health_schema_version On-chain storage schema version.
+# TYPE xelma_health_schema_version gauge
+xelma_health_schema_version{$lbl} $schema_version
+# HELP xelma_health_ledger_sequence Ledger sequence of this snapshot.
+# TYPE xelma_health_ledger_sequence gauge
+xelma_health_ledger_sequence{$lbl} $ledger_sequence
+# HELP xelma_health_ledger_timestamp Unix timestamp of the ledger.
+# TYPE xelma_health_ledger_timestamp gauge
+xelma_health_ledger_timestamp{$lbl} $ledger_timestamp
+EOF
 }
 
 # ── Human-readable emitter ────────────────────────────────────────────────────
@@ -171,10 +276,12 @@ emit_text() {
   local has_active_round="$4" active_round_phase="$5"
   local schema_version="$6" ledger_sequence="$7" ledger_timestamp="$8"
   local status_code="$9" severity="${10}" contract_id="${11}"
+  local policy_code="${13}" dispute_ledgers="${14}"
 
   local label="${STATUS_LABEL[$status_code]:-UNKNOWN}"
   local oracle_str="${ORACLE_STATUS_LABEL[$oracle_status]:-unknown}"
   local phase_str="${PHASE_LABEL[$active_round_phase]:-unknown}"
+  local policy_str="${POLICY_LABEL[$policy_code]:-unknown}"
 
   case "$severity" in
     OK)   local colour="$GREEN";;
@@ -214,6 +321,8 @@ emit_text() {
   fi
 
   printf "${BOLD}║${NC}  Schema v:      %-35s ${BOLD}║${NC}\n" "$schema_version"
+  printf "${BOLD}║${NC}  Policy:        %-35s ${BOLD}║${NC}\n" "$policy_str (code=$policy_code)"
+  printf "${BOLD}║${NC}  Dispute ledgers: %-33s ${BOLD}║${NC}\n" "$dispute_ledgers"
   echo -e "${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
   echo ""
 }
@@ -229,6 +338,8 @@ while [[ $# -gt 0 ]]; do
       SOURCE_ID="$2"; shift 2;;
     --json|-j)
       JSON_OUT=1; shift;;
+    --prometheus|-p)
+      PROM_OUT=1; shift;;
     --help|-h)
       usage; exit 0;;
     -*)
@@ -318,6 +429,37 @@ LEDGER_SEQUENCE=$(echo "$HEALTH_JSON" | jq -r '.ledger_sequence')
 LEDGER_TIMESTAMP=$(echo "$HEALTH_JSON" | jq -r '.ledger_timestamp')
 STATUS_CODE=$(echo "$HEALTH_JSON" | jq -r '.status_code')
 
+# ── Supplementary config queries (Issue #717) ─────────────────────────────────
+# `paused`, `policy` and `dispute_ledgers` complete the operator picture: the
+# first is already part of ProtocolHealthStatus, the latter two are standalone
+# config getters. A failure to read them is non-fatal (the probe's core health
+# verdict is unaffected) and surfaces as `null` / 0 in the output.
+POLICY_CODE="null"
+if POLICY_RAW=$(stellar contract invoke \
+    --id "$CONTRACT_ID" \
+    --source "$SOURCE_ID" \
+    --network "$NETWORK" \
+    --send=no \
+    -- \
+    get_precision_payout_policy 2>/dev/null); then
+  POLICY_CODE=$(echo "$POLICY_RAW" | jq -r 'if type == "number" then . else empty end' 2>/dev/null | head -n1 || true)
+  [[ -z "$POLICY_CODE" ]] && POLICY_CODE="null"
+fi
+
+DISPUTE_LEDGERS_CORE="null"
+if DISPUTE_RAW=$(stellar contract invoke \
+    --id "$CONTRACT_ID" \
+    --source "$SOURCE_ID" \
+    --network "$NETWORK" \
+    --send=no \
+    -- \
+    get_dispute_ledgers 2>/dev/null); then
+  DISPUTE_LEDGERS_CORE=$(echo "$DISPUTE_RAW" | jq -r 'if type == "number" then . else empty end' 2>/dev/null | head -n1 || true)
+  [[ -z "$DISPUTE_LEDGERS_CORE" ]] && DISPUTE_LEDGERS_CORE="null"
+fi
+# Prometheus exposition needs a numeric value; map a missing read to 0.
+DISPUTE_LEDGERS="${DISPUTE_LEDGERS_CORE/null/0}"
+
 # ── Severity mapping ──────────────────────────────────────────────────────────
 SEVERITY="${STATUS_SEVERITY[$STATUS_CODE]:-UNKNOWN}"
 
@@ -327,13 +469,22 @@ if [[ "$JSON_OUT" -eq 1 ]]; then
     "$PAUSED" "$ORACLE_LIVE" "$ORACLE_STATUS" \
     "$HAS_ACTIVE_ROUND" "$ACTIVE_ROUND_PHASE" \
     "$SCHEMA_VERSION" "$LEDGER_SEQUENCE" "$LEDGER_TIMESTAMP" \
-    "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID" "$SOURCE_ID"
+    "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID" "$SOURCE_ID" \
+    "$POLICY_CODE" "$DISPUTE_LEDGERS_CORE"
+elif [[ "$PROM_OUT" -eq 1 ]]; then
+  emit_prometheus \
+    "$PAUSED" "$ORACLE_LIVE" "$ORACLE_STATUS" \
+    "$HAS_ACTIVE_ROUND" "$ACTIVE_ROUND_PHASE" \
+    "$SCHEMA_VERSION" "$LEDGER_SEQUENCE" "$LEDGER_TIMESTAMP" \
+    "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID" "$SOURCE_ID" \
+    "$POLICY_CODE"
 else
   emit_text \
     "$PAUSED" "$ORACLE_LIVE" "$ORACLE_STATUS" \
     "$HAS_ACTIVE_ROUND" "$ACTIVE_ROUND_PHASE" \
     "$SCHEMA_VERSION" "$LEDGER_SEQUENCE" "$LEDGER_TIMESTAMP" \
-    "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID"
+    "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID" \
+    "" "$POLICY_CODE" "$DISPUTE_LEDGERS_CORE"
 fi
 
 # ── Exit ──────────────────────────────────────────────────────────────────────

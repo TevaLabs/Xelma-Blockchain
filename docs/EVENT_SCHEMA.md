@@ -14,6 +14,13 @@ Additive changes (new optional events) do not increment the version.
 
 Current schema version: **v1**
 
+The machine-checkable golden representation of this document lives at
+[`bindings/tests/fixtures/event_schema_v1.json`](../bindings/tests/fixtures/event_schema_v1.json).
+It is loaded and structurally verified by
+[`bindings/tests/event-schema.v1.test.ts`](../bindings/tests/event-schema.v1.test.ts)
+on every `npm test`, so indexers pinning against the fixture detect consumer
+drift as soon as this document or the bindings diverge.
+
 ---
 
 ## Encoding conventions
