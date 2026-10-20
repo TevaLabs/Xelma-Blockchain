@@ -13,6 +13,8 @@
 //!   - resolve_round removes all per-user keys + the participant list (cleanup)
 //!   - large rounds (50+ participants) resolve correctly without map blowup
 
+//! Storage benchmark budget for resolve_round: see BENCHMARKS.md.
+
 extern crate alloc;
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
@@ -22,6 +24,10 @@ use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, Env, Vec,
 };
+
+/// Maximum number of participants a single resolve_round call is budgeted to
+/// handle within the WASM host CPU/memory limits (see BENCHMARKS.md).
+const RESOLVE_ROUND_BUDGET_PARTICIPANTS: usize = 60;
 
 const N_LARGE: usize = 60;
 
@@ -208,6 +214,16 @@ fn bench_resolve_cleans_indexed_keys() {
             (HostError::Budget/ExceededLimit) — a pre-existing regression unrelated \
             to this change; aborts the whole test binary if left enabled"]
 fn bench_large_round_resolves_correctly() {
+    // Budget guard: this scenario must stay within the documented resolve_round
+    // storage/CPU budget (BENCHMARKS.md). If N_LARGE grows past the budget the
+    // test should fail fast rather than silently exceed host limits.
+    assert!(
+        N_LARGE <= RESOLVE_ROUND_BUDGET_PARTICIPANTS,
+        "N_LARGE ({}) exceeds resolve_round budget ({}); update BENCHMARKS.md",
+        N_LARGE,
+        RESOLVE_ROUND_BUDGET_PARTICIPANTS
+    );
+
     let (env, contract_id, client) = setup();
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
@@ -352,4 +368,19 @@ fn bench_precision_mode_indexed_keys() {
     assert_eq!(client.get_pending_winnings(&bob), 30_0000000);
     assert_eq!(client.get_pending_winnings(&alice), 0);
     assert_eq!(client.get_pending_winnings(&carol), 0);
+}
+
+// ─── resolve_round budget: documented threshold ─────────────────────────────
+
+/// Asserts the documented resolve_round participant budget matches the
+/// benchmark scenario size. This keeps BENCHMARKS.md and the test in sync:
+/// if either the budget or N_LARGE changes without updating the other, this
+/// test fails, forcing the doc/threshold to be revisited.
+#[test]
+fn bench_resolve_round_budget_matches_docs() {
+    assert_eq!(
+        N_LARGE, RESOLVE_ROUND_BUDGET_PARTICIPANTS,
+        "N_LARGE must equal the documented resolve_round budget \
+         (BENCHMARKS.md); update both together"
+    );
 }
