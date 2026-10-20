@@ -563,13 +563,16 @@ export const ContractError = {
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
   63: {message:"InvalidCommitment"},
+  /**
+   * Reveal salt fails minimum entropy rules (all-zero or constant-byte)
+   */
   64: {message:"InvalidSalt"},
   /**
    * No round template is configured
    */
   65: {message:"NoRoundTemplate"},
   /**
-   * Oracle timestamp is outside the round-relative economic window
+   * Oracle payload timestamp is outside the round-relative economic window
    */
   66: {message:"OracleTimestampOutsideWindow"},
   /**
