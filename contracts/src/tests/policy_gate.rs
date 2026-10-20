@@ -2,8 +2,11 @@
 //! Exhaustive mode x action tests for the central PolicyGate (Issue #261).
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::PolicyAction;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use crate::types::{BetSide, OraclePayload, PolicyAction};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger as _},
+    Address, Env,
+};
 
 fn setup(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address) {
     let contract_id = env.register(VirtualTokenContract, ());
@@ -99,4 +102,51 @@ fn test_policy_gate_transitions_round_trip() {
     assert_eq!(client.get_runtime_mode(), 2); // FullyPaused
     client.set_runtime_mode(&0u32);
     assert_eq!(client.get_runtime_mode(), 0); // Normal
+}
+
+/// Regression guard (Issue #701): ClaimsOnly mode must still allow
+/// `claim_winnings` to succeed for a resolved round with pending winnings.
+/// Only `RoundMutation` is blocked in ClaimsOnly; claims remain open.
+#[test]
+fn test_policy_gate_claims_only_allows_claim_winnings() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user, &100_0000000, &BetSide::Up);
+
+    let round = client.get_active_round().unwrap();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+        li.timestamp = round.end_ledger as u64 * 5;
+    });
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    assert!(client.get_pending_winnings(&user) > 0);
+
+    // Transition to ClaimsOnly — claims must still be allowed.
+    client.set_runtime_mode(&1u32);
+    assert_eq!(client.get_runtime_mode(), 1u32);
+
+    let claimed = client.claim_winnings(&user);
+    assert!(claimed > 0);
+    assert_eq!(client.get_pending_winnings(&user), 0);
 }
