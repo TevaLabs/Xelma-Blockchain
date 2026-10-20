@@ -1566,7 +1566,32 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (0i128, round.pool_up.saturating_add(round.pool_down))
+            // CarryForward: refund every participant their stake (so no
+            // participant loses funds), and carry the *net* remainder — the
+            // pot minus the refunded stakes — forward as treasury. Because
+            // the refunds equal the full pot, the carried amount is zero for
+            // a well-formed one-sided round; any surplus (e.g. pool totals
+            // that exceed recorded positions) is what actually carries.
+            let total_pot = round.pool_up.saturating_add(round.pool_down);
+            let mut refunded: i128 = 0i128;
+            if !participants.is_empty() {
+                for i in 0..participants.len() {
+                    if let Some(user) = participants.get(i) {
+                        let pos_key = DataKeyScoped::Position(round.round_id, user.clone());
+                        if let Some(position) =
+                            env.storage().persistent().get::<_, UserPosition>(&pos_key)
+                        {
+                            refunded = payout_add(refunded, position.amount)?;
+                        }
+                    }
+                }
+            } else if let Some(pos_map) = positions {
+                for entry in pos_map.iter() {
+                    refunded = payout_add(refunded, entry.1.amount)?;
+                }
+            }
+            let carry = total_pot.saturating_sub(refunded);
+            (refunded, carry)
         }
     };
 

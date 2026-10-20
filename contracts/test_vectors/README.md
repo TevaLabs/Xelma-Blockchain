@@ -9,6 +9,13 @@ on every `cargo test`, so an unintentional change to `settlement_math`'s
 behavior fails CI immediately, with a diffable JSON file to point at instead
 of a inline Rust literal buried in a test function.
 
+`one_sided_settlement.json` pins the OneSidedPolicy CarryForward treasury
+accounting behavior exercised by
+[`contracts/src/tests/one_sided_settlement.rs`](../src/tests/one_sided_settlement.rs).
+It is loaded and checked on every `cargo test`, so an unintentional change to
+how a one-sided round carries its losing-side pot forward into treasury
+accounting fails CI immediately with a diffable JSON file to point at.
+
 `settlement_math.rs` takes no `Env`, does no storage I/O, and only ever
 returns errors for real overflow — so these vectors can be verified with the
 plain Rust test harness, no Soroban test environment required.
@@ -24,6 +31,7 @@ plain Rust test harness, no Soroban test environment required.
 | `split_pot_among_winners` | `split_pot_among_winners` | Pure remainder-distribution math. |
 | `deviation_bps` | `compute_deviation_bps` | Oracle price-deviation basis points. |
 | `precision_remainder_ordering` | `compute_precision_payouts` (composite) | See below — the canonical-ordering rule for Issue #404. |
+| `one_sided_settlement` | OneSidedPolicy CarryForward treasury accounting | Golden vectors for the one-sided settlement path; see below. |
 
 ## The remainder-to-first-winner rule (`precision_remainder_ordering`)
 
@@ -48,6 +56,20 @@ and its 3-way sibling
 (`test_precision_remainder_3way_tie_goes_to_lexicographically_lowest_winner`);
 the 5-way case is covered only at the pure-math level in this file's
 `precision_remainder_ordering` vectors.
+
+## The OneSidedPolicy CarryForward rule (`one_sided_settlement`)
+
+When a round resolves with only one side having staked (a one-sided round),
+the losing side's pot is not paid out to winners as ordinary winnings.
+Instead it is carried forward into treasury accounting: the winning side is
+refunded its own stake, and the entire losing-side pot is credited to
+treasury. These vectors pin that split — refund amount, carry-forward amount,
+and resulting treasury balance — against known inputs so the accounting
+cannot drift silently.
+
+The end-to-end proof, exercising the real contract entrypoints and storage,
+lives in `tests::one_sided_settlement`; these vectors pin the pure accounting
+math the same way the other sections pin `settlement_math`.
 
 ## Regenerating intentionally
 
@@ -75,7 +97,7 @@ behavior and have reviewed why every affected number should change.
 
 ## Adding a whole new section
 
-The regeneration test only knows how to recompute the seven sections above.
+The regeneration test only knows how to recompute the eight sections above.
 If you add a new settlement_math function worth pinning, add a matching
 section to the JSON, a matching case struct + loader in
 `settlement_math_vectors.rs`, a checked test function for it, and extend
