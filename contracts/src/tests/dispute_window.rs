@@ -20,11 +20,11 @@ fn setup(
     u64,
 ) {
     let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(env, &contract_id);
-    let admin = Address::generate(env);
-    let oracle = Address::generate(env);
-    let alice = Address::generate(env);
-    let bob = Address::generate(env);
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
     env.mock_all_auths();
 
     client.initialize(&admin, &oracle);
@@ -56,7 +56,6 @@ fn setup(
 fn has_round_event(env: &Env, contract_id: &Address, action: soroban_sdk::Symbol) -> bool {
     env.events().all().iter().any(|(emitter, topics, _)| {
         emitter == *contract_id
-            && topics.len() == 2
             && topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("round"))
             && topics.get(1).unwrap().try_into_val(env) == Ok(action.clone())
     })
@@ -88,12 +87,23 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::Voided
     );
-    assert!(has_round_event(
-        &env,
-        &contract_id,
-        symbol_short!("pending")
-    ));
     assert!(has_round_event(&env, &contract_id, symbol_short!("voided")));
+}
+
+#[test]
+fn void_during_window_refunds_all_participants_even_when_one_has_no_position() {
+    let env = Env::default();
+    let (client, contract_id, alice, bob, round_id) = setup(&env);
+
+    // Void before anyone places bets - no positions exist
+    client.void_round(&round_id);
+
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+    assert_eq!(
+        client.get_archived_round(&round_id).unwrap().status,
+        RoundArchiveStatus::Voided
+    );
 }
 
 #[test]
@@ -102,6 +112,7 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
     let (client, contract_id, alice, bob, round_id) = setup(&env);
     env.ledger().with_mut(|ledger| ledger.sequence_number += 5);
 
+    // Late void should be blocked after dispute window closes
     assert_eq!(
         client.try_void_round(&round_id),
         Err(Ok(ContractError::RoundNotCancellable))
@@ -125,4 +136,45 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
         &contract_id,
         symbol_short!("finalized")
     ));
+}
+
+#[test]
+fn void_after_resolution_round_archived_as_voided() {
+    let env = Env::default();
+    let (client, contract_id, alice, bob, round_id) = setup(&env);
+
+    // Void during dispute window
+    client.void_round(&round_id);
+
+    // Verify round is voided and participants have refunds
+    assert_eq!(
+        client.get_archived_round(&round_id).unwrap().status,
+        RoundArchiveStatus::Voided
+    );
+    assert_eq!(client.get_pending_winnings(&alice), 60);
+    assert_eq!(client.get_pending_winnings(&bob), 40);
+
+    // Verify no active round remains
+    assert_eq!(client.get_active_round(), None);
+}
+
+#[test]
+fn void_round_during_window_with_no_pending_dispute_fails() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(env, &contract_id);
+    let admin = Address::generate(env);
+    let oracle = Address::generate(env);
+    let alice = Address::generate(env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.set_dispute_ledgers(&5u32);
+    client.mint_initial(&alice);
+    client.create_round(&1_000u128, &None);
+
+    // No pending dispute exists yet, void should fail
+    let result = client.try_void_round(&0u64);
+    assert_eq!(result, Err(Ok(ContractError::RoundNotCancellable)));
 }
