@@ -15,6 +15,7 @@ use crate::errors::ContractError;
 use crate::math_common::{payout_add, payout_mul, BPS_DENOMINATOR};
 
 /// Payout policy for Precision mode
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum PrecisionPayoutPolicy {
@@ -23,6 +24,7 @@ pub enum PrecisionPayoutPolicy {
 }
 
 /// Scoring mode for Precision winner determination
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum PrecisionScoringMode {
@@ -179,6 +181,7 @@ pub struct PrecisionWinnersResult {
 }
 
 /// Finds the closest prediction(s) to `final_price` under default absolute distance scoring.
+#[allow(dead_code)]
 pub fn find_precision_winners(
     entries: &[PrecisionEntry],
     final_price: u128,
@@ -194,6 +197,7 @@ pub fn find_precision_winners(
 }
 
 /// Finds precision winners given a explicit `PrecisionScoringPolicy` (Absolute vs Relative distance, optional confidence band).
+#[allow(clippy::manual_abs_diff, clippy::manual_checked_ops)]
 pub fn find_precision_winners_with_policy(
     entries: &[PrecisionEntry],
     final_price: u128,
@@ -210,11 +214,7 @@ pub fn find_precision_winners_with_policy(
             continue;
         }
 
-        let abs_diff = if entry.predicted_price >= final_price {
-            entry.predicted_price - final_price
-        } else {
-            final_price - entry.predicted_price
-        };
+        let abs_diff = entry.predicted_price.abs_diff(final_price);
 
         let score = match policy.mode {
             PrecisionScoringMode::AbsoluteDistance => abs_diff,
@@ -562,6 +562,7 @@ pub fn compute_precision_payouts_with_policy(
 /// Computes the basis-point deviation of `price` from `reference`.
 ///
 /// Returns `(diff_bps, diff_abs)` where `diff_bps = |price - ref| * 10000 / ref`.
+#[allow(dead_code)]
 pub fn compute_deviation_bps(price: u128, reference: u128) -> Result<u32, ContractError> {
     if reference == 0 {
         return Err(ContractError::InvalidPrice);
@@ -588,6 +589,7 @@ pub fn compute_deviation_bps(price: u128, reference: u128) -> Result<u32, Contra
 
 /// Sorts a slice of `u128` values in-place (insertion sort, O(N²)).
 /// Acceptable because N ≤ 32 in all call-sites.
+#[allow(dead_code)]
 pub fn sort_prices_in_place(prices: &mut [u128]) {
     for i in 1..prices.len() {
         let key = prices[i];
@@ -604,6 +606,7 @@ pub fn sort_prices_in_place(prices: &mut [u128]) {
 ///
 /// For odd N: returns the middle element.
 /// For even N: returns the floor average of the two middle elements.
+#[allow(dead_code)]
 pub fn median_of_sorted(prices: &[u128]) -> Option<u128> {
     let n = prices.len();
     if n == 0 {
@@ -622,12 +625,14 @@ pub fn median_of_sorted(prices: &[u128]) -> Option<u128> {
 // ─── Total pot computation ───────────────────────────────────────────────────
 
 /// Computes the total pot for an UpDown round.
+#[allow(dead_code)]
 #[inline]
 pub fn total_pot_updown(pool_up: i128, pool_down: i128) -> i128 {
     pool_up.saturating_add(pool_down)
 }
 
 /// Computes the total pot for a Precision round from a list of stake amounts.
+#[allow(dead_code)]
 pub fn total_pot_precision(stakes: &[i128]) -> i128 {
     stakes.iter().fold(0i128, |acc, &s| acc.saturating_add(s))
 }

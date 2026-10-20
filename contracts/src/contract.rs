@@ -149,6 +149,16 @@ impl VirtualTokenContract {
         admin::get_admin(env)
     }
 
+    /// Sets or clears the dedicated Keeper authorized to create template rounds.
+    pub fn set_keeper(env: Env, keeper: Option<Address>) -> Result<(), ContractError> {
+        admin::set_keeper(env, keeper)
+    }
+
+    /// Returns the configured template-round Keeper, if any.
+    pub fn get_keeper(env: Env) -> Option<Address> {
+        admin::get_keeper(env)
+    }
+
     pub fn get_oracle(env: Env) -> Option<Address> {
         admin::get_oracle(env)
     }
