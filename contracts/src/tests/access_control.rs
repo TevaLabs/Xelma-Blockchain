@@ -307,3 +307,70 @@ fn test_protocol_health_reports_access_mode() {
         "allowlist mode should surface ACCESS_RESTRICTED"
     );
 }
+
+/// Matrix test (Issue #703): `mint_initial` and `place_bet` must apply the
+/// identical access-control decision for the same user. Both entrypoints are
+/// open on an unconfigured deployment, both are denied for a denylisted user
+/// (denylist wins even on open deployments), both are allowed for an
+/// allowlisted user in allowlist mode, and both are denied for a
+/// non-allowlisted user in allowlist mode.
+#[test]
+fn test_mint_initial_and_bet_access_control_matrix() {
+    let (env, client, _admin, _oracle) = setup();
+
+    let open_alice = Address::generate(&env);
+    let open_bob = Address::generate(&env);
+    let deny_carol = Address::generate(&env);
+    let allow_dave = Address::generate(&env);
+    let allow_eve = Address::generate(&env);
+
+    client.create_round(&1_0000000, &None);
+
+    // ── Phase 1: open deployment — both entrypoints admit everyone ──────
+    client.mint_initial(&open_alice);
+    client.mint_initial(&open_bob);
+    assert!(
+        client
+            .try_place_bet(&open_alice, &100_0000000, &BetSide::Up)
+            .is_ok()
+    );
+    assert!(
+        client
+            .try_place_bet(&open_bob, &100_0000000, &BetSide::Down)
+            .is_ok()
+    );
+
+    // ── Phase 2: denylist blocks both entrypoints (open deployment) ─────
+    client.add_denylisted(&deny_carol);
+    assert!(client.try_mint_initial(&deny_carol).is_err());
+    assert_eq!(
+        client.try_place_bet(&deny_carol, &100_0000000, &BetSide::Up),
+        Err(Ok(ContractError::AccessDenied))
+    );
+
+    // ── Phase 3: allowlist mode — allowlisted pass both, others blocked ─
+    client.set_access_control_enabled(&true);
+    client.add_allowlisted(&allow_dave);
+
+    // deny_carol is denylisted → blocked on both (denylist wins).
+    assert!(client.try_mint_initial(&deny_carol).is_err());
+    assert_eq!(
+        client.try_place_bet(&deny_carol, &100_0000000, &BetSide::Up),
+        Err(Ok(ContractError::AccessDenied))
+    );
+
+    // allow_dave is allowlisted → allowed on both.
+    assert!(client.try_mint_initial(&allow_dave).is_ok());
+    assert!(
+        client
+            .try_place_bet(&allow_dave, &100_0000000, &BetSide::Down)
+            .is_ok()
+    );
+
+    // allow_eve is neither allowlisted nor denylisted → blocked on both.
+    assert!(client.try_mint_initial(&allow_eve).is_err());
+    assert_eq!(
+        client.try_place_bet(&allow_eve, &100_0000000, &BetSide::Up),
+        Err(Ok(ContractError::AccessDenied))
+    );
+}
