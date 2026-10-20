@@ -25,8 +25,6 @@ use crate::types::{BetSide, OraclePayload};
 
 /// Randomized actions covering all major protocol lifecycle entrypoints.
 #[derive(Debug, Clone)]
-/// Randomized actions covering all major protocol lifecycle entrypoints.
-#[derive(Debug, Clone)]
 pub enum LifecycleAction {
     CreateRound { start_price: u128 },
     MintUser { user_idx: usize },
@@ -42,6 +40,7 @@ pub enum LifecycleAction {
     PlacePrecisionBet { user_idx: usize, amount: i128, target_price: u128, tolerance_bps: u32 },
     CommitPriceSample { price: u128, secret_nonce: u64 },
     CashOutPosition { user_idx: usize },
+    CashOutEarly { user_idx: usize },
     AccessControlDenialCheck { user_idx: usize },
 }
 
@@ -93,6 +92,7 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
             secret_nonce: n,
         }),
         user_idx.clone().prop_map(|u| LifecycleAction::CashOutPosition { user_idx: u }),
+        user_idx.clone().prop_map(|u| LifecycleAction::CashOutEarly { user_idx: u }),
         user_idx.prop_map(|u| LifecycleAction::AccessControlDenialCheck { user_idx: u }),
     ]
 }
@@ -222,6 +222,10 @@ fn fuzz_protocol_lifecycle_invariants() {
             LifecycleAction::CashOutPosition { user_idx } => {
                 let user = &users[*user_idx % users.len()];
                 let _ = client.get_pending_winnings(user);
+            }
+            LifecycleAction::CashOutEarly { user_idx } => {
+                let user = &users[*user_idx % users.len()];
+                let _ = client.try_cash_out_early(user);
             }
             LifecycleAction::AccessControlDenialCheck { user_idx } => {
                 let user = &users[*user_idx % users.len()];
