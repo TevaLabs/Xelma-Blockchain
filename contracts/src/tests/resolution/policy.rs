@@ -72,6 +72,30 @@ fn test_resolve_precision_stake_weighted_policy() {
         confidence: None,
         attestation: None,
     });
+    let events = env.events().all();
+    let resolved_event = events
+        .iter()
+        .find(|e| {
+            let (_contract, topics, _data) = e;
+            if topics.len() != 2 {
+                return false;
+            }
+            let t0: Result<soroban_sdk::Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
+            let t1: Result<soroban_sdk::Symbol, _> = topics.get(1).unwrap().try_into_val(&env);
+            t0 == Ok(symbol_short!("round")) && t1 == Ok(symbol_short!("resolved"))
+        })
+        .expect("could not find round resolved event");
+
+    let resolved_data: (u64, u128, u32, Option<u32>, u32) =
+        resolved_event.2.clone().try_into_val(&env).unwrap();
+    assert_eq!(resolved_data.4, 1);
+
+    assert_eq!(client.get_pending_winnings(&lowest_user), 200_0000000);
+    assert_eq!(client.get_pending_winnings(&middle_user), 400_0000000);
+    assert_eq!(client.get_pending_winnings(&highest_user), 0);
+
+    client.claim_winnings(&lowest_user);
+    client.claim_winnings(&middle_user);
 
     assert_eq!(
         client.balance(&lowest_user),
@@ -82,21 +106,6 @@ fn test_resolve_precision_stake_weighted_policy() {
         1000_0000000 - 200_0000000 + 400_0000000
     );
     assert_eq!(client.balance(&highest_user), 1000_0000000 - 300_0000000);
-
-    let events = env.events().all();
-    let resolved_event = events
-        .iter()
-        .find(|e| {
-            let (_contract, topics, _data) = e;
-            topics.len() == 2
-                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
-                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("resolved"))
-        })
-        .unwrap();
-
-    let resolved_data: (u64, u128, u32, Option<u32>, u32) =
-        resolved_event.2.clone().try_into_val(&env).unwrap();
-    assert_eq!(resolved_data.4, 1);
 }
 
 #[test]
@@ -143,9 +152,15 @@ fn test_precision_stake_weighted_conservation_remainder() {
         attestation: None,
     });
 
+    assert_eq!(client.get_pending_winnings(&lowest_user), 100i128);
+    assert_eq!(client.get_pending_winnings(&other_user), 200i128);
+
+    client.claim_winnings(&lowest_user);
+    client.claim_winnings(&other_user);
+
     assert_eq!(
         client.balance(&lowest_user),
-        1000_0000000 - 100i128 + 34i128
+        1000_0000000 - 100i128 + 100i128
     );
-    assert_eq!(client.balance(&other_user), 1000_0000000 - 200i128 + 66i128);
+    assert_eq!(client.balance(&other_user), 1000_0000000 - 200i128 + 200i128);
 }

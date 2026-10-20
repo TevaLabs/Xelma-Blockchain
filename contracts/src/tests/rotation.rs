@@ -50,17 +50,17 @@ fn test_propose_and_accept_before_expiry_succeeds() {
         li.timestamp = 1000;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &3600);
+    client.propose_oracle_rotation(&new_oracle, &7200);
 
     let proposal = client
         .get_oracle_rotation_proposal()
         .expect("proposal should exist");
     assert_eq!(proposal.new_oracle, new_oracle);
     assert_eq!(proposal.proposed_at, 1000);
-    assert_eq!(proposal.expires_at, 4600);
+    assert_eq!(proposal.expires_at, 8200);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        li.timestamp = 4700;
     });
 
     client.accept_oracle_rotation();
@@ -83,13 +83,13 @@ fn test_accept_after_expiry_fails() {
     let (_admin, _oracle, new_oracle) = init(&env, &client);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 500;
+        li.timestamp = 1000;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    client.propose_oracle_rotation(&new_oracle, &3600);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 1000 + 3600 + 1;
     });
 
     let result = client.try_accept_oracle_rotation();
@@ -206,7 +206,7 @@ fn test_propose_and_accept_emits_events() {
         li.timestamp = 1000;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &3600);
+    client.propose_oracle_rotation(&new_oracle, &7200);
 
     let events = env.events().all();
     assert!(
@@ -215,7 +215,7 @@ fn test_propose_and_accept_emits_events() {
     );
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        li.timestamp = 4700;
     });
 
     client.accept_oracle_rotation();
@@ -236,13 +236,13 @@ fn test_accept_after_expiry_emits_expired_event() {
     let (_admin, _oracle, new_oracle) = init(&env, &client);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 500;
+        li.timestamp = 1000;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    client.propose_oracle_rotation(&new_oracle, &3600);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 1000 + 3600 + 1;
     });
 
     let _ = client.try_accept_oracle_rotation();

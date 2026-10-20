@@ -36,11 +36,11 @@ fn create_and_resolve_round(
 
     env.ledger().with_mut(|li| {
         li.sequence_number = start_ledger + 100;
-        li.timestamp = 2000;
+        li.timestamp = 1100;
     });
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
-        timestamp: 1800,
+        timestamp: 1060,
         round_id: start_ledger,
         nonce,
         network_id: env.ledger().network_id(),
@@ -303,11 +303,11 @@ fn test_user_archived_participation_returns_none_after_prune() {
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 100;
-        li.timestamp = 2000;
+        li.timestamp = 1100;
     });
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
-        timestamp: 1800,
+        timestamp: 1060,
         round_id: 0,
         nonce: 0,
         network_id: env.ledger().network_id(),
@@ -317,21 +317,41 @@ fn test_user_archived_participation_returns_none_after_prune() {
     });
 
     // User participation is available before prune
-    let outcome = client.get_user_archived_participation(&user, &0);
+    let outcome = client.get_user_archived_participation(&user, &1);
     assert!(outcome.is_some(), "outcome should exist before prune");
 
-    // Create and resolve round 2 — this should prune round 1
-    create_and_resolve_round(&env, &client, &contract_id_obj, 200, 1);
+    // Create and resolve round 2 with user participation — this should prune round 1
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 200;
+        li.timestamp = 2000;
+    });
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user, &100_0000000, &crate::types::BetSide::Up);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 300;
+        li.timestamp = 2100;
+    });
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: 2060,
+        round_id: 200,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id_obj.clone(),
+        confidence: None,
+        attestation: None,
+    });
 
     // After prune, get_user_archived_participation should return None
-    let outcome = client.get_user_archived_participation(&user, &0);
+    let outcome = client.get_user_archived_participation(&user, &1);
     assert!(
         outcome.is_none(),
         "get_user_archived_participation should return None for pruned round"
     );
 
     // Round 2 still has its outcome
-    let outcome2 = client.get_user_archived_participation(&user, &1);
+    let outcome2 = client.get_user_archived_participation(&user, &2);
     assert!(
         outcome2.is_some(),
         "outcome should exist for retained round"
@@ -366,7 +386,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         assert!(env
             .storage()
             .persistent()
-            .has(&DataKeyScoped::CancelledRound(0u64)));
+            .has(&DataKeyScoped::CancelledRound(1u64)));
     });
 
     // Create and cancel round 2 — this should prune round 1
@@ -382,7 +402,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         assert!(
             !env.storage()
                 .persistent()
-                .has(&DataKeyScoped::CancelledRound(0u64)),
+                .has(&DataKeyScoped::CancelledRound(1u64)),
             "CancelledRound marker should be cleaned up during prune"
         );
     });

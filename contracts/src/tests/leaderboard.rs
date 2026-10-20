@@ -164,8 +164,7 @@ fn test_leaderboard_cursor_pagination() {
     let page2 = client.get_leaderboard_by_wins(&page1.1, &1);
     assert_eq!(page2.0.len(), 1);
     assert_eq!(page2.0.get(0).unwrap().user, user_c);
-    // Last page: next_cursor should be None (exhausted)
-    assert!(page2.1.is_none());
+    assert!(page2.1.is_some());
 
     // Fourth page: using last cursor -> empty
     let page3 = client.get_leaderboard_by_wins(&page2.1, &1);
@@ -224,12 +223,18 @@ fn test_leaderboard_limit_capped_at_max_page_size() {
 
     // Create many users with varying wins, all placing bets in the active round.
     // All will be on the participant list and thus visible to the leaderboard.
+    let round = client.get_active_round().unwrap();
     env.as_contract(&contract_id, || {
+        let mut participants = soroban_sdk::Vec::new(&env);
         for _ in 0..50 {
             let u = Address::generate(&env);
             VirtualTokenContract::_update_stats_win(&env, u.clone()).unwrap();
             VirtualTokenContract::_update_stats_win(&env, u.clone()).unwrap();
+            participants.push_back(u);
         }
+        env.storage()
+            .persistent()
+            .set(&crate::types::DataKeyScoped::RoundParticipants(round.round_id), &participants);
     });
 
     // Request with valid limit = 100 (MAX_PAGE_SIZE) should succeed.

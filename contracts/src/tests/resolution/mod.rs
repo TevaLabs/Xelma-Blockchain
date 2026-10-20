@@ -145,6 +145,10 @@ pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128
             {
                 return None;
             }
+            let res5: Result<(u64, i128, i128, u32, u32), _> = data.try_into_val(env);
+            if let Ok((r, fee, tr, bps, _model)) = res5 {
+                return Some((r, fee, tr, bps));
+            }
             let res: Result<(u64, i128, i128, u32), _> = data.try_into_val(env);
             res.ok()
         })

@@ -845,12 +845,13 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
         confidence: None,
         attestation: None,
     });
+    let events = env.events().all();
 
     let total_pot = ALICE_BET + BOB_BET;
     assert_eq!(client.get_pending_winnings(&alice), total_pot);
     assert_eq!(client.get_pending_winnings(&bob), 0);
 
-    let forfeits = env.events().all().iter().filter(|(_, topics, data)| {
+    let forfeits = events.iter().filter(|(_, topics, data)| {
         topics.len() == 2
             && topics
                 .get(0)

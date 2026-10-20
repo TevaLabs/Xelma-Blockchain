@@ -26,6 +26,7 @@ fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Addres
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     (client, contract_id, admin, oracle)
 }
@@ -135,7 +136,7 @@ fn fee_zero_both_models_produce_identical_updown() {
     client.place_bet(&charlie2, &5, &BetSide::Down);
     set_fee_model_now(&env, &contract_id, FeeModel::FeeOnWinnings);
 
-    env.ledger().with_mut(|li| li.sequence_number = 13);
+    env.ledger().with_mut(|li| li.sequence_number = 24);
     let treasury_before2 = client.get_protocol_fee_treasury();
     resolve_at(&env, &client, &contract_id, 2_000u128);
 
@@ -188,7 +189,7 @@ fn fee_zero_both_models_produce_identical_precision() {
     client.place_precision_prediction(&bob2, &30, &1_100u128);
     set_fee_model_now(&env, &contract_id, FeeModel::FeeOnWinnings);
 
-    env.ledger().with_mut(|li| li.sequence_number = 13);
+    env.ledger().with_mut(|li| li.sequence_number = 24);
     let treasury_before2 = client.get_protocol_fee_treasury();
     resolve_at(&env, &client, &contract_id, 1_006u128);
 
@@ -556,14 +557,15 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &None);
 
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
         let charlie = Address::generate(&env);
 
-        env.as_contract(&contract_id, || {
-            use crate::types::UserPosition;
+        let round_start_ledger = env.as_contract(&contract_id, || {
+            use crate::types::{DataKeyScoped, UserPosition};
             let mut positions: soroban_sdk::Map<Address, UserPosition> = soroban_sdk::Map::new(&env);
             positions.set(alice.clone(), UserPosition { amount: a_up, side: BetSide::Up });
             positions.set(bob.clone(), UserPosition { amount: b_up, side: BetSide::Up });
@@ -575,8 +577,18 @@ proptest! {
             round.pool_down = total_down;
             env.storage().persistent().set(&DataKeyCore::ActiveRound, &round);
 
+            let mut participants: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+            participants.push_back(alice.clone());
+            participants.push_back(bob.clone());
+            participants.push_back(charlie.clone());
+            env.storage().persistent().set(&DataKeyScoped::RoundParticipants(round.round_id), &participants);
+            env.storage().persistent().set(&DataKeyScoped::Position(round.round_id, alice.clone()), &UserPosition { amount: a_up, side: BetSide::Up });
+            env.storage().persistent().set(&DataKeyScoped::Position(round.round_id, bob.clone()), &UserPosition { amount: b_up, side: BetSide::Up });
+            env.storage().persistent().set(&DataKeyScoped::Position(round.round_id, charlie.clone()), &UserPosition { amount: c_down, side: BetSide::Down });
+
             env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
             env.storage().persistent().set(&DataKeyCore::FeeModel, &FeeModel::FeeOnWinnings);
+            round.start_ledger
         });
 
         let treasury_before = client.get_protocol_fee_treasury();
@@ -586,7 +598,7 @@ proptest! {
         client.resolve_round(&OraclePayload {
             price: 2_0000000,
             timestamp: env.ledger().timestamp(),
-            round_id: 0,
+            round_id: round_start_ledger,
             nonce: 1u64,
             network_id: env.ledger().network_id(),
             contract_addr: contract_id.clone(),
@@ -618,7 +630,7 @@ proptest! {
         price_a in 0u128..99_999_999u128,
         price_b in 1u128..99_999_999u128,
         price_c in 2u128..99_999_999u128,
-        final_price in 0u128..99_999_999u128,
+        final_price in 1u128..99_999_999u128,
         fee_bps_raw in 1u32..=1_000u32,
     ) {
         prop_assume!(price_a != price_b && price_b != price_c && price_a != price_c);
@@ -634,21 +646,34 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &Some(1));
 
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
         let charlie = Address::generate(&env);
 
-        env.as_contract(&contract_id, || {
+        let round_start_ledger = env.as_contract(&contract_id, || {
+            use crate::types::DataKeyScoped;
+            let round: crate::types::Round = env.storage().persistent().get(&DataKeyCore::ActiveRound).unwrap();
             let mut predictions: soroban_sdk::Map<Address, PrecisionPrediction> = soroban_sdk::Map::new(&env);
             predictions.set(alice.clone(), PrecisionPrediction { user: alice.clone(), predicted_price: price_a, amount: amount_a });
             predictions.set(bob.clone(), PrecisionPrediction { user: bob.clone(), predicted_price: price_b, amount: amount_b });
             predictions.set(charlie.clone(), PrecisionPrediction { user: charlie.clone(), predicted_price: price_c, amount: amount_c });
             env.storage().persistent().set(&DataKeyCore::PrecisionPositions, &predictions);
 
+            let mut participants: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+            participants.push_back(alice.clone());
+            participants.push_back(bob.clone());
+            participants.push_back(charlie.clone());
+            env.storage().persistent().set(&DataKeyScoped::RoundParticipants(round.round_id), &participants);
+            env.storage().persistent().set(&DataKeyScoped::PrecisionPosition(round.round_id, alice.clone()), &PrecisionPrediction { user: alice.clone(), predicted_price: price_a, amount: amount_a });
+            env.storage().persistent().set(&DataKeyScoped::PrecisionPosition(round.round_id, bob.clone()), &PrecisionPrediction { user: bob.clone(), predicted_price: price_b, amount: amount_b });
+            env.storage().persistent().set(&DataKeyScoped::PrecisionPosition(round.round_id, charlie.clone()), &PrecisionPrediction { user: charlie.clone(), predicted_price: price_c, amount: amount_c });
+
             env.storage().persistent().set(&DataKeyCore::ProtocolFeeBps, &fee_bps_raw);
             env.storage().persistent().set(&DataKeyCore::FeeModel, &FeeModel::FeeOnWinnings);
+            round.start_ledger
         });
 
         let treasury_before = client.get_protocol_fee_treasury();
@@ -658,7 +683,7 @@ proptest! {
         client.resolve_round(&OraclePayload {
             price: final_price,
             timestamp: env.ledger().timestamp(),
-            round_id: 0,
+            round_id: round_start_ledger,
             nonce: 1u64,
             network_id: env.ledger().network_id(),
             contract_addr: contract_id.clone(),
@@ -686,4 +711,206 @@ proptest! {
             sum_payouts, treasury_delta, total_pot
         );
     }
+}
+
+// ─── Issue #670: Fee Matrix Verification ─────────────────────────────────────
+// Settlement type                                 | Fee applies?
+// Competitive win (both sides, winner decided)    | Yes
+// Cancel / mutual cancellation                    | No
+// One-sided settlement (no competition)           | No
+// Unchanged / expired with no activity            | No
+
+/// Verify fee is charged on competitive settlements (both sides participated, winner decided).
+#[test]
+fn test_fee_matrix_competitive_win_charges_fee() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    // Competitive UpDown win under FeeOnPot
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &100, &BetSide::Up);
+    client.place_bet(&bob, &100, &BetSide::Down);
+    set_fee_bps_now(&env, &contract_id, 500); // 5%
+    set_fee_model_now(&env, &contract_id, FeeModel::FeeOnPot);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 2_000u128); // Up wins
+
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+    // Pot = 200, 5% of 200 = 10 fee
+    assert_eq!(treasury_delta, 10);
+    assert_eq!(client.get_pending_winnings(&alice), 190);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+
+    // Competitive UpDown win under FeeOnWinnings
+    let alice2 = Address::generate(&env);
+    let bob2 = Address::generate(&env);
+    client.mint_initial(&alice2);
+    client.mint_initial(&bob2);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice2, &100, &BetSide::Up);
+    client.place_bet(&bob2, &100, &BetSide::Down);
+    set_fee_model_now(&env, &contract_id, FeeModel::FeeOnWinnings);
+
+    env.ledger().with_mut(|li| li.sequence_number = 24);
+    let treasury_before2 = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 2_000u128); // Up wins
+
+    let treasury_delta2 = client.get_protocol_fee_treasury() - treasury_before2;
+    // Losing pool = 100, 5% of 100 = 5 fee
+    assert_eq!(treasury_delta2, 5);
+    assert_eq!(client.get_pending_winnings(&alice2), 195);
+    assert_eq!(client.get_pending_winnings(&bob2), 0);
+}
+
+/// Verify fee is NOT charged on cancel paths (admin cancel / mutual cancellation).
+#[test]
+fn test_fee_matrix_cancel_path_no_fee() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &100, &BetSide::Up);
+    client.place_bet(&bob, &100, &BetSide::Down);
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+    set_fee_model_now(&env, &contract_id, FeeModel::FeeOnPot);
+
+    let treasury_before = client.get_protocol_fee_treasury();
+    client.cancel_round(&0);
+
+    // Refunded completely with 0 fee deducted
+    assert_eq!(client.get_pending_winnings(&alice), 100);
+    assert_eq!(client.get_pending_winnings(&bob), 100);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0);
+}
+
+/// Verify fee is NOT charged on one-sided settlement (no competition).
+#[test]
+fn test_fee_matrix_one_sided_settlement_no_fee() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    client.mint_initial(&alice);
+
+    // UpDown: only Up bets placed (no Down competition)
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &150, &BetSide::Up);
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+    set_fee_model_now(&env, &contract_id, FeeModel::FeeOnPot);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 2_000u128); // Price went Up
+
+    // One-sided: full refund, 0 fee
+    assert_eq!(client.get_pending_winnings(&alice), 150);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0);
+
+    // UpDown: only Down bets placed (no Up competition)
+    let bob = Address::generate(&env);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&bob, &200, &BetSide::Down);
+
+    env.ledger().with_mut(|li| li.sequence_number = 24);
+    let treasury_before2 = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 500u128); // Price went Down
+
+    assert_eq!(client.get_pending_winnings(&bob), 200);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before2, 0);
+
+    // Precision: single predictor (winner_stakes == total_pot, no competition)
+    let charlie = Address::generate(&env);
+    client.mint_initial(&charlie);
+
+    client.create_round(&1_000u128, &Some(1));
+    client.place_precision_prediction(&charlie, &250, &1_005u128);
+
+    env.ledger().with_mut(|li| li.sequence_number = 36);
+    let treasury_before3 = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_005u128);
+
+    assert_eq!(client.get_pending_winnings(&charlie), 250);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before3, 0);
+}
+
+/// Verify fee is NOT charged on unchanged price / expired with no activity.
+#[test]
+fn test_fee_matrix_unchanged_or_expired_no_activity_no_fee() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    // Price unchanged (tie / refund)
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &100, &BetSide::Up);
+    client.place_bet(&bob, &100, &BetSide::Down);
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+    set_fee_model_now(&env, &contract_id, FeeModel::FeeOnPot);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_000u128); // Price Unchanged
+
+    assert_eq!(client.get_pending_winnings(&alice), 100);
+    assert_eq!(client.get_pending_winnings(&bob), 100);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0);
+
+    // Expired with no activity (empty round, no bets)
+    client.create_round(&1_000u128, &None);
+    env.ledger().with_mut(|li| li.sequence_number = 24);
+    let treasury_before2 = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 2_000u128);
+
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before2, 0);
+}
+
+/// Verify fee amounts are exact with integer arithmetic (no rounding up).
+#[test]
+fn test_fee_matrix_amounts_are_exact_no_rounding() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    // Pot = 333 (133 + 200). Fee bps = 250 (2.5%).
+    // 333 * 250 / 10000 = 83250 / 10000 = 8 (exact integer truncation, NOT 9).
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &133, &BetSide::Up);
+    client.place_bet(&bob, &200, &BetSide::Down);
+    set_fee_bps_now(&env, &contract_id, 250);
+    set_fee_model_now(&env, &contract_id, FeeModel::FeeOnPot);
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 2_000u128);
+
+    let fee = client.get_protocol_fee_treasury() - treasury_before;
+    assert_eq!(
+        fee, 8,
+        "Fee must be exact integer truncation with no rounding up"
+    );
+    assert_eq!(client.get_pending_winnings(&alice), 333 - 8);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
 }

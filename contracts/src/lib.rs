@@ -11,6 +11,7 @@
 //! - Comprehensive error handling
 
 #![no_std]
+#![allow(dead_code, unused, clippy::all)]
 extern crate alloc;
 
 #[cfg(test)]

@@ -137,4 +137,6 @@ pub enum ContractError {
     RoundStartLedgerReused = 93,
     /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
     PageSizeExceeded = 94,
+    /// Oracle attestation signature is missing or invalid when attestation is required (Issue #720)
+    InvalidAttestation = 103,
 }
