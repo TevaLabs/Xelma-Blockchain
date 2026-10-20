@@ -45,12 +45,23 @@
 //! |19 | UpDown    | Early cash-out zero forfeit           | n/a                    | n/a | [`early_cashout_zero_forfeit_full_refund`] |
 //! |20 | UpDown    | Early cash-out no position            | n/a                    | n/a | [`early_cashout_no_position_rejected`] |
 //! |21 | UpDown    | Early cash-out double call            | n/a                    | n/a | [`early_cashout_double_call_rejected`] |
+//! |22 | Precision | Zero-reveal, single participant       | on (must not apply) | n/a | [`precision_zero_reveal_single_participant_full_refund`] |
+//! |23 | Precision | Zero-reveal, no fee events            | on (must not apply) | n/a | [`precision_zero_reveal_emits_no_fee_events`] |
+//! |24 | Precision | Zero-reveal, stake-weighted policy    | on (must not apply) | n/a | [`precision_zero_reveal_stake_weighted_policy_full_refund`] |
+//! |25 | Precision | Zero-reveal, deferred settlement      | on (must not apply) | n/a | [`precision_zero_reveal_deferred_settlement_full_refund`] |
 //!
 //! Rows 9–10 guard a real regression: `_resolve_precision_mode` used to drop
 //! every committed-but-unrevealed stroop on the floor when **nobody**
 //! revealed (no winner to forfeit the pot to, and no refund branch existed).
 //! That is fixed in `settlement.rs` alongside this suite — row 9 is the
 //! exact scenario that leaked before the fix.
+//!
+//! Rows 22–25 pin the zero-reveal contract end-to-end: every committed
+//! stroop returns to its staker regardless of the configured payout policy
+//! or settlement timing (immediate or dispute-deferred finalize), and the
+//! path is fee-free in every observable dimension — no treasury delta, no
+//! `("protocol", "fee_coll")` events, archived summary fee of zero, and a
+//! persisted `UserOutcomeType::Refund` record per refunded participant.
 //!
 //! Two property-based blocks at the bottom add small-random coverage on top
 //! of the fixed matrix above (fixed + small random, per the task spec).
@@ -61,12 +72,13 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, RoundArchiveStatus};
+use crate::types::{BetSide, DataKeyCore, OraclePayload, RoundArchiveStatus, UserOutcomeType};
 use proptest::prelude::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    symbol_short,
+    testutils::{Address as _, Events, Ledger as _},
     xdr::ToXdr,
-    Address, Bytes, BytesN, Env,
+    Address, Bytes, BytesN, Env, Symbol, TryFromVal, TryIntoVal,
 };
 
 // ─── Shared test helpers ─────────────────────────────────────────────────────
@@ -138,6 +150,33 @@ fn test_salt(env: &Env, seed: u8) -> BytesN<32> {
     bytes[0] = seed | 0x80;
     bytes[31] = seed ^ 0x5A;
     BytesN::from_array(env, &bytes)
+}
+
+/// Decodes an event topic `Val` into a `Symbol` for comparison against
+/// `symbol_short!` literals (the canonical pattern from `event_coverage.rs`).
+fn topic_symbol(env: &Env, topic: soroban_sdk::Val) -> Option<Symbol> {
+    let symbol: Result<Symbol, _> = topic.try_into_val(env);
+    symbol.ok()
+}
+
+/// Counts `("protocol", "fee_coll")` treasury-fee events in the host event
+/// window. Settlement paths documented as fee-free (refunds) must produce
+/// exactly zero such events — a treasury delta of zero alone would not
+/// catch a fee event emitted with a zero amount.
+///
+/// NOTE: `env.events().all()` only returns events from the most recent
+/// contract invocation, so call this immediately after the settlement
+/// invocation under test, before any query call replaces the window.
+fn count_fee_events(env: &Env) -> usize {
+    env.events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            topics.len() == 2
+                && topic_symbol(env, topics.get(0).unwrap()) == Some(symbol_short!("protocol"))
+                && topic_symbol(env, topics.get(1).unwrap()) == Some(symbol_short!("fee_coll"))
+        })
+        .count()
 }
 
 // ─── Row 1–2: UpDown wins ────────────────────────────────────────────────────
@@ -558,6 +597,232 @@ fn precision_fallback_refund_mixed_reveal_ignores_configured_fee() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::FallbackRefund
     );
+}
+
+// ─── Rows 22–25: Precision zero-reveal settlement matrix ────────────────────
+//
+// The zero-reveal contract (PROTOCOL_SPEC.md "Unrevealed commitments at
+// settlement"): when nobody reveals, every committed stake is refunded in
+// full and the settlement is fee-free — no fee accrual, no fee events, and
+// no dependence on the configured payout policy or settlement timing.
+
+/// Row 22 — single committer, no reveal, fee configured: the lone stake is
+/// refunded in full, the persisted outcome is `Refund` (not `Win`/`Loss`),
+/// and the archived summary reports a zero fee.
+#[test]
+fn precision_zero_reveal_single_participant_full_refund() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    client.mint_initial(&alice);
+
+    client.create_round(&1_000u128, &Some(1));
+    let salt = test_salt(&env, 11);
+    client.commit_prediction(&alice, &make_commitment(&env, 1_010u128, &salt), &77);
+    set_fee_bps_now(&env, &contract_id, 1_000); // 10%
+
+    let round_id = client.get_active_round().unwrap().round_id;
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_000u128);
+
+    // NOTE: `env.events().all()` only surfaces events from the most recent
+    // contract invocation, so every event assertion happens here — before
+    // any query call replaces the invocation window.
+    //
+    // Archived summary event must report fee_amount == 0 for this round.
+    // Payload: (round_id, status, mode, final_price, participant_count,
+    // total_pot, fee_amount, settled_at_ledger, confidence, fee_model).
+    let summary_fee_zero = env.events().all().iter().any(|(_, topics, data)| {
+        let is_summary = topics.len() == 2
+            && topic_symbol(&env, topics.get(0).unwrap()) == Some(symbol_short!("round"))
+            && topic_symbol(&env, topics.get(1).unwrap()) == Some(symbol_short!("summary"));
+        if !is_summary {
+            return false;
+        }
+        let vals: Result<soroban_sdk::Vec<soroban_sdk::Val>, _> =
+            <_>::try_from_val(&env, &data);
+        match vals {
+            Ok(fields) if fields.len() == 10 => {
+                let archived_round: Result<u64, _> = fields.get(0).unwrap().try_into_val(&env);
+                let fee_amount: Result<i128, _> = fields.get(6).unwrap().try_into_val(&env);
+                archived_round == Ok(round_id) && fee_amount == Ok(0)
+            }
+            _ => false,
+        }
+    });
+    assert!(
+        summary_fee_zero,
+        "zero-reveal summary must archive fee_amount == 0"
+    );
+    assert_eq!(
+        count_fee_events(&env),
+        0,
+        "zero-reveal settlement must not emit any fee_collected events"
+    );
+
+    assert_eq!(
+        client.get_pending_winnings(&alice),
+        77,
+        "sole unrevealed committer must be refunded every stroop"
+    );
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0);
+    assert_eq!(client.get_active_round(), None);
+
+    let outcome = client.get_user_archived_participation(&alice, &round_id);
+    let outcome = outcome.expect("zero-reveal settlement must persist an outcome record");
+    assert_eq!(
+        outcome.outcome,
+        UserOutcomeType::Refund,
+        "zero-reveal outcome must be Refund, never Win or Loss"
+    );
+    assert_eq!(outcome.stake, 77);
+    assert_eq!(outcome.payout, 77);
+    assert_eq!(
+        outcome.predicted_price, 0,
+        "unrevealed guess is unknowable on-chain; must be persisted as 0"
+    );
+}
+
+/// Row 23 — three committers, no reveals, fee configured: conservation is
+/// exact and settlement emits **no** `("protocol", "fee_coll")` events —
+/// "no fee events" is asserted at the event level, not just via treasury.
+#[test]
+fn precision_zero_reveal_emits_no_fee_events() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&charlie);
+
+    client.create_round(&1_000u128, &Some(1));
+    let salt_a = test_salt(&env, 12);
+    let salt_b = test_salt(&env, 13);
+    let salt_c = test_salt(&env, 14);
+    client.commit_prediction(&alice, &make_commitment(&env, 1_005u128, &salt_a), &30);
+    client.commit_prediction(&bob, &make_commitment(&env, 995u128, &salt_b), &40);
+    client.commit_prediction(&charlie, &make_commitment(&env, 1_020u128, &salt_c), &30);
+    set_fee_bps_now(&env, &contract_id, 700); // 7%
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_000u128);
+
+    // Event window: only the resolve invocation is observable here.
+    assert_eq!(
+        count_fee_events(&env),
+        0,
+        "zero-reveal settlement must not emit any fee_collected events"
+    );
+
+    let alice_pay = client.get_pending_winnings(&alice);
+    let bob_pay = client.get_pending_winnings(&bob);
+    let charlie_pay = client.get_pending_winnings(&charlie);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+
+    assert_eq!(alice_pay, 30);
+    assert_eq!(bob_pay, 40);
+    assert_eq!(charlie_pay, 30);
+    assert_eq!(treasury_delta, 0, "fee must not apply on a zero-reveal path");
+    assert_eq!(alice_pay + bob_pay + charlie_pay + treasury_delta, 100);
+}
+
+/// Row 24 — StakeWeighted payout policy configured (policy only ever shapes
+/// winner payouts): zero-reveal refunds remain full and fee-free, proving
+/// the refund branch cannot be routed through stake-weighted distribution.
+#[test]
+fn precision_zero_reveal_stake_weighted_policy_full_refund() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_000u128, &Some(1));
+    let salt_a = test_salt(&env, 15);
+    let salt_b = test_salt(&env, 16);
+    client.commit_prediction(&alice, &make_commitment(&env, 1_005u128, &salt_a), &25);
+    client.commit_prediction(&bob, &make_commitment(&env, 995u128, &salt_b), &75);
+    client.set_precision_payout_policy(&1u32); // StakeWeighted
+    set_fee_bps_now(&env, &contract_id, 500); // 5%
+
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_000u128);
+
+    // Event window: only the resolve invocation is observable here.
+    assert_eq!(
+        count_fee_events(&env),
+        0,
+        "stake-weighted zero-reveal settlement must not emit fee events"
+    );
+
+    let alice_pay = client.get_pending_winnings(&alice);
+    let bob_pay = client.get_pending_winnings(&bob);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+
+    assert_eq!(alice_pay, 25, "refunds must be exact, not stake-weighted shares");
+    assert_eq!(bob_pay, 75, "refunds must be exact, not stake-weighted shares");
+    assert_eq!(treasury_delta, 0);
+    assert_eq!(alice_pay + bob_pay + treasury_delta, 100);
+}
+
+/// Row 25 — zero-reveal settlement deferred through the dispute window and
+/// completed via `finalize_round`: refunds are staged (nothing paid at
+/// resolve time) and paid in full at finalize, still with zero fee effects.
+#[test]
+fn precision_zero_reveal_deferred_settlement_full_refund() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.set_dispute_ledgers(&5u32);
+    client.create_round(&1_000u128, &Some(1));
+    let salt_a = test_salt(&env, 17);
+    let salt_b = test_salt(&env, 18);
+    client.commit_prediction(&alice, &make_commitment(&env, 1_005u128, &salt_a), &45);
+    client.commit_prediction(&bob, &make_commitment(&env, 995u128, &salt_b), &55);
+    set_fee_bps_now(&env, &contract_id, 600); // 6%
+
+    let round = client.get_active_round().unwrap();
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let treasury_before = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 1_000u128);
+
+    // Staged inside the dispute window: no payouts and no fee effects yet.
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0);
+
+    env.ledger().with_mut(|li| li.sequence_number = 17); // deadline = 12 + 5
+    client.finalize_round(&round.round_id);
+
+    // Event window: only the finalize invocation is observable here.
+    assert_eq!(
+        count_fee_events(&env),
+        0,
+        "finalize of a zero-reveal round must not emit fee events"
+    );
+
+    let alice_pay = client.get_pending_winnings(&alice);
+    let bob_pay = client.get_pending_winnings(&bob);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+
+    assert_eq!(alice_pay, 45, "deferred zero-reveal settlement refunds in full");
+    assert_eq!(bob_pay, 55, "deferred zero-reveal settlement refunds in full");
+    assert_eq!(treasury_delta, 0);
+    assert_eq!(alice_pay + bob_pay + treasury_delta, 100);
 }
 
 // ─── Early cash-out conservation ────────────────────────────────────────────
@@ -1025,9 +1290,19 @@ proptest! {
             client.reveal_prediction(&bob, &price_b, &salt_b);
         }
 
+        let round_id = client.get_active_round().unwrap().round_id;
         env.ledger().with_mut(|li| li.sequence_number = 12);
         let treasury_before = client.get_protocol_fee_treasury();
         resolve_at(&env, &client, &contract_id, final_price);
+
+        // `env.events().all()` only surfaces the most recent invocation, so
+        // the zero-reveal fee-event probe must run before any query call.
+        let zero_reveal = !reveal_a && !reveal_b;
+        let fee_events = if zero_reveal {
+            Some(count_fee_events(&env))
+        } else {
+            None
+        };
 
         let alice_pay = client.get_pending_winnings(&alice);
         let bob_pay = client.get_pending_winnings(&bob);
@@ -1044,8 +1319,23 @@ proptest! {
             alice_pay, bob_pay, treasury_delta, total_pot, reveal_a, reveal_b
         );
 
-        if !reveal_a && !reveal_b {
+        if zero_reveal {
             prop_assert_eq!(treasury_delta, 0, "no winner exists to be charged a fee against");
+            prop_assert_eq!(
+                fee_events.unwrap_or(0),
+                0,
+                "zero-reveal settlement must emit no fee events"
+            );
+            let outcome_a = client
+                .get_user_archived_participation(&alice, &round_id)
+                .expect("zero-reveal path must persist alice's outcome");
+            let outcome_b = client
+                .get_user_archived_participation(&bob, &round_id)
+                .expect("zero-reveal path must persist bob's outcome");
+            prop_assert_eq!(outcome_a.outcome, UserOutcomeType::Refund);
+            prop_assert_eq!(outcome_b.outcome, UserOutcomeType::Refund);
+            prop_assert_eq!(outcome_a.payout, amount_a, "alice refund must be her exact stake");
+            prop_assert_eq!(outcome_b.payout, amount_b, "bob refund must be his exact stake");
         }
     }
 }
