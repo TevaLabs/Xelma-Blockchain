@@ -1909,6 +1909,64 @@ pub fn _resolve_precision_mode(
         return Ok((0, 0));
     }
 
+    // Check for precision under-threshold: if there's 0 or 1 revealed prediction,
+    // there's no meaningful competition, so refund all participants (analogous to
+    // one-sided UpDown pools). This prevents degenerate markets and avoids charging
+    // fees when no real prediction contest occurred.
+    let mut revealed_count = 0u32;
+    for i in 0..participants.len() {
+        if let Some(user) = participants.get(i) {
+            let pred_key = DataKeyScoped::PrecisionPosition(round_id, user.clone());
+            if env.storage().persistent().has(&pred_key) {
+                revealed_count += 1;
+                if revealed_count > 1 {
+                    break; // Short-circuit once we know there's competition
+                }
+            }
+        }
+    }
+    
+    // Under-threshold: refund all participants (no fee, no stats mutation)
+    if revealed_count <= 1 {
+        let mut total_pot: i128 = 0;
+        for i in 0..participants.len() {
+            if let Some(user) = participants.get(i) {
+                let pred_key = DataKeyScoped::PrecisionPosition(round_id, user.clone());
+                let commit_key = DataKeyScoped::PrecisionCommitment(round_id, user.clone());
+                let mut refund_amount = 0i128;
+                if let Some(pred) = env
+                    .storage()
+                    .persistent()
+                    .get::<_, PrecisionPrediction>(&pred_key)
+                {
+                    refund_amount = pred.amount;
+                } else if let Some(commit) = env
+                    .storage()
+                    .persistent()
+                    .get::<_, PrecisionCommitment>(&commit_key)
+                {
+                    refund_amount = commit.amount;
+                }
+                if refund_amount > 0 {
+                    total_pot = payout_add(total_pot, refund_amount)?;
+                    _accumulate_pending(env, user.clone(), refund_amount)?;
+                    _persist_user_outcome(
+                        env,
+                        round_id,
+                        1,
+                        &user,
+                        2,
+                        0,
+                        refund_amount,
+                        refund_amount,
+                        UserOutcomeType::Refund,
+                    );
+                }
+            }
+        }
+        return Ok((0, total_pot)); // No fee on under-threshold refund
+    }
+
     let mut min_diff: Option<u128> = None;
     let mut winners: Vec<PrecisionPrediction> = Vec::new(env);
     let mut total_pot: i128 = 0;

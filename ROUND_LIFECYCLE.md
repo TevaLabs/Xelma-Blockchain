@@ -99,6 +99,17 @@ The settlement engine deterministically executes the configured `OneSidedPolicy`
 
 A dedicated `("pool", "onesided")` event is published containing `round_id`, `policy_code`, `affected_side`, `refund_amount`, `carry_amount`, `pool_up`, and `pool_down`.
 
+### Precision Under-Threshold (Issue #686)
+
+For Precision mode rounds, when settlement occurs with 0 or 1 revealed predictions, there is no meaningful competition for the "closest guess" win condition. This degenerate case is analogous to the one-sided pool scenario in UpDown mode.
+
+When detected, all participants (including those with unrevealed commitments) receive full stake refunds with:
+- **No protocol fees charged** (unlike normal Precision settlement where the winner pays a fee)
+- **No win/loss stats mutation** (preserving stats integrity for non-competitive rounds)
+- **Conservation guaranteed:** sum of refunds equals total pot
+
+This ensures fair treatment of single-participant or all-commitment Precision rounds, preventing unfair fee extraction when no real prediction contest occurred.
+
 ## Claiming Winnings
 
 Users call `claim_winnings` any time after a round resolves. The pending amount
