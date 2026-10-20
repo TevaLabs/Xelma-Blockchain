@@ -422,9 +422,19 @@ fn test_event_coverage_cancel_round() {
     client.cancel_round(&99u32);
 
     let events = env.events().all();
-    let last_event = events.last().unwrap();
-    let (_contract, topics, data) = last_event;
 
+    // 1. Assert the ("round", "cancelled") event with reason-index field
+    let cancelled_event = events
+        .iter()
+        .rev()
+        .find(|(_contract, topics, _data)| {
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("cancelled"))
+        })
+        .expect("round cancelled event should exist");
+
+    let (_contract, topics, data) = cancelled_event;
     assert_eq!(topics.len(), 2);
     assert_eq!(
         topics.get(0).unwrap().try_into_val(&env),
@@ -432,8 +442,27 @@ fn test_event_coverage_cancel_round() {
     );
     assert_eq!(
         topics.get(1).unwrap().try_into_val(&env),
-        Ok(symbol_short!("summary"))
+        Ok(symbol_short!("cancelled"))
     );
+    let canon: (u64, u32, i128, i128) = data.try_into_val(&env).unwrap();
+    assert_eq!(canon.0, 1u64); // round_id
+    assert_eq!(canon.1, 99u32); // reason-index (admin-supplied reason code)
+    assert_eq!(canon.2, 0i128); // pool_up
+    assert_eq!(canon.3, 50_0000000i128); // pool_down
+
+    // 2. Assert the ("round", "summary") event payload
+    let summary_event = events
+        .iter()
+        .rev()
+        .find(|(_contract, topics, _data)| {
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("summary"))
+        })
+        .expect("Up/Down summary event should exist");
+
+    let (_contract, _topics, data) = summary_event;
+    // Payload: (version: u32, round_id: u64, status: u32, mode: u32, price_start: u128, price_final: u128, pool_up: i128, pool_down: i128, participant_count: u32, total_pot: i128, fee_amount: i128, settled_at_ledger: u32, confidence: Option<u32>)
     let canon: (
         u32,
         u64,
@@ -458,7 +487,7 @@ fn test_event_coverage_cancel_round() {
     assert_eq!(canon.6, 0i128); // pool_up
     assert_eq!(canon.7, 0i128); // pool_down
     assert_eq!(canon.8, 0u32); // participant_count
-    assert_eq!(canon.9, 0i128); // total_pot
+    assert_eq!(canon.9, 50_0000000i128); // total_pot
     assert_eq!(canon.10, 0i128); // fee_amount
     assert_eq!(canon.12, None); // confidence
 }

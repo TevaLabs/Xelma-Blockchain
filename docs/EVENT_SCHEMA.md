@@ -314,6 +314,28 @@ Applies the configured deterministic settlement policy (`OneSidedPolicy::Refund`
 
 ---
 
+### `("cashout", "early")` — Early cash-out user exit event (Issue #271)
+
+Emitted when a user successfully performs an early cash-out during the Running phase
+of an UpDown round. The user forfeits a percentage of their stake to the protocol
+treasury and receives the remainder as pending winnings.
+
+| Position | Field       | Type     | Description                                                  |
+|----------|-------------|----------|--------------------------------------------------------------|
+| 0        | `user`      | `Address` | User who performed the early cash-out                        |
+| 1        | `round_id`  | `u64`     | Round in which the cash-out occurred                         |
+| 2        | `side`      | `u32`     | User's bet side: `0` = Up, `1` = Down                       |
+| 3        | `stake`     | `i128`    | Original bet stake amount in stroops                         |
+| 4        | `cashout`   | `i128`    | Amount returned to user as pending winnings                  |
+| 5        | `forfeit`   | `i128`    | Amount forfeited to the protocol treasury                    |
+
+The conservation invariant `cashout + forfeit == stake` always holds. NOT
+emitted when the early cash-out feature is disabled (`EarlyCashoutDisabled`),
+when the round is not in the Running phase, or when the user has no active
+position in the round.
+
+---
+
 ### `("round", "summary")`
 
 Emitted when a round is resolved, cancelled, or refunded. Contains compact settlement data.

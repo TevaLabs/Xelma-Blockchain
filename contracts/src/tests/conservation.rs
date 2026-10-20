@@ -64,7 +64,9 @@ use crate::errors::ContractError;
 use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, RoundArchiveStatus};
 use proptest::prelude::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    symbol_short,
+    testutils::{Address as _, Events, Ledger as _},
+    TryIntoVal,
     xdr::ToXdr,
     Address, Bytes, BytesN, Env,
 };
@@ -1048,4 +1050,93 @@ proptest! {
             prop_assert_eq!(treasury_delta, 0, "no winner exists to be charged a fee against");
         }
     }
+}
+
+/// Row 22 — Early cash-out success emits ("cashout", "early") event.
+#[test]
+fn early_cashout_emits_event_on_success() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    client.mint_initial(&alice);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &100, &BetSide::Up);
+    set_ec_bps_now(&env, &contract_id, 1_000); // 10% penalty
+
+    // Advance to Running phase (ledger 6 >= bet_end_ledger)
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+
+    // Cash out early — this should emit ("cashout", "early") event
+    client.cash_out_early(&alice);
+
+    let events = env.events().all();
+    let cashout_event = events.iter().find(|e| {
+        let (_contract, topics, _data) = e;
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("cashout"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("early"))
+    });
+
+    assert!(
+        cashout_event.is_some(),
+        "cashout early event must be emitted on successful early cashout"
+    );
+
+    let (_contract, topics, data) = cashout_event.unwrap();
+    // Validate payload fields
+    let (ev_user, ev_round_id, ev_side, ev_stake, ev_cashout, ev_forfeit) =
+        data.try_into_val::<(Address, u64, u32, i128, i128, i128)>(&env)
+            .expect("cashout early event data must have 6 fields");
+
+    assert_eq!(ev_user, alice);
+    assert_eq!(ev_round_id, 1u64);
+    assert_eq!(ev_side, 0u32, "Up side is 0");
+    assert_eq!(ev_stake, 100i128);
+    // 100 * 1000 / 10000 = 10 forfeited, 90 returned
+    assert_eq!(ev_cashout, 90i128);
+    assert_eq!(ev_forfeit, 10i128);
+    assert_eq!(ev_cashout + ev_forfeit, ev_stake, "cashout + forfeit must equal stake");
+}
+
+/// Row 23 — Failed cashouts do not emit ("cashout", "early") event.
+#[test]
+fn early_cashout_no_event_on_failure() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    client.mint_initial(&alice);
+
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &100, &BetSide::Up);
+
+    // Advance to Running phase
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+
+    // Try cash out without enabling the feature — should fail
+    let result = client.try_cash_out_early(&alice);
+    assert_eq!(
+        result, Err(Ok(ContractError::EarlyCashoutDisabled)),
+        "cash out without enabling bps must fail"
+    );
+
+    // Verify no cashout early event was emitted
+    let events = env.events().all();
+    let cashout_events: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            let (_contract, topics, _data) = e;
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("cashout"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("early"))
+        })
+        .collect();
+
+    assert_eq!(
+        cashout_events.len(),
+        0,
+        "no cashout early event must be emitted on failed cashout"
+    );
 }
