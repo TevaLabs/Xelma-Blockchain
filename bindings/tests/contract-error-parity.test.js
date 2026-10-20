@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { describe, it, expect } from "vitest";
+import { checkErrorEnumParity } from "../src/parity.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,13 +38,13 @@ if (!tsMapMatch) {
 }
 
 const tsCodes = new Map();
-const tsEntryRegex = /^\s*(\d+)\s*:\s*\{message:"[^"]+"\}/gm;
+const tsEntryRegex = /^\s*(\d+)\s*:\s*\{\s*message\s*:\s*"([^"]+)"\s*\}/gm;
 let entry;
 while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
   tsCodes.set(parseInt(entry[1], 10), entry[2]);
 }
 
-const rustCodes = new Map(rustVariants.map(v => [v,code, v.name]));
+const rustCodes = new Map(rustVariants.map(v => [v.code, v.name]));
 
 // --- Docs: parse the markdown registry table ---
 const docsCodes = new Map();
@@ -125,5 +126,43 @@ describe("Contract Error Parity", () => {
 
   it("contains formatContractError helper", () => {
     expect(bindingsCode.includes("export function formatContractError")).toBe(true);
+  });
+
+  it("passes parity.js checkErrorEnumParity on canonical repository sources", () => {
+    const result = checkErrorEnumParity(errorsCode, bindingsCode, docsCode);
+    expect(result.errorsDrift).toEqual([]);
+  });
+
+  it("fails parity.js checkErrorEnumParity when a Rust error variant is missing or mismatched in TS", () => {
+    const sampleRust = `
+      pub enum ContractError {
+          AlreadyInitialized = 1,
+          BettingClosed = 102,
+      }
+    `;
+    const sampleTsMissing = `
+      export const ContractError = {
+        1: {message:"AlreadyInitialized"}
+      }
+    `;
+    const sampleDocs = `
+| 1 | \`AlreadyInitialized\` |
+| 102 | \`BettingClosed\` |
+    `;
+    const missingResult = checkErrorEnumParity(sampleRust, sampleTsMissing, sampleDocs);
+    expect(missingResult.errorsDrift).toContain(
+      "Error variant 'BettingClosed' (value 102) exists in contract but is missing from bindings error map."
+    );
+
+    const sampleTsWrongCode = `
+      export const ContractError = {
+        1: {message:"AlreadyInitialized"},
+        999: {message:"BettingClosed"}
+      }
+    `;
+    const mismatchResult = checkErrorEnumParity(sampleRust, sampleTsWrongCode, sampleDocs);
+    expect(mismatchResult.errorsDrift).toContain(
+      "Error variant 'BettingClosed' has value 102 in contract but value 999 in bindings."
+    );
   });
 });
