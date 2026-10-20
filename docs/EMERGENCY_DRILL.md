@@ -121,6 +121,14 @@ The protocol's incident behavior is validated deterministically in `contracts/sr
    guard: insurance storage keys were built in a foreign `Env`, so
    `cancel_round(1..=3)` trapped and an active round could not be cancelled.
 
+7. **`test_pause_during_dispute_window_blocks_void_and_finalize`** (Issue #700,
+   `contracts/src/tests/drill.rs`):
+   Verifies that pausing the contract while a round sits in its open dispute
+   window blocks both `void_round` and `finalize_round` with
+   `ContractError::ContractPaused`, and that unpausing restores the ability to
+   void within the window. This guards the emergency pause-during-dispute
+   scenario against accidentally trapping a staged settlement.
+
 ### Executing the Emergency Drill
 
 Run the drill suite using cargo test (the filter also matches
