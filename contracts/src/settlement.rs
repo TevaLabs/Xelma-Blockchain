@@ -1400,10 +1400,12 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     _ensure_not_paused(&env)?;
 
-    let pending =
-        _read_pending_dispute(&env, round_id).ok_or(ContractError::RoundNotCancellable)?;
+    let pending = match _read_pending_dispute(&env, round_id) {
+        Some(p) => p,
+        None => return Err(ContractError::DisputeWindowExpired),
+    };
     if env.ledger().sequence() >= pending.deadline_ledger {
-        return Err(ContractError::RoundNotCancellable);
+        return Err(ContractError::DisputeWindowExpired);
     }
 
     let participants: Vec<Address> = env
