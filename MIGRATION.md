@@ -21,13 +21,39 @@ client.migrate_schema_v1_to_v2(false);
 
 ### Active round guard
 
-Migrations are **always** blocked while a round is active, even in dry-run mode:
+Migrations are **always** blocked while a round is active (`DataKeyCore::ActiveRound` exists), even in dry-run mode. Attempting a migration during an active round fails immediately with `ContractError::MigrationActiveRound` (numeric code `44`).
+
+#### Rationale
+
+During an active round, in-flight betting positions, pools, and phase state are live. Applying schema transformations or advancing schema versions mid-round introduces state inconsistency risks between betting, resolution, and archival. To guarantee safety and deterministic storage layout, migrations are strictly gated behind `!env.storage().persistent().has(&DataKeyCore::ActiveRound)`.
+
+#### Both entrypoints guarded
+
+Both `migrate_schema_v1_to_v2` and `migrate_schema_v2_to_v3` validate the active round guard before dry-run exit or storage mutations:
 
 ```rust
-// Both fail with MigrationActiveRound if a round is live
-client.migrate_schema_v1_to_v2(true);
-client.migrate_schema_v1_to_v2(false);
+// Both fail with MigrationActiveRound (44) if a round is live
+client.migrate_schema_v1_to_v2(true);  // dry-run rejected
+client.migrate_schema_v1_to_v2(false); // real migration rejected
+
+client.migrate_schema_v2_to_v3(true);  // dry-run rejected
+client.migrate_schema_v2_to_v3(false); // real migration rejected
 ```
+
+#### Diagnostic rejection event
+
+Whenever a migration is rejected due to an active round, the contract emits a standardized diagnostic rejection event (`_emit_action_rejected`):
+
+- **Topics**: `("action", "rejct")`
+- **Data**: `(admin: Address, action: Symbol("migrate"), reason: 44u32)`
+
+#### Unblocking migration
+
+If migration fails with `MigrationActiveRound`, operators must:
+1. Allow the active round to conclude via oracle resolution (`resolve_round`), or cancel it via admin emergency cancellation (`cancel_round`).
+2. Verify `client.get_active_round()` returns `None`.
+3. Re-run migration in dry-run mode (`dry_run: true`) to verify all preconditions pass.
+4. Execute real migration (`dry_run: false`).
 
 ### Checklist
 
@@ -131,7 +157,11 @@ Missing data returns `None` cleanly.
 
 2. **Run the migration**
    ```rust
-   client.migrate_schema_v2_to_v3();
+   // Dry-run first to validate preconditions without state writes
+   client.migrate_schema_v2_to_v3(true);
+
+   // Execute real migration
+   client.migrate_schema_v2_to_v3(false);
    ```
 
 3. **Verify schema version**
@@ -159,7 +189,7 @@ Missing data returns `None` cleanly.
 ### Rollback / safety
 
 This migration is additive only — no existing fields are removed or re-interpreted.
-If the contract halts during migration, simply replay `migrate_schema_v2_to_v3()`;
+If the contract halts during migration, simply replay `migrate_schema_v2_to_v3(false)`;
 it is idempotent on the `SchemaVersion` write (guarded by explicit version check)
 and skips already-persisted `UserRoundOutcome` keys.
 

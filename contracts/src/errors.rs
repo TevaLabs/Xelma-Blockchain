@@ -58,9 +58,6 @@ pub enum ContractError {
     NoRoundTemplate = 65,
     /// Oracle payload timestamp is outside the round-relative economic window
     OracleTimestampOutsideWindow = 66,
-    /// Pending winnings entry exists but has not yet reached the configured
-    /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 86,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
@@ -103,10 +100,27 @@ pub enum ContractError {
     IllegalPhaseTransition = 84,
     /// Oracle heartbeat failed the configured freshness or health policy.
     OracleHeartbeatUnhealthy = 85,
+    /// Pending winnings entry exists but has not yet reached the configured
+    /// expiry threshold — caller must wait before reclaiming.
+    PendingWinningsNotExpired = 86,
     /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
     ClaimBatchTooLarge = 87,
     /// claim_many batch contains the same address more than once (Issue #277)
     DuplicateClaimAddress = 88,
+    /// The dispute window for `void_round` has expired, or dispute windows
+    /// are not configured (`dispute_ledgers == 0`).
+    DisputeWindowExpired = 91,
+    /// `finalize_round` was called before the dispute window elapsed.
+    ClaimLocked = 92,
+    /// A round cannot be created because the current ledger sequence has
+    /// already backed another round's `start_ledger`.
+    ///
+    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
+    /// sequence would make a payload signed for the earlier round valid for
+    /// the later one. Retry once the ledger has advanced.
+    RoundStartLedgerReused = 93,
+    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
+    PageSizeExceeded = 94,
     /// Early cash-out feature is disabled or not configured
     EarlyCashoutDisabled = 95,
     /// User does not have an active position to cash out
@@ -123,18 +137,288 @@ pub enum ContractError {
     InvalidAmount = 101,
     /// The close-buffer has frozen betting before the round's betting window ends.
     BettingClosed = 102,
-    /// The dispute window for `void_round` has expired, or dispute windows
-    /// are not configured (`dispute_ledgers == 0`).
-    DisputeWindowExpired = 91,
-    /// `finalize_round` was called before the dispute window elapsed.
-    ClaimLocked = 92,
-    /// A round cannot be created because the current ledger sequence has
-    /// already backed another round's `start_ledger`.
-    ///
-    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
-    /// sequence would make a payload signed for the earlier round valid for
-    /// the later one. Retry once the ledger has advanced.
-    RoundStartLedgerReused = 93,
-    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
-    PageSizeExceeded = 94,
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::arithmetic_side_effects
+)]
+mod tests {
+    use super::ContractError;
+    use std::collections::HashSet;
+
+    const ALL_VARIANTS: &[(ContractError, u32, &str)] = &[
+        (ContractError::AlreadyInitialized, 1, "AlreadyInitialized"),
+        (ContractError::AdminNotSet, 2, "AdminNotSet"),
+        (ContractError::OracleNotSet, 3, "OracleNotSet"),
+        (ContractError::InvalidBetAmount, 6, "InvalidBetAmount"),
+        (ContractError::NoActiveRound, 7, "NoActiveRound"),
+        (ContractError::RoundEnded, 8, "RoundEnded"),
+        (ContractError::InsufficientBalance, 9, "InsufficientBalance"),
+        (ContractError::AlreadyBet, 10, "AlreadyBet"),
+        (ContractError::Overflow, 11, "Overflow"),
+        (ContractError::InvalidPrice, 12, "InvalidPrice"),
+        (ContractError::InvalidDuration, 13, "InvalidDuration"),
+        (ContractError::InvalidMode, 14, "InvalidMode"),
+        (
+            ContractError::WrongModeForPrediction,
+            15,
+            "WrongModeForPrediction",
+        ),
+        (ContractError::RoundNotEnded, 16, "RoundNotEnded"),
+        (ContractError::StaleOracleData, 18, "StaleOracleData"),
+        (ContractError::InvalidOracleRound, 19, "InvalidOracleRound"),
+        (ContractError::RoundAlreadyActive, 20, "RoundAlreadyActive"),
+        (ContractError::ContractPaused, 22, "ContractPaused"),
+        (ContractError::WindowOutOfRange, 23, "WindowOutOfRange"),
+        (ContractError::FutureOracleData, 24, "FutureOracleData"),
+        (ContractError::PayoutOverflow, 25, "PayoutOverflow"),
+        (
+            ContractError::RoundNotCancellable,
+            27,
+            "RoundNotCancellable",
+        ),
+        (ContractError::StakeExceedsMax, 28, "StakeExceedsMax"),
+        (
+            ContractError::ExposureCapExceeded,
+            29,
+            "ExposureCapExceeded",
+        ),
+        (
+            ContractError::PendingWinningsCapExceeded,
+            30,
+            "PendingWinningsCapExceeded",
+        ),
+        (ContractError::InvalidStartPrice, 31, "InvalidStartPrice"),
+        (ContractError::OracleNonceReused, 33, "OracleNonceReused"),
+        (
+            ContractError::InvalidMinParticipants,
+            35,
+            "InvalidMinParticipants",
+        ),
+        (
+            ContractError::InvalidPrecisionCap,
+            38,
+            "InvalidPrecisionCap",
+        ),
+        (
+            ContractError::PrecisionCapExceeded,
+            39,
+            "PrecisionCapExceeded",
+        ),
+        (
+            ContractError::OracleDeviationExceeded,
+            41,
+            "OracleDeviationExceeded",
+        ),
+        (
+            ContractError::UnsupportedSchemaVersion,
+            42,
+            "UnsupportedSchemaVersion",
+        ),
+        (
+            ContractError::MigrationActiveRound,
+            44,
+            "MigrationActiveRound",
+        ),
+        (ContractError::CommitmentNotFound, 45, "CommitmentNotFound"),
+        (ContractError::AlreadyRevealed, 46, "AlreadyRevealed"),
+        (
+            ContractError::InvalidRevealWindow,
+            47,
+            "InvalidRevealWindow",
+        ),
+        (ContractError::HashMismatch, 48, "HashMismatch"),
+        (
+            ContractError::OracleNetworkMismatch,
+            49,
+            "OracleNetworkMismatch",
+        ),
+        (
+            ContractError::InvalidProtocolFeeBps,
+            51,
+            "InvalidProtocolFeeBps",
+        ),
+        (ContractError::MintLimitExceeded, 53, "MintLimitExceeded"),
+        (ContractError::NoPendingRotation, 54, "NoPendingRotation"),
+        (
+            ContractError::RotationDelayNotElapsed,
+            55,
+            "RotationDelayNotElapsed",
+        ),
+        (
+            ContractError::InvalidArchiveRetention,
+            62,
+            "InvalidArchiveRetention",
+        ),
+        (ContractError::InvalidCommitment, 63, "InvalidCommitment"),
+        (ContractError::InvalidSalt, 64, "InvalidSalt"),
+        (ContractError::NoRoundTemplate, 65, "NoRoundTemplate"),
+        (
+            ContractError::OracleTimestampOutsideWindow,
+            66,
+            "OracleTimestampOutsideWindow",
+        ),
+        (
+            ContractError::EpochBudgetExceeded,
+            67,
+            "EpochBudgetExceeded",
+        ),
+        (ContractError::OracleNotLive, 68, "OracleNotLive"),
+        (
+            ContractError::InvalidPayoutPolicy,
+            69,
+            "InvalidPayoutPolicy",
+        ),
+        (ContractError::BelowMinBet, 70, "BelowMinBet"),
+        (
+            ContractError::InsufficientOracleQuorum,
+            71,
+            "InsufficientOracleQuorum",
+        ),
+        (ContractError::TooFewObservations, 72, "TooFewObservations"),
+        (
+            ContractError::OracleOutlierRejected,
+            73,
+            "OracleOutlierRejected",
+        ),
+        (
+            ContractError::DuplicateOracleSource,
+            74,
+            "DuplicateOracleSource",
+        ),
+        (
+            ContractError::InvalidObservationOrder,
+            75,
+            "InvalidObservationOrder",
+        ),
+        (
+            ContractError::UnsupportedDataKeyForTtlTouch,
+            76,
+            "UnsupportedDataKeyForTtlTouch",
+        ),
+        (
+            ContractError::PendingWinningsNotFound,
+            77,
+            "PendingWinningsNotFound",
+        ),
+        (
+            ContractError::ExpiryNotConfigured,
+            78,
+            "ExpiryNotConfigured",
+        ),
+        (ContractError::AccessDenied, 79, "AccessDenied"),
+        (ContractError::ProposalNotFound, 80, "ProposalNotFound"),
+        (ContractError::ProposalExpired, 81, "ProposalExpired"),
+        (ContractError::GovInvalidState, 82, "GovInvalidState"),
+        (ContractError::GovUnauthorized, 83, "GovUnauthorized"),
+        (
+            ContractError::IllegalPhaseTransition,
+            84,
+            "IllegalPhaseTransition",
+        ),
+        (
+            ContractError::OracleHeartbeatUnhealthy,
+            85,
+            "OracleHeartbeatUnhealthy",
+        ),
+        (
+            ContractError::PendingWinningsNotExpired,
+            86,
+            "PendingWinningsNotExpired",
+        ),
+        (ContractError::ClaimBatchTooLarge, 87, "ClaimBatchTooLarge"),
+        (
+            ContractError::DuplicateClaimAddress,
+            88,
+            "DuplicateClaimAddress",
+        ),
+        (
+            ContractError::DisputeWindowExpired,
+            91,
+            "DisputeWindowExpired",
+        ),
+        (ContractError::ClaimLocked, 92, "ClaimLocked"),
+        (
+            ContractError::RoundStartLedgerReused,
+            93,
+            "RoundStartLedgerReused",
+        ),
+        (ContractError::PageSizeExceeded, 94, "PageSizeExceeded"),
+        (
+            ContractError::EarlyCashoutDisabled,
+            95,
+            "EarlyCashoutDisabled",
+        ),
+        (ContractError::PositionNotFound, 96, "PositionNotFound"),
+        (
+            ContractError::InvalidPhaseForCashout,
+            97,
+            "InvalidPhaseForCashout",
+        ),
+        (
+            ContractError::WrongModeForCashout,
+            98,
+            "WrongModeForCashout",
+        ),
+        (
+            ContractError::InsuranceInvalidSplit,
+            99,
+            "InsuranceInvalidSplit",
+        ),
+        (
+            ContractError::InsuranceInsufficientFund,
+            100,
+            "InsuranceInsufficientFund",
+        ),
+        (ContractError::InvalidAmount, 101, "InvalidAmount"),
+        (ContractError::BettingClosed, 102, "BettingClosed"),
+    ];
+
+    #[test]
+    fn test_contract_error_repr_codes_are_unique_and_ordered() {
+        let mut seen_codes = HashSet::new();
+        let mut prev_code = 0u32;
+
+        for &(variant, expected_code, name) in ALL_VARIANTS {
+            let actual_code = variant as u32;
+            assert_eq!(
+                actual_code, expected_code,
+                "ContractError::{name} expected repr code {expected_code}, got {actual_code}"
+            );
+            assert!(
+                seen_codes.insert(actual_code),
+                "Duplicate ContractError repr code {actual_code} for {name}"
+            );
+            assert!(
+                actual_code > prev_code,
+                "ContractError::{name} ({actual_code}) must be ordered after {prev_code}"
+            );
+            prev_code = actual_code;
+        }
+    }
+
+    #[test]
+    fn test_contract_error_code_66_disambiguation() {
+        assert_eq!(ContractError::OracleTimestampOutsideWindow as u32, 66);
+        assert_eq!(ContractError::EpochBudgetExceeded as u32, 67);
+        assert_eq!(ContractError::OracleNotLive as u32, 68);
+        assert_eq!(ContractError::PendingWinningsNotExpired as u32, 86);
+
+        assert_ne!(
+            ContractError::OracleTimestampOutsideWindow as u32,
+            ContractError::PendingWinningsNotExpired as u32
+        );
+        assert_ne!(
+            ContractError::OracleTimestampOutsideWindow as u32,
+            ContractError::OracleNotLive as u32
+        );
+        assert_ne!(
+            ContractError::OracleTimestampOutsideWindow as u32,
+            ContractError::EpochBudgetExceeded as u32
+        );
+    }
 }

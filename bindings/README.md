@@ -179,22 +179,19 @@ can catch specific types or the base class.
 
 # Error-code parity in CI
 
-The error codes above are duplicated in three places:
+The error codes are synchronized across three canonical sources:
 
-- Rust: the contract's `#[contracterror]` enum
-- TypeScript: `bindings/src/index.ts` (the generated `ContractError` enum)
-- Docs: the "Error reference" table in this README
+- Rust: `contracts/src/errors.rs` (`pub enum ContractError`)
+- TypeScript: `bindings/src/index.ts` (`export const ContractError`)
+- Docs: `docs/CONTRACT_ERRORS.md` (canonical error registry table)
 
-These can drift apart silently. CI runs `bindings/scripts/check-error-parity.mjs`,
-which parses all three sources and fails the build if any code, variant name, or
-message disagrees.
+These can drift apart silently. CI runs `npm run test:parity` (`bindings/src/parity.js`)
+and `npm run test:errors` (`bindings/tests/contract-error-parity.test.js`), which
+parse all three sources and fail the build if any code, variant name, or duplicate
+discriminant disagrees.
 
 ## Fixing a parity failure
 
-1. Read the CI log — it prints each mismatch as `code <n>: <source> says ...`.
-2. Update the source that is wrong. Usually the Rust enum is authoritative;
-   regenerate the TS bindings with the `soroban contract bindings ts` command
-   shown at the top of this file.
-3. Update the "Error reference" table above so the code, exception name, and
-   meaning match.
-4. Re-run `node bindings/scripts/check-error-parity.mjs` locally until it exits 0.
+1. Read the `npm run test:parity` output — it lists every missing, extra, or mismatched error variant and code.
+2. Update `bindings/src/index.ts` and `docs/CONTRACT_ERRORS.md` to match `contracts/src/errors.rs`.
+3. Re-run `npm run test:parity && npm run test:errors` locally until both exit 0.

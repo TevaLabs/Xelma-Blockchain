@@ -563,13 +563,16 @@ export const ContractError = {
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
   63: {message:"InvalidCommitment"},
+  /**
+   * Reveal salt fails minimum entropy rules (all-zero or constant-byte)
+   */
   64: {message:"InvalidSalt"},
   /**
    * No round template is configured
    */
   65: {message:"NoRoundTemplate"},
   /**
-   * Oracle timestamp is outside the round-relative economic window
+   * Oracle payload timestamp is outside the round-relative economic window
    */
   66: {message:"OracleTimestampOutsideWindow"},
   /**
@@ -1502,6 +1505,77 @@ export class Client extends ContractClient {
         reset_leaderboard_season: this.txFromJSON<Result<u32>>,
         get_season_archive: this.txFromJSON<Option<SeasonArchive>>,
         get_season_leaderboard_by_wins: this.txFromJSON<Array<SeasonLeaderboardEntry>>,
-        get_season_leaderboard_by_streak: this.txFromJSON<Array<SeasonLeaderboardEntry>>
+        get_season_leaderboard_by_streak: this.txFromJSON<Array<SeasonLeaderboardEntry>>,
+        announce_next_schema: this.txFromJSON<Result<void>>,
+        get_next_schema: this.txFromJSON<Option<u32>>,
+        clear_next_schema: this.txFromJSON<Result<void>>,
+        is_action_allowed: this.txFromJSON<boolean>,
+        set_deviation_ref_mode: this.txFromJSON<Result<void>>,
+        get_deviation_ref_mode: this.txFromJSON<u32>,
+        get_deviation_window_samples: this.txFromJSON<u32>,
+        get_twap_samples: this.txFromJSON<Array<u128>>,
+        set_attestation_key: this.txFromJSON<Result<void>>,
+        get_attestation_key: this.txFromJSON<Option<Buffer>>,
+        batch_touch_ttl: this.txFromJSON<Result<u32>>,
+        set_access_control_enabled: this.txFromJSON<Result<void>>,
+        is_access_control_enabled: this.txFromJSON<boolean>,
+        add_allowlisted: this.txFromJSON<Result<void>>,
+        remove_allowlisted: this.txFromJSON<Result<void>>,
+        add_denylisted: this.txFromJSON<Result<void>>,
+        remove_denylisted: this.txFromJSON<Result<void>>,
+        is_allowlisted: this.txFromJSON<boolean>,
+        is_denylisted: this.txFromJSON<boolean>,
+        get_access_state: this.txFromJSON<any>,
+        get_access_policy: this.txFromJSON<any>,
+        set_gov_approver: this.txFromJSON<Result<void>>,
+        get_gov_approver: this.txFromJSON<Option<string>>,
+        set_gov_proposal_ttl: this.txFromJSON<Result<void>>,
+        get_gov_proposal_ttl: this.txFromJSON<u32>,
+        propose_gov_action: this.txFromJSON<Result<u64>>,
+        approve_gov_proposal: this.txFromJSON<Result<void>>,
+        execute_gov_proposal: this.txFromJSON<Result<void>>,
+        cancel_gov_proposal: this.txFromJSON<Result<void>>,
+        get_gov_proposal: this.txFromJSON<Option<any>>,
+        establish_constitution: this.txFromJSON<Result<void>>,
+        get_constitution: this.txFromJSON<Option<any>>,
+        propose_amendment: this.txFromJSON<Result<u64>>,
+        veto_amendment: this.txFromJSON<Result<void>>,
+        activate_amendment: this.txFromJSON<Result<void>>,
+        get_amendment: this.txFromJSON<Option<any>>,
+        set_min_bet: this.txFromJSON<Result<void>>,
+        schedule_min_bet: this.txFromJSON<Result<void>>,
+        get_min_bet: this.txFromJSON<Option<i128>>,
+        schedule_oracle_timestamp_skew: this.txFromJSON<Result<void>>,
+        get_oracle_timestamp_skew: this.txFromJSON<Option<u64>>,
+        set_pending_winnings_expiry: this.txFromJSON<Result<void>>,
+        schedule_pending_winnings_expiry: this.txFromJSON<Result<void>>,
+        get_pending_winnings_expiry: this.txFromJSON<u32>,
+        reclaim_expired_pending_winnings: this.txFromJSON<Result<i128>>,
+        set_oracle_quorum_config: this.txFromJSON<Result<void>>,
+        get_oracle_quorum_config: this.txFromJSON<Option<OracleQuorumConfig>>,
+        get_bet_window_ledgers: this.txFromJSON<u32>,
+        get_run_window_ledgers: this.txFromJSON<u32>,
+        set_early_cashout_bps: this.txFromJSON<Result<void>>,
+        get_early_cashout_bps: this.txFromJSON<Option<u32>>,
+        resolve_round_multi: this.txFromJSON<Result<void>>,
+        claim_many: this.txFromJSON<Result<i128>>,
+        cash_out_early: this.txFromJSON<Result<void>>,
+        set_dispute_ledgers: this.txFromJSON<Result<void>>,
+        get_dispute_ledgers: this.txFromJSON<u32>,
+        void_round: this.txFromJSON<Result<void>>,
+        finalize_round: this.txFromJSON<Result<void>>,
+        get_one_sided_policy: this.txFromJSON<u32>,
+        get_market_snapshot: this.txFromJSON<Option<any>>,
+        set_fee_model: this.txFromJSON<Result<void>>,
+        get_fee_model: this.txFromJSON<u32>,
+        set_insurance_split_bps: this.txFromJSON<Result<void>>,
+        get_insurance_split_bps: this.txFromJSON<Option<u32>>,
+        set_insurance_coverage_bps: this.txFromJSON<Result<void>>,
+        get_insurance_coverage_bps: this.txFromJSON<Option<u32>>,
+        set_insurance_eligible_events: this.txFromJSON<Result<void>>,
+        get_insurance_eligible_events: this.txFromJSON<u32>,
+        get_insurance_fund_balance: this.txFromJSON<i128>,
+        top_up_insurance_fund: this.txFromJSON<Result<void>>,
+        withdraw_insurance_fund: this.txFromJSON<Result<void>>
   }
 }

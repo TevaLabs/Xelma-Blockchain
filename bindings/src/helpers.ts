@@ -70,6 +70,35 @@ export class NoRoundTemplateError extends XelmaError {
   }
 }
 
+export class OracleTimestampOutsideWindowError extends XelmaError {
+  constructor() {
+    super(
+      "Oracle payload timestamp is outside the round-relative economic window",
+      66,
+      "OracleTimestampOutsideWindow",
+    );
+    this.name = "OracleTimestampOutsideWindowError";
+  }
+}
+
+export class EpochBudgetExceededError extends XelmaError {
+  constructor() {
+    super("Epoch mint budget has been fully consumed", 67, "EpochBudgetExceeded");
+    this.name = "EpochBudgetExceededError";
+  }
+}
+
+export class OracleNotLiveError extends XelmaError {
+  constructor() {
+    super(
+      "Oracle heartbeat is not live and strict mode blocks settlement",
+      68,
+      "OracleNotLive",
+    );
+    this.name = "OracleNotLiveError";
+  }
+}
+
 export class AccessDeniedError extends XelmaError {
   constructor() {
     super(
@@ -78,6 +107,17 @@ export class AccessDeniedError extends XelmaError {
       "AccessDenied",
     );
     this.name = "AccessDeniedError";
+  }
+}
+
+export class PendingWinningsNotExpiredError extends XelmaError {
+  constructor() {
+    super(
+      "Pending winnings have not reached their expiry threshold",
+      86,
+      "PendingWinningsNotExpired",
+    );
+    this.name = "PendingWinningsNotExpiredError";
   }
 }
 
@@ -91,7 +131,11 @@ const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
   28: StakeExceedsMaxError,
   29: ExposureCapExceededError,
   65: NoRoundTemplateError,
+  66: OracleTimestampOutsideWindowError,
+  67: EpochBudgetExceededError,
+  68: OracleNotLiveError,
   79: AccessDeniedError,
+  86: PendingWinningsNotExpiredError,
 };
 
 /**
