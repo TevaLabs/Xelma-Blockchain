@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 //! Comprehensive property-based fuzz testing harness for protocol lifecycle actions.
 //!
 //! Validates 5 core protocol invariants after every generated action:
@@ -23,7 +24,6 @@ use soroban_sdk::{Address, Env};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::{BetSide, OraclePayload};
 
-/// Randomized actions covering all major protocol lifecycle entrypoints.
 #[derive(Debug, Clone)]
 /// Randomized actions covering all major protocol lifecycle entrypoints.
 #[derive(Debug, Clone)]
@@ -43,6 +43,8 @@ pub enum LifecycleAction {
     CommitPriceSample { price: u128, secret_nonce: u64 },
     CashOutPosition { user_idx: usize },
     AccessControlDenialCheck { user_idx: usize },
+    // ── Dispute lifecycle fuzz actions (Issue: void/finalize timing) ────────
+    AdvanceLedger { delta: u32 },
 }
 
 fn action_generator() -> impl Strategy<Value = LifecycleAction> {
@@ -60,6 +62,7 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
     let bet_ledgers = 5u32..=20u32;
     let run_ledgers = 10u32..=30u32;
     let nonce = 1000u64..=9999u64;
+    let ledger_delta = 1u32..=40u32;
 
     prop_oneof![
         start_price.prop_map(|sp| LifecycleAction::CreateRound { start_price: sp }),
@@ -94,6 +97,8 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
         }),
         user_idx.clone().prop_map(|u| LifecycleAction::CashOutPosition { user_idx: u }),
         user_idx.prop_map(|u| LifecycleAction::AccessControlDenialCheck { user_idx: u }),
+        // ── Dispute lifecycle fuzz action ──
+        ledger_delta.prop_map(|d| LifecycleAction::AdvanceLedger { delta: d }),
     ]
 }
 
@@ -229,6 +234,10 @@ fn fuzz_protocol_lifecycle_invariants() {
                 let _ = client.try_pause_contract();
                 let _ = client.balance(user);
             }
+            LifecycleAction::AdvanceLedger { delta } => {
+                // Randomize void/finalize timing by advancing the ledger arbitrarily.
+                env.ledger().with_mut(|li| li.sequence_number = li.sequence_number.saturating_add(*delta));
+            }
         }
 
         // ── INVARIANT 1: Asset & Value Conservation ───────────────────────────
@@ -286,6 +295,26 @@ fn fuzz_protocol_lifecycle_invariants() {
                 if claimed != 0 || client.balance(u) != bal_before {
                     let diff = format!("Claim returned non-zero ({}) or balance changed on 0 pending winnings", claimed);
                     report_fuzz_failure(seed_opt, &mode, step_idx, "Claim Protection", act, &diff, &actions);
+                }
+            }
+        }
+
+        // ── INVARIANT 6: Dispute Void/Finalize Timing Consistency ─────────────
+        // After any ledger advance, a round that has passed its run window must
+        // not still be reported as active with an open bet window, and a voided
+        // round must not accept new bets or mutate balances.
+        if let Some(active) = client.get_active_round() {
+            let current_ledger = env.ledger().sequence_number();
+            if current_ledger > active.end_ledger {
+                let dummy_user = &users[0];
+                let bal_before = client.balance(dummy_user);
+                let res = client.try_place_bet(dummy_user, &1_0000000i128, &BetSide::Up);
+                if res.is_ok() || client.balance(dummy_user) != bal_before {
+                    let diff = format!(
+                        "Bet accepted or balance modified after round end_ledger (current={}, end={})",
+                        current_ledger, active.end_ledger
+                    );
+                    report_fuzz_failure(seed_opt, &mode, step_idx, "Dispute Void/Finalize Timing", act, &diff, &actions);
                 }
             }
         }
