@@ -273,3 +273,111 @@ export async function simulateBet(
     };
   }
 }
+
+// ─── Access Policy Helper ──────────────────────────────────────
+
+export type AccessStateTag = "Open" | "Allowlisted" | "Denylisted";
+
+export interface DecodedAccessPolicy {
+  accessControlEnabled: boolean;
+  state: AccessStateTag;
+  allowed: boolean;
+  reason?: string;
+}
+
+/**
+ * Decodes a raw contract access policy result into a clean, wallet-friendly object.
+ *
+ * Handles both tuple representation `[boolean, AccessState]` from `get_access_policy`
+ * as well as object formats with string tags, numeric discriminants, or enum variants.
+ *
+ * Preflight evaluation rules:
+ * 1. Denylisted participants are unconditionally rejected (denylist takes precedence).
+ * 2. When allowlist mode is enabled, participants must be explicitly allowlisted.
+ * 3. Otherwise, access is granted (open mode).
+ *
+ * @example
+ * const { result } = await client.get_access_policy({ user });
+ * const policy = decodeAccessPolicy(result);
+ * if (!policy.allowed) {
+ *   console.warn(`Betting blocked: ${policy.reason}`);
+ * }
+ */
+export function decodeAccessPolicy(
+  raw:
+    | [boolean, unknown]
+    | { accessControlEnabled?: boolean; enabled?: boolean; state: unknown },
+): DecodedAccessPolicy {
+  let accessControlEnabled = false;
+  let rawState: unknown;
+
+  if (Array.isArray(raw)) {
+    accessControlEnabled = Boolean(raw[0]);
+    rawState = raw[1];
+  } else if (raw && typeof raw === "object") {
+    accessControlEnabled = Boolean(
+      raw.accessControlEnabled ?? (raw as { enabled?: boolean }).enabled,
+    );
+    rawState = raw.state;
+  }
+
+  let state: AccessStateTag = "Open";
+  if (typeof rawState === "string") {
+    const s = rawState.toLowerCase();
+    if (s.includes("deny")) state = "Denylisted";
+    else if (s.includes("allow")) state = "Allowlisted";
+    else state = "Open";
+  } else if (typeof rawState === "number") {
+    if (rawState === 2) state = "Denylisted";
+    else if (rawState === 1) state = "Allowlisted";
+    else state = "Open";
+  } else if (rawState && typeof rawState === "object" && "tag" in rawState) {
+    const tag = String((rawState as { tag: unknown }).tag);
+    if (tag === "Denylisted") state = "Denylisted";
+    else if (tag === "Allowlisted") state = "Allowlisted";
+    else state = "Open";
+  }
+
+  if (state === "Denylisted") {
+    return {
+      accessControlEnabled,
+      state,
+      allowed: false,
+      reason: "Participant is denylisted and blocked from betting",
+    };
+  }
+
+  if (accessControlEnabled && state !== "Allowlisted") {
+    return {
+      accessControlEnabled,
+      state,
+      allowed: false,
+      reason: "Allowlist access control is enabled and participant is not allowlisted",
+    };
+  }
+
+  return {
+    accessControlEnabled,
+    state,
+    allowed: true,
+  };
+}
+
+/**
+ * Preflight helper that queries `get_access_policy` for a user and decodes
+ * whether they are permitted to place bets under current contract policy.
+ *
+ * @example
+ * const preflight = await checkAccessPolicy(client, "GABC...");
+ * if (!preflight.allowed) {
+ *   throw new AccessDeniedError();
+ * }
+ */
+export async function checkAccessPolicy(
+  client: Client,
+  user: string,
+  options?: MethodOptions,
+): Promise<DecodedAccessPolicy> {
+  const { result } = await (client as any).get_access_policy({ user }, options);
+  return decodeAccessPolicy(result);
+}
