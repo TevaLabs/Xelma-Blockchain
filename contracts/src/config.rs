@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+use crate::admin::_require_admin;
 use crate::admin::{_ensure_normal_mode, _ensure_not_paused, _require_supported_schema};
 use crate::common::{
     _emit_action_rejected, _emit_config_updated, _extend_persistent_ttl, _extend_ttl_symbol,
@@ -779,12 +780,7 @@ fn _dispute_ledgers_key(env: &Env) -> Symbol {
 /// `0` preserves current behaviour — no dispute window, immediate settlement.
 pub fn set_dispute_ledgers(env: Env, ledgers: u32) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
-    let admin: Address = env
-        .storage()
-        .persistent()
-        .get(&DataKeyCore::Admin)
-        .ok_or(ContractError::AdminNotSet)?;
-    admin.require_auth();
+    let admin = _require_admin(&env)?;
     _ensure_not_paused(&env).inspect_err(|&e| {
         _emit_action_rejected(&env, &admin, symbol_short!("set_dsp"), e);
     })?;

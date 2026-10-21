@@ -3,7 +3,7 @@
 
 use crate::contract::VirtualTokenContractClient;
 use crate::types::ConfigChangeKind;
-use soroban_sdk::{testutils::Ledger, Env};
+use soroban_sdkz:{testutils::Ledger, Env};
 
 fn activate_pending(env: &Env, client: &VirtualTokenContractClient, kind: ConfigChangeKind) {
     let ledger_before = env.ledger().sequence();
@@ -65,4 +65,9 @@ pub fn apply_protocol_fee_bps(env: &Env, client: &VirtualTokenContractClient, bp
 pub fn apply_pending_winnings_expiry(env: &Env, client: &VirtualTokenContractClient, ledgers: u32) {
     client.schedule_pending_winnings_expiry(&ledgers);
     activate_pending(env, client, ConfigChangeKind::PendingWinningsExpiry);
+}
+
+pub fn apply_dispute_ledgers(env: &Env, client: &VirtualTokenContractClient, ledgers: u32) {
+    client.schedule_dispute_ledgers(&ledgers);
+    activate_pending(env, client, ConfigChangeKind::DisputeLedgers);
 }
