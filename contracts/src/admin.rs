@@ -1001,6 +1001,12 @@ pub fn _schema_version(env: &Env) -> Option<u32> {
 
 /// Returns `true` if a `DataKeyCore` variant is eligible for batch TTL touch
 /// by a maintainer. Only system-critical, long-lived keys are allowlisted.
+///
+/// Ephemeral per-round state (notably `DataKeyCore::ActiveRound`) is
+/// intentionally **not** allowlisted: the round lifecycle owns its lifetime and
+/// bumping it would keep stale round data alive. `batch_touch_ttl` rejects such
+/// keys with `ContractError::UnsupportedDataKeyForTtlTouch` (see
+/// `test_batch_touch_ttl_rejects_active_round_key`).
 pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
     matches!(
         key,

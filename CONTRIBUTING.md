@@ -70,6 +70,19 @@ sent back for detail before they are picked up.
    - `cd bindings && npm ci && npm run build`
    - `cd bindings && npm run test:parity` (ABI drift check; mirrors the CI `bindings-test` job)
 
+### Regenerating TypeScript bindings
+
+When a public contract entrypoint, type, or `ContractError` variant changes, regenerate the bindings from `bindings/`:
+
+```bash
+cd bindings
+npm run regenerate   # builds the WASM, then runs `stellar contract bindings typescript` into bindings/generated/
+```
+
+Prerequisites: the `wasm32v1-none` Rust target (`rustup target add wasm32v1-none`) and the [Stellar CLI](https://developers.stellar.org/docs/tools/cli) (`stellar`) on your `PATH`.
+
+`bindings/src/index.ts` and `bindings/src/helpers.ts` are hand-maintained, so the generator writes to the git-ignored `bindings/generated/` directory instead of overwriting `src/`. Diff the output against `src/index.ts`, port the changes across, then run `npm run build && npm run test:parity` to confirm there is no ABI drift.
+
 Before opening a PR, consult [`docs/CONTRIBUTOR_TASK_MATRIX.md`](./docs/CONTRIBUTOR_TASK_MATRIX.md) for task-type-specific test and evidence requirements.
 
 ## Optional pre-commit hooks
