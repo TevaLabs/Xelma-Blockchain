@@ -1167,7 +1167,7 @@ fn test_create_next_from_template_after_settle() {
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
             && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("created"))
     });
-    let applied_event = events.iter().any(|e| {
+    let applied_event = events.iter().find(|e| {
         let (_c, topics, _d) = e;
         topics.len() == 2
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("template"))
@@ -1178,8 +1178,22 @@ fn test_create_next_from_template_after_settle() {
         "create_next_from_template must emit round/created"
     );
     assert!(
-        applied_event,
+        applied_event.is_some(),
         "create_next_from_template must emit template/applied"
+    );
+
+    // Assert data fields: (round_id, start_price, mode)
+    let (_c, _topics, data) = applied_event.unwrap();
+    let (evt_round_id, evt_start_price, evt_mode): (u64, u128, u32) =
+        data.try_into_val(&env).expect("applied event data must decode");
+    assert_eq!(evt_round_id, next_round_id, "applied event round_id mismatch");
+    assert_eq!(
+        evt_start_price, 2_5000000u128,
+        "applied event start_price must match template"
+    );
+    assert_eq!(
+        evt_mode, 1u32,
+        "applied event mode must match template (Some(1) → 1)"
     );
 
     assert_eq!(next_round_id, round1.round_id + 1);
