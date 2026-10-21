@@ -8,6 +8,32 @@ import type { i128 } from "@stellar/stellar-sdk/contract";
 // Re-export BetSide from the generated client for convenience
 import type { BetSide } from "./index.js";
 
+// ─── Round Phase ───────────────────────────────────────────────
+
+/**
+ * User-facing round phase labels, keyed by the on-chain `RoundPhase` enum
+ * discriminant.  Use {@link decodeRoundPhase} to turn a raw phase value
+ * returned by the contract into a human-readable string.
+ */
+export const ROUND_PHASE_MAP: Record<number, string> = {
+  0: "Betting",
+  1: "Locked",
+  2: "Resolved",
+  3: "Cancelled",
+};
+
+/**
+ * Decodes a raw `RoundPhase` value from the contract into a user-facing
+ * phase string.  Returns `"Unknown"` for unrecognized values.
+ *
+ * @example
+ * decodeRoundPhase(0) // "Betting"
+ * decodeRoundPhase(2) // "Resolved"
+ */
+export function decodeRoundPhase(phase: number): string {
+  return ROUND_PHASE_MAP[phase] ?? "Unknown";
+}
+
 // ─── Typed Exceptions ──────────────────────────────────────────
 
 export class XelmaError extends Error {
