@@ -1355,14 +1355,11 @@ fn _complete_settlement(
         .persistent()
         .remove(&DataKeyScoped::RoundParticipants(round_id));
 
-    env.storage().persistent().remove(&DataKeyCore::ActiveRound);
-    env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage()
-        .persistent()
-        .remove(&DataKeyCore::UpDownPositions);
-    // A merge left this guarded re-remove of the active round split across
-    // two fragments (the `if` keyword and its condition were separated from
-    // the body). Rejoined here so the file parses again.
+    // The active-round marker is only cleared when it still points at the
+    // round being settled. A staged (dispute-window) settlement can be
+    // finalized while a newer round is already active — staging releases
+    // the marker — so clearing it unconditionally would orphan that newer
+    // round and leave it unsettleable.
     if env
         .storage()
         .persistent()
@@ -1372,6 +1369,10 @@ fn _complete_settlement(
     {
         env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     }
+    env.storage().persistent().remove(&DataKeyCore::Positions);
+    env.storage()
+        .persistent()
+        .remove(&DataKeyCore::UpDownPositions);
 
     let mode_value: u32 = match round.mode {
         RoundMode::UpDown => 0,

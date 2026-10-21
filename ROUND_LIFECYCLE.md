@@ -69,10 +69,33 @@ Any future entrypoint that could create a round must also call
 
 ## Round Resolution
 
-The oracle calls `resolve_round` after `end_ledger` is reached. On success:
+The oracle calls `resolve_round` after `end_ledger` is reached.
+
+### Immediate settlement (default, `dispute_ledgers == 0`)
+
+On success:
 - `ActiveRound` is removed — the invariant is reset and a new round can be created.
 - Participant positions (`UpDownPositions`, `PrecisionPositions`) are removed.
 - Pending winnings for winners are written to `PendingWinnings(address)`.
+
+### Staged settlement (dispute window, `dispute_ledgers > 0`)
+
+When a dispute window is configured:
+1. The validated oracle price is staged in a pending dispute entry; no payouts
+   or protocol fees are applied yet.
+2. `ActiveRound` is removed, so a replacement round may be created while the
+   window is open.
+3. A `("round", "pending")` event is emitted with `round_id`, `final_price`,
+   `resolved_at_ledger`, `deadline_ledger`.
+4. **During the window** (`ledger < deadline_ledger`): anyone may call
+   `void_round` to refund every participant their full recorded stake (void)
+   with zero fees — archived as `Voided`. Calling `void_round` at or after
+   the deadline fails with `RoundNotCancellable`.
+5. **After the window** (`ledger >= deadline_ledger`): anyone may call
+   `finalize_round` to apply the normal competitive settlement/fee policy —
+   archived as `Resolved`. Calling `finalize_round` before the deadline fails
+   with `RoundNotEnded`. At the exact deadline, `finalize_round` is allowed
+   and `void_round` is not.
 
 ### Precision commit-reveal windows
 

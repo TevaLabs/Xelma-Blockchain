@@ -259,6 +259,41 @@ Evidence:
 - Code: `cancel_round`, `_refund_under_threshold`.
 - Tests: `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs`.
 
+### I15. Dispute Window (Staged Settlement)
+
+`set_dispute_ledgers(n)` configures a dispute window in ledgers (admin only).
+- `n == 0` is the default and preserves immediate settlement: `resolve_round`/
+  `resolve_round_multi` completes settlement directly with no staging.
+- `n > 0` stages the validated oracle result on resolution: payouts and protocol
+  fees are deferred, `ActiveRound` is removed so a replacement round may be
+  created while staged, and a `("round", "pending")` event is emitted
+  (`round_id`, `final_price`, `resolved_at_ledger`, `deadline_ledger`).
+
+**Void vs finalize (void = refund-all, finalize = competitive settlement):**
+- Anyone may call `void_round(round_id)` while `ledger < deadline_ledger`
+  to void the staged round. Every participant receives their full recorded
+  stake to pending winnings (including unrevealed Precision commitments),
+  protocol fees are zero, the round is archived as `Voided` (`3`), and a
+  `("round", "voided")` event is emitted. Calling `void_round` after the
+  deadline fails with `RoundNotCancellable` (`27`).
+- Anyone may call `finalize_round(round_id)` at or after `deadline_ledger`
+  to complete settlement using the staged price. The normal competitive
+  settlement and fee policy apply, the round is archived as `Resolved`, and
+  a `("round", "finalized")` event is emitted. Calling `finalize_round`
+  before the deadline fails with `RoundNotEnded` (`16`).
+- While a dispute window is open, `claim_winnings` remains subject to the
+  protocol pause policy but dispute-window staging defers payouts until
+  `void_round` or `finalize_round` commits them.
+- If `dispute_ledgers == 0`, there is nothing staged; `void_round` and
+  `finalize_round` return `RoundNotCancellable` / `NoActiveRound` as
+  appropriate.
+
+Evidence:
+- Code: `config::set_dispute_ledgers`, `settlement::_settle_round_with_price`,
+  `settlement::void_round`, `settlement::finalize_round`.
+- Tests: `tests::dispute_window`.
+- Docs: `ROUND_LIFECYCLE.md`, `docs/EVENT_SCHEMA.md`.
+
 ### I12. Storage Cleanup and Migration Compatibility
 
 Resolution and cancellation must remove indexed participant keys and participant
