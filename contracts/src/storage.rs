@@ -12,8 +12,61 @@
 //! through `clear_user_positions` or `clear_round_storage`.
 
 use crate::types::DataKeyCore;
+use crate::types::DataKeyExt;
 use crate::types::DataKeyScoped;
 use soroban_sdk::{Address, Env, Vec};
+
+/// Returns whether a system key can be proactively extended through the
+/// admin-gated batch TTL maintenance entrypoint.
+pub fn is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
+    matches!(
+        key,
+        DataKeyCore::Admin
+            | DataKeyCore::Oracle
+            | DataKeyCore::SchemaVersion
+            | DataKeyCore::Paused
+            | DataKeyCore::BetWindowLedgers
+            | DataKeyCore::RunWindowLedgers
+            | DataKeyCore::CloseBufferLedgers
+            | DataKeyCore::LastRoundId
+            | DataKeyCore::MaxStake
+            | DataKeyCore::MaxUserRoundExposure
+            | DataKeyCore::MaxPendingWinnings
+            | DataKeyCore::MinParticipants
+            | DataKeyCore::OracleHeartbeat
+            | DataKeyCore::OracleStaleThreshold
+            | DataKeyCore::MaxPrecisionParticipants
+            | DataKeyCore::OracleMaxDeviationBps
+            | DataKeyCore::OracleDeviationOverrideArmed
+            | DataKeyCore::OracleMinConfidenceBps
+            | DataKeyCore::OracleStrictMode
+            | DataKeyCore::MigratedToV3
+            | DataKeyCore::ProtocolFeeBps
+            | DataKeyCore::ProtocolFeeTreasury
+            | DataKeyCore::MintLimitConfig
+            | DataKeyCore::OracleRotationProposal
+            | DataKeyCore::ArchiveRetention
+            | DataKeyCore::RoundTemplate
+            | DataKeyCore::OracleQuorum
+            | DataKeyCore::MinBet
+            | DataKeyCore::EpochMintBudget
+            | DataKeyCore::EarlyCashoutBps
+            | DataKeyCore::FeeModel
+            | DataKeyCore::DisputeLedgers
+            | DataKeyCore::PrecisionPayoutPolicy
+            | DataKeyCore::AccessControlEnabled
+            | DataKeyCore::GovApprover
+            | DataKeyCore::GovProposalTtlLedgers
+            | DataKeyCore::NextGovProposalId
+            | DataKeyCore::Ext(DataKeyExt::LeaderboardWins)
+            | DataKeyCore::Ext(DataKeyExt::LeaderboardStreak)
+            | DataKeyCore::Ext(DataKeyExt::SeasonId)
+            | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins)
+            | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak)
+            | DataKeyCore::Ext(DataKeyExt::ConstitutionMetadata)
+            | DataKeyCore::Ext(DataKeyExt::NextAmendmentId)
+    )
+}
 
 /// Removes **all** position storage keys for a single participant,
 /// regardless of the round's mode.
@@ -76,4 +129,142 @@ pub fn clear_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>
     env.storage()
         .persistent()
         .remove(&DataKeyCore::PrecisionPositions);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_ttl_touch_allowed;
+    use crate::types::{DataKeyCore, DataKeyExt};
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, Env};
+
+    #[test]
+    fn ttl_touch_allowlist_covers_every_storage_key_variant() {
+        let env = Env::default();
+        let address = Address::generate(&env);
+        let keys = [
+            DataKeyCore::Admin,
+            DataKeyCore::Oracle,
+            DataKeyCore::SchemaVersion,
+            DataKeyCore::ActiveRound,
+            DataKeyCore::Positions,
+            DataKeyCore::UpDownPositions,
+            DataKeyCore::PrecisionPositions,
+            DataKeyCore::Paused,
+            DataKeyCore::BetWindowLedgers,
+            DataKeyCore::RunWindowLedgers,
+            DataKeyCore::CloseBufferLedgers,
+            DataKeyCore::LastRoundId,
+            DataKeyCore::MaxStake,
+            DataKeyCore::MaxUserRoundExposure,
+            DataKeyCore::MaxPendingWinnings,
+            DataKeyCore::MinParticipants,
+            DataKeyCore::OracleHeartbeat,
+            DataKeyCore::OracleStaleThreshold,
+            DataKeyCore::MaxPrecisionParticipants,
+            DataKeyCore::OracleMaxDeviationBps,
+            DataKeyCore::OracleDeviationOverrideArmed,
+            DataKeyCore::OracleMinConfidenceBps,
+            DataKeyCore::OracleStrictMode,
+            DataKeyCore::RecentArchivedRoundIds,
+            DataKeyCore::MigratedToV3,
+            DataKeyCore::ProtocolFeeBps,
+            DataKeyCore::ProtocolFeeTreasury,
+            DataKeyCore::MintLimitConfig,
+            DataKeyCore::OracleRotationProposal,
+            DataKeyCore::ArchiveRetention,
+            DataKeyCore::RoundTemplate,
+            DataKeyCore::OracleQuorum,
+            DataKeyCore::NextSchemaVersion,
+            DataKeyCore::MinBet,
+            DataKeyCore::EpochMintBudget,
+            DataKeyCore::EarlyCashoutBps,
+            DataKeyCore::FeeModel,
+            DataKeyCore::DisputeLedgers,
+            DataKeyCore::PrecisionPayoutPolicy,
+            DataKeyCore::AccessControlEnabled,
+            DataKeyCore::GovApprover,
+            DataKeyCore::GovProposalTtlLedgers,
+            DataKeyCore::NextGovProposalId,
+            DataKeyCore::Ext(DataKeyExt::LeaderboardWins),
+            DataKeyCore::Ext(DataKeyExt::LeaderboardStreak),
+            DataKeyCore::Ext(DataKeyExt::SeasonId),
+            DataKeyCore::Ext(DataKeyExt::SeasonUserStats(0, address.clone())),
+            DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins),
+            DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak),
+            DataKeyCore::Ext(DataKeyExt::SeasonArchive(0)),
+            DataKeyCore::Ext(DataKeyExt::ConstitutionMetadata),
+            DataKeyCore::Ext(DataKeyExt::Amendment(0)),
+            DataKeyCore::Ext(DataKeyExt::NextAmendmentId),
+        ];
+
+        for key in keys.iter() {
+            let (name, expected) = match key {
+                DataKeyCore::Admin => ("Admin", true),
+                DataKeyCore::Oracle => ("Oracle", true),
+                DataKeyCore::SchemaVersion => ("SchemaVersion", true),
+                DataKeyCore::ActiveRound => ("ActiveRound", false),
+                DataKeyCore::Positions => ("Positions", false),
+                DataKeyCore::UpDownPositions => ("UpDownPositions", false),
+                DataKeyCore::PrecisionPositions => ("PrecisionPositions", false),
+                DataKeyCore::Paused => ("Paused", true),
+                DataKeyCore::BetWindowLedgers => ("BetWindowLedgers", true),
+                DataKeyCore::RunWindowLedgers => ("RunWindowLedgers", true),
+                DataKeyCore::CloseBufferLedgers => ("CloseBufferLedgers", true),
+                DataKeyCore::LastRoundId => ("LastRoundId", true),
+                DataKeyCore::MaxStake => ("MaxStake", true),
+                DataKeyCore::MaxUserRoundExposure => ("MaxUserRoundExposure", true),
+                DataKeyCore::MaxPendingWinnings => ("MaxPendingWinnings", true),
+                DataKeyCore::MinParticipants => ("MinParticipants", true),
+                DataKeyCore::OracleHeartbeat => ("OracleHeartbeat", true),
+                DataKeyCore::OracleStaleThreshold => ("OracleStaleThreshold", true),
+                DataKeyCore::MaxPrecisionParticipants => ("MaxPrecisionParticipants", true),
+                DataKeyCore::OracleMaxDeviationBps => ("OracleMaxDeviationBps", true),
+                DataKeyCore::OracleDeviationOverrideArmed => ("OracleDeviationOverrideArmed", true),
+                DataKeyCore::OracleMinConfidenceBps => ("OracleMinConfidenceBps", true),
+                DataKeyCore::OracleStrictMode => ("OracleStrictMode", true),
+                DataKeyCore::RecentArchivedRoundIds => ("RecentArchivedRoundIds", false),
+                DataKeyCore::MigratedToV3 => ("MigratedToV3", true),
+                DataKeyCore::ProtocolFeeBps => ("ProtocolFeeBps", true),
+                DataKeyCore::ProtocolFeeTreasury => ("ProtocolFeeTreasury", true),
+                DataKeyCore::MintLimitConfig => ("MintLimitConfig", true),
+                DataKeyCore::OracleRotationProposal => ("OracleRotationProposal", true),
+                DataKeyCore::ArchiveRetention => ("ArchiveRetention", true),
+                DataKeyCore::RoundTemplate => ("RoundTemplate", true),
+                DataKeyCore::OracleQuorum => ("OracleQuorum", true),
+                DataKeyCore::NextSchemaVersion => ("NextSchemaVersion", false),
+                DataKeyCore::MinBet => ("MinBet", true),
+                DataKeyCore::EpochMintBudget => ("EpochMintBudget", true),
+                DataKeyCore::EarlyCashoutBps => ("EarlyCashoutBps", true),
+                DataKeyCore::FeeModel => ("FeeModel", true),
+                DataKeyCore::DisputeLedgers => ("DisputeLedgers", true),
+                DataKeyCore::PrecisionPayoutPolicy => ("PrecisionPayoutPolicy", true),
+                DataKeyCore::AccessControlEnabled => ("AccessControlEnabled", true),
+                DataKeyCore::GovApprover => ("GovApprover", true),
+                DataKeyCore::GovProposalTtlLedgers => ("GovProposalTtlLedgers", true),
+                DataKeyCore::NextGovProposalId => ("NextGovProposalId", true),
+                DataKeyCore::Ext(DataKeyExt::LeaderboardWins) => ("LeaderboardWins", true),
+                DataKeyCore::Ext(DataKeyExt::LeaderboardStreak) => ("LeaderboardStreak", true),
+                DataKeyCore::Ext(DataKeyExt::SeasonId) => ("SeasonId", true),
+                DataKeyCore::Ext(DataKeyExt::SeasonUserStats(_, _)) => ("SeasonUserStats", false),
+                DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins) => {
+                    ("SeasonLeaderboardWins", true)
+                }
+                DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak) => {
+                    ("SeasonLeaderboardStreak", true)
+                }
+                DataKeyCore::Ext(DataKeyExt::SeasonArchive(_)) => ("SeasonArchive", false),
+                DataKeyCore::Ext(DataKeyExt::ConstitutionMetadata) => {
+                    ("ConstitutionMetadata", true)
+                }
+                DataKeyCore::Ext(DataKeyExt::Amendment(_)) => ("Amendment", false),
+                DataKeyCore::Ext(DataKeyExt::NextAmendmentId) => ("NextAmendmentId", true),
+            };
+            assert_eq!(
+                is_ttl_touch_allowed(key),
+                expected,
+                "TTL touch policy for {name}"
+            );
+        }
+    }
 }

@@ -103,7 +103,7 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
 ```
 
 - **Auth gate**: Requires admin authentication (`admin.require_auth()`).
-- **Allowlist**: Only keys in the `_is_ttl_touch_allowed` allowlist are accepted.
+- **Allowlist**: Only keys accepted by `is_ttl_touch_allowed` are allowed.
   Supplying a non-allowlisted key fails the entire call with
   `UnsupportedDataKeyForTtlTouch`.
 - **Absent keys**: Keys in the allowlist but absent from storage are silently
@@ -119,10 +119,16 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
 | Windows             | `BetWindowLedgers`, `RunWindowLedgers`, `CloseBufferLedgers`        |
 | Risk limits         | `MaxStake`, `MaxUserRoundExposure`, `MaxPendingWinnings`            |
 | Matchmaking         | `MinParticipants`, `MaxPrecisionParticipants`                       |
+| Oracle quorum       | `OracleQuorum`                                                       |
 | Oracle safety       | `OracleHeartbeat`, `OracleStaleThreshold`, `OracleMaxDeviationBps`,
 |                     | `OracleDeviationOverrideArmed`, `OracleMinConfidenceBps`,
 |                     | `OracleStrictMode`                                                   |
 | Protocol fee        | `ProtocolFeeBps`, `ProtocolFeeTreasury`                              |
+| Betting / settlement | `MinBet`, `EpochMintBudget`, `EarlyCashoutBps`, `FeeModel`,         |
+|                     | `DisputeLedgers`, `PrecisionPayoutPolicy`                            |
+| Access control      | `AccessControlEnabled`                                               |
+| Governance          | `GovApprover`, `GovProposalTtlLedgers`, `NextGovProposalId`,         |
+|                     | `ConstitutionMetadata`, `NextAmendmentId`                            |
 | Migration           | `MigratedToV3`                                                       |
 | Archive / Keeper    | `ArchiveRetention`, `RoundTemplate`                                  |
 | Leaderboard         | `LeaderboardWins`, `LeaderboardStreak`, `SeasonId`,
@@ -131,11 +137,11 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
 | Rotation            | `OracleRotationProposal`                                             |
 | Mint                | `MintLimitConfig`                                                    |
 
-Per-user keys (`Balance`, `PendingWinnings`, `UserStats`) and round-scoped
-keys (`ActiveRound`, `Position`, `PrecisionPosition`, `RoundParticipants`,
-`ArchivedRound`, etc.) are **excluded** because they are either ephemeral
-(deleted after settlement/cancel) or managed through the standard on-access
-TTL extension path.
+Per-user keys (`Balance`, `PendingWinnings`, `UserStats`), round-scoped keys,
+and time-bounded proposal/archive records are **excluded** because they are
+user-specific, ephemeral, or expire as part of their own lifecycle. The
+completeness test in `contracts/src/storage.rs` classifies every `DataKeyCore`
+and `DataKeyExt` variant, so newly added variants require an explicit decision.
 
 ### Cadence Recommendations
 
