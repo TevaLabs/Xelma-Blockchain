@@ -5,7 +5,7 @@ use crate::types::{ArchivedRoundSummary, DataKeyCore, DataKeyScoped, OraclePaylo
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, Env, TryIntoVal,
+    Address, Env, Symbol, TryFromVal, TryIntoVal,
 };
 use std::vec::Vec;
 
@@ -34,14 +34,18 @@ fn create_and_resolve_round(
     });
     client.create_round(&1_0000000, &None);
 
+    // Settle at the round's own end ledger with a timestamp inside the
+    // oracle window and a fresh heartbeat (health gate, Issue #264).
+    let round = client.get_active_round().unwrap();
     env.ledger().with_mut(|li| {
-        li.sequence_number = start_ledger + 100;
-        li.timestamp = 2000;
+        li.sequence_number = round.end_ledger;
+        li.timestamp = 1000 + 5 * u64::from(round.end_ledger - round.start_ledger);
     });
+    client.update_oracle_heartbeat(&0u32);
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
-        timestamp: 1800,
-        round_id: start_ledger,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
         nonce,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
@@ -288,6 +292,7 @@ fn test_user_archived_participation_returns_none_after_prune() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     let user = Address::generate(&env);
 
     client.mint_initial(&user);
@@ -299,16 +304,19 @@ fn test_user_archived_participation_returns_none_after_prune() {
         li.timestamp = 1000;
     });
     client.create_round(&1_0000000, &None);
+    let first_id = client.get_active_round().unwrap().round_id;
     client.place_bet(&user, &100_0000000, &crate::types::BetSide::Up);
 
+    let round = client.get_active_round().unwrap();
     env.ledger().with_mut(|li| {
-        li.sequence_number = 100;
-        li.timestamp = 2000;
+        li.sequence_number = round.end_ledger;
+        li.timestamp = 1000 + 5 * u64::from(round.end_ledger - round.start_ledger);
     });
+    client.update_oracle_heartbeat(&0u32);
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
-        timestamp: 1800,
-        round_id: 0,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
         nonce: 0,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id_obj.clone(),
@@ -317,24 +325,24 @@ fn test_user_archived_participation_returns_none_after_prune() {
     });
 
     // User participation is available before prune
-    let outcome = client.get_user_archived_participation(&user, &0);
+    let outcome = client.get_user_archived_participation(&user, &first_id);
     assert!(outcome.is_some(), "outcome should exist before prune");
 
     // Create and resolve round 2 — this should prune round 1
     create_and_resolve_round(&env, &client, &contract_id_obj, 200, 1);
 
     // After prune, get_user_archived_participation should return None
-    let outcome = client.get_user_archived_participation(&user, &0);
+    let outcome = client.get_user_archived_participation(&user, &first_id);
     assert!(
         outcome.is_none(),
         "get_user_archived_participation should return None for pruned round"
     );
 
-    // Round 2 still has its outcome
-    let outcome2 = client.get_user_archived_participation(&user, &1);
+    // The retained round 2 is still archived (the user did not bet in it,
+    // so there is no participation entry for them there).
     assert!(
-        outcome2.is_some(),
-        "outcome should exist for retained round"
+        client.get_archived_round(&(first_id + 1)).is_some(),
+        "retained round should still be archived"
     );
 }
 
@@ -359,6 +367,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         li.timestamp = 1000;
     });
     client.create_round(&1_0000000, &None);
+    let first_id = client.get_active_round().unwrap().round_id;
     client.cancel_round(&0);
 
     // CancelledRound marker exists before prune
@@ -366,7 +375,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         assert!(env
             .storage()
             .persistent()
-            .has(&DataKeyScoped::CancelledRound(0u64)));
+            .has(&DataKeyScoped::CancelledRound(first_id)));
     });
 
     // Create and cancel round 2 — this should prune round 1
@@ -382,7 +391,7 @@ fn test_prune_cleans_cancelled_round_marker() {
         assert!(
             !env.storage()
                 .persistent()
-                .has(&DataKeyScoped::CancelledRound(0u64)),
+                .has(&DataKeyScoped::CancelledRound(first_id)),
             "CancelledRound marker should be cleaned up during prune"
         );
     });
@@ -430,4 +439,150 @@ fn test_prune_multiple_rounds_cleans_associated_data() {
             "ArchivedRound(3) should still exist"
         );
     });
+}
+
+// ── Prune events (Issue #721) ────────────────────────────────────────────────
+//
+// Pruning must never be silent: every archived round deleted from storage
+// emits exactly one `("archive", "pruned")` event carrying
+// `(round_id, retention_limit)`, oldest round first, after the new round's
+// `("round", "summary")`.
+
+fn topic_pair(env: &Env, topics: &soroban_sdk::Vec<soroban_sdk::Val>) -> Option<(Symbol, Symbol)> {
+    if topics.len() != 2 {
+        return None;
+    }
+    let t0 = Symbol::try_from_val(env, &topics.get(0)?).ok()?;
+    let t1 = Symbol::try_from_val(env, &topics.get(1)?).ok()?;
+    Some((t0, t1))
+}
+
+/// `("archive", "pruned")` payloads from the contract's most recent call, in
+/// emission order, plus the position of `("round", "summary")` among the
+/// event stream (if present) and the positions of each pruned event.
+fn last_call_prune_events(
+    env: &Env,
+    contract_id: &Address,
+) -> (
+    std::vec::Vec<(u64, u32)>,
+    Option<usize>,
+    std::vec::Vec<usize>,
+) {
+    let mut pruned = std::vec::Vec::new();
+    let mut pruned_positions = std::vec::Vec::new();
+    let mut summary_position = None;
+    for (index, (emitter, topics, data)) in env.events().all().iter().enumerate() {
+        if &emitter != contract_id {
+            continue;
+        }
+        match topic_pair(env, &topics) {
+            Some((a, b)) if a == symbol_short!("archive") && b == symbol_short!("pruned") => {
+                pruned.push(<(u64, u32)>::try_from_val(env, &data).unwrap());
+                pruned_positions.push(index);
+            }
+            Some((a, b)) if a == symbol_short!("round") && b == symbol_short!("summary") => {
+                summary_position = Some(index);
+            }
+            _ => {}
+        }
+    }
+    (pruned, summary_position, pruned_positions)
+}
+
+fn setup_plain() -> (Env, VirtualTokenContractClient<'static>, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    (env, client, contract_id)
+}
+
+#[test]
+fn test_prune_event_payload_is_round_id_and_retention_limit() {
+    let (env, client, contract_id) = setup_plain();
+    client.set_archive_retention(&1);
+
+    create_and_resolve_round(&env, &client, &contract_id, 0, 0);
+    create_and_resolve_round(&env, &client, &contract_id, 200, 1);
+
+    let (pruned, _, _) = last_call_prune_events(&env, &contract_id);
+    assert_eq!(pruned, std::vec![(1u64, 1u32)]);
+}
+
+#[test]
+fn test_no_prune_event_while_within_retention() {
+    let (env, client, contract_id) = setup_plain();
+    client.set_archive_retention(&2);
+
+    create_and_resolve_round(&env, &client, &contract_id, 0, 0);
+    let (pruned, summary, _) = last_call_prune_events(&env, &contract_id);
+    assert!(pruned.is_empty());
+    assert!(summary.is_some(), "settlement still emits its summary");
+
+    // Exactly at the limit: still nothing deleted, still no event.
+    create_and_resolve_round(&env, &client, &contract_id, 200, 1);
+    let (pruned, _, _) = last_call_prune_events(&env, &contract_id);
+    assert!(pruned.is_empty());
+    assert_eq!(client.get_recent_archived_rounds(&10).len(), 2);
+}
+
+#[test]
+fn test_lowering_retention_prunes_backlog_with_ordered_events_on_next_write() {
+    let (env, client, contract_id) = setup_plain();
+    for i in 0u64..4 {
+        create_and_resolve_round(&env, &client, &contract_id, (i * 200) as u32, i);
+    }
+
+    // Lowering retention deletes nothing yet, so it emits no prune event.
+    client.set_archive_retention(&1);
+    let (pruned, _, _) = last_call_prune_events(&env, &contract_id);
+    assert!(pruned.is_empty());
+    // All four archived rounds are still in storage.
+    env.as_contract(&contract_id, || {
+        for id in 1u64..=4 {
+            assert!(env
+                .storage()
+                .persistent()
+                .has(&DataKeyScoped::ArchivedRound(id)));
+        }
+    });
+
+    // The next archive write prunes the whole backlog: one event per round,
+    // oldest first, all after the new round's summary.
+    create_and_resolve_round(&env, &client, &contract_id, 800, 4);
+    let (pruned, summary, positions) = last_call_prune_events(&env, &contract_id);
+    assert_eq!(
+        pruned,
+        std::vec![(1u64, 1u32), (2u64, 1u32), (3u64, 1u32), (4u64, 1u32)]
+    );
+    let summary = summary.expect("round summary must be emitted");
+    assert!(positions.iter().all(|p| *p > summary));
+    assert_eq!(client.get_recent_archived_rounds(&10).len(), 1);
+}
+
+#[test]
+fn test_cancel_path_prune_emits_event_for_cancelled_round() {
+    let (env, client, contract_id) = setup_plain();
+    client.set_archive_retention(&1);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+        li.timestamp = 1000;
+    });
+    client.create_round(&1_0000000, &None);
+    client.cancel_round(&0);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 300;
+        li.timestamp = 2000;
+    });
+    client.create_round(&1_0000000, &None);
+    client.cancel_round(&0);
+
+    let (pruned, _, _) = last_call_prune_events(&env, &contract_id);
+    assert_eq!(pruned, std::vec![(1u64, 1u32)]);
 }

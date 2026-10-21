@@ -845,6 +845,51 @@ Emitted when the admin-armed heartbeat health override is consumed during
 
 ---
 
+## `("archive", "pruned")` — Archived round deleted by retention (Issue #721)
+
+Emitted once for every archived round removed from storage because the archive
+holds more than `archive_retention` rounds. Pruning is automatic and happens
+inside the archive write of a settled or cancelled round, so there is no
+silent deletion: an indexer that sees a round vanish from
+`get_recent_archived_rounds` will also have seen this event.
+
+| Position | Field             | Type  | Description                                                      |
+|----------|-------------------|-------|------------------------------------------------------------------|
+| 0        | `round_id`        | `u64` | Id of the archived round that was just deleted                   |
+| 1        | `retention_limit` | `u32` | `archive_retention` in force when the round was pruned           |
+
+**Topics**: `("archive", "pruned")`
+**Ordering**: emitted after the new round's `("round", "summary")`, one event
+per pruned round, oldest round first (FIFO).
+**Backlog**: lowering the retention deletes nothing immediately. The next
+archive write prunes the whole backlog in one transaction, so that call emits
+several `pruned` events. No event is emitted while the archive is within its
+limit.
+**Side effects**: the round's `CancelledRound` marker is deleted with it, so
+`get_round_status` returns `Unknown` afterwards. Per-user `UserRoundOutcome`
+entries are not deleted.
+**Emitted by**: `resolve_round`, `cancel_round` (via the archive write).
+**Tests**: `tests::archive_retention::test_prune_*`,
+`tests::ops_archive_reclaim`.
+
+Indexers must record `("round", "summary")` before a round is pruned; the
+chain cannot answer questions about it afterwards.
+
+---
+
+## `("archive", "retention")` — Archive retention changed (Issue #721)
+
+| Position | Field   | Type  | Description                                  |
+|----------|---------|-------|----------------------------------------------|
+| 0        | `limit` | `u32` | New `archive_retention` (1 to 10000)         |
+
+**Topics**: `("archive", "retention")`
+**Emitted by**: `set_archive_retention`. The same change also appears on the
+generic `("config", "updated")` stream as `ArchiveRetention`. Lowering the
+limit emits no `pruned` event by itself; see above.
+
+---
+
 ## Field units quick reference
 
 | Concept        | Unit       | Scale factor | Example                              |
