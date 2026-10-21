@@ -8,6 +8,9 @@ Usage:
     --network-id a1b2c3d4... \\
     --contract-addr C...
 
+  # Validate an existing payload (e.g. a CI fixture) without building one:
+  python scripts/oracle_payload_sim.py --check-only payload.json
+
 See --help for full options.
 """
 
@@ -47,17 +50,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "  # Compute network ID from passphrase instead of passing hex\n"
             "  %(prog)s --price 12345 --round-id 100 --network-id-from-passphrase \"Test SDF Network ; September 2015\" --contract-addr C...\n\n"
             "  # Generate full stellar CLI invocation\n"
-            "  %(prog)s --price 12345 --round-id 100 --network-id <hex> --contract-addr C... --stellar-cli --contract-id CID --oracle-key my-oracle\n"
+            "  %(prog)s --price 12345 --round-id 100 --network-id <hex> --contract-addr C... --stellar-cli --contract-id CID --oracle-key my-oracle\n\n"
+            "  # Check an existing payload file's JSON layout (CI fixture guard)\n"
+            "  %(prog)s --check-only fixtures/updown.json\n\n"
+            "  # Same, reading the payload from stdin, machine-readable output\n"
+            "  cat payload.json | %(prog)s --check-only --json\n"
         ),
     )
 
     g_build = parser.add_argument_group("payload fields")
-    g_build.add_argument("--price", type=str, required=True, help="Settlement price (u128, 4 decimals, e.g. 12345 = $1.2345)")
+    g_build.add_argument("--price", type=str, default=None, help="Settlement price (u128, 4 decimals, e.g. 12345 = $1.2345)")
     g_build.add_argument("--timestamp", type=int, default=None, help="Unix epoch seconds (default: current wall clock)")
-    g_build.add_argument("--round-id", type=int, required=True, help="ActiveRound.start_ledger (u32)")
+    g_build.add_argument("--round-id", type=int, default=None, help="ActiveRound.start_ledger (u32)")
     g_build.add_argument("--nonce", type=int, default=1, help="Per-round replay protection (u64, default: 1)")
     g_build.add_argument("--network-id", type=str, default=None, help="SHA-256 hex of network passphrase (64 hex chars)")
-    g_build.add_argument("--contract-addr", type=str, required=True, help="Deployed contract address (starts with C)")
+    g_build.add_argument("--contract-addr", type=str, default=None, help="Deployed contract address (starts with C)")
     g_build.add_argument("--confidence", type=int, default=None, help="Optional confidence score 0–10000 bps")
 
     g_netid = parser.add_argument_group("network ID helper")
@@ -70,14 +77,35 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     g_validation.add_argument("--min-confidence-bps", type=int, default=None, help="Minimum acceptable confidence bps")
 
     g_output = parser.add_argument_group("output options")
+    g_output.add_argument("--check-only", action="store_true",
+                          help="Validate the JSON layout of an existing payload instead of building one")
     g_output.add_argument("--stellar-cli", action="store_true", help="Emit a copy-paste stellar contract invoke command")
-    g_output.add_argument("--json", action="store_true", help="Emit only the JSON payload (no validation output)")
+    g_output.add_argument("--json", action="store_true", help="Emit only the JSON payload (no validation output); with --check-only, emit a machine-readable result")
     g_output.add_argument("--contract-id", type=str, default=None, help="Contract ID for stellar CLI command")
     g_output.add_argument("--oracle-key", type=str, default=None, help="Stellar key identity for signing")
     g_output.add_argument("--network", type=str, default="testnet", help="Stellar network name (default: testnet)")
 
+    parser.add_argument("payload_file", nargs="?", default=None, metavar="PAYLOAD_JSON",
+                        help="Payload JSON file to check (with --check-only; default: stdin)")
+
     args = parser.parse_args(argv)
 
+    if args.payload_file is not None and not args.check_only:
+        parser.error("PAYLOAD_JSON is only valid with --check-only")
+    if args.check_only:
+        return args
+
+    missing = [
+        flag
+        for flag, value in (
+            ("--price", args.price),
+            ("--round-id", args.round_id),
+            ("--contract-addr", args.contract_addr),
+        )
+        if value is None
+    ]
+    if missing:
+        parser.error(f"the following arguments are required: {', '.join(missing)}")
     if not args.network_id and not args.network_id_from_passphrase:
         parser.error("one of --network-id or --network-id-from-passphrase is required")
     if args.network_id_from_passphrase:
@@ -107,7 +135,7 @@ def validate_price(price_str: str) -> list[dict]:
     return issues
 
 
-def validate_timestamp(ts: int) -> list[dict]:
+def validate_timestamp(ts: int, enforce_freshness: bool = True) -> list[dict]:
     issues = []
     now = int(time.time())
 
@@ -116,6 +144,9 @@ def validate_timestamp(ts: int) -> list[dict]:
         return issues
 
     issues.append(dict(severity="OK", field="timestamp", msg=f"{ts} (Unix epoch second)"))
+
+    if not enforce_freshness:
+        return issues
 
     age = now - ts
     if age < 0:
@@ -222,6 +253,96 @@ def validate_deviation(price_str: str, start_price_str: str | None, max_deviatio
     return issues
 
 
+REQUIRED_PAYLOAD_KEYS = (
+    "price",
+    "timestamp",
+    "round_id",
+    "nonce",
+    "network_id",
+    "contract_addr",
+    "confidence",
+)
+
+
+def load_payload_json(source: str) -> dict:
+    """Read a payload JSON document from a file path or stdin (`-`)."""
+    if source == "-":
+        raw = sys.stdin.read()
+    else:
+        with open(source, "r", encoding="utf-8") as fh:
+            raw = fh.read()
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be a JSON object")
+    return payload
+
+
+def validate_payload_layout(payload: dict) -> list[dict]:
+    """Validate the exact JSON layout of a pre-built oracle payload.
+
+    The layout is the one emitted by `--json`: every key in
+    `REQUIRED_PAYLOAD_KEYS` must be present, no unknown keys are allowed, and
+    each value must have the type the simulator produces. Field ranges are
+    then validated with the same rules used when building a payload.
+    """
+    issues: list[dict] = []
+
+    present = set(payload)
+    required = set(REQUIRED_PAYLOAD_KEYS)
+    for key in sorted(required - present):
+        issues.append(dict(severity="ERROR", field=key, msg="missing required key in payload layout"))
+    for key in sorted(present - required):
+        issues.append(dict(severity="ERROR", field=key, msg="unknown key in payload layout"))
+
+    def type_error(field: str, expected: str, value) -> None:
+        issues.append(
+            dict(severity="ERROR", field=field, msg=f"expected {expected}, got {type(value).__name__}")
+        )
+
+    price = payload.get("price")
+    if "price" in present and not (isinstance(price, str) or (isinstance(price, int) and not isinstance(price, bool))):
+        type_error("price", "integer or decimal string", price)
+    else:
+        if "price" in present:
+            issues.extend(validate_price(price if isinstance(price, str) else str(price)))
+
+    for key in ("timestamp", "round_id", "nonce"):
+        value = payload.get(key)
+        if key in present and not (isinstance(value, int) and not isinstance(value, bool)):
+            type_error(key, "integer", value)
+
+    if isinstance(payload.get("timestamp"), int) and not isinstance(payload.get("timestamp"), bool):
+        # Fixture vectors are static, so only the layout/range is checked here;
+        # freshness is a submission-time concern, not a layout concern.
+        issues.extend(validate_timestamp(payload["timestamp"], enforce_freshness=False))
+    if isinstance(payload.get("round_id"), int) and not isinstance(payload.get("round_id"), bool):
+        issues.extend(validate_u32(payload["round_id"], "round_id", "round id"))
+    if isinstance(payload.get("nonce"), int) and not isinstance(payload.get("nonce"), bool):
+        issues.extend(validate_u64(payload["nonce"], "nonce", "nonce"))
+
+    network_id = payload.get("network_id")
+    if "network_id" in present and not isinstance(network_id, str):
+        type_error("network_id", "string", network_id)
+    elif "network_id" in present:
+        issues.extend(validate_network_id(network_id))
+
+    contract_addr = payload.get("contract_addr")
+    if "contract_addr" in present and not isinstance(contract_addr, str):
+        type_error("contract_addr", "string", contract_addr)
+    elif "contract_addr" in present:
+        issues.extend(validate_contract_addr(contract_addr))
+
+    confidence = payload.get("confidence")
+    if "confidence" in present and confidence is not None and not (
+        isinstance(confidence, int) and not isinstance(confidence, bool)
+    ):
+        type_error("confidence", "integer or null", confidence)
+    elif "confidence" in present:
+        issues.extend(validate_confidence(confidence, None))
+
+    return issues
+
+
 def build_payload_json(args: argparse.Namespace) -> str:
     payload = {
         "price": args.price,
@@ -282,6 +403,9 @@ def print_header():
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
 
+    if args.check_only is not None:
+        return run_check_only(args)
+
     if not args.timestamp:
         args.timestamp = int(time.time())
 
@@ -315,6 +439,40 @@ def main(argv: list[str] | None = None) -> int:
         print(build_stellar_cli(args, payload_json))
 
     return EXIT_SUCCESS if not errors else EXIT_VALIDATION_FAILED
+
+
+def run_check_only(args: argparse.Namespace) -> int:
+    source = args.payload_file or "-"
+    try:
+        payload = load_payload_json(source)
+    except (OSError, ValueError) as exc:
+        print(f"error: cannot read payload: {exc}", file=sys.stderr)
+        return EXIT_BAD_ARGS
+
+    issues = validate_payload_layout(payload)
+    if args.min_confidence_bps is not None:
+        issues.extend(validate_confidence(payload.get("confidence"), args.min_confidence_bps))
+    if args.start_price is not None or args.max_deviation_bps is not None:
+        issues.extend(
+            validate_deviation(
+                str(payload.get("price")),
+                args.start_price,
+                args.max_deviation_bps,
+            )
+        )
+
+    errors = [i for i in issues if i["severity"] == "ERROR"]
+    valid = not errors
+
+    if args.json:
+        print(json.dumps({"valid": valid, "issues": issues}, indent=2))
+        return EXIT_SUCCESS if valid else EXIT_VALIDATION_FAILED
+
+    print_header()
+    print(f"Check-only mode: {source}")
+    print()
+    print_validation(issues)
+    return EXIT_SUCCESS if valid else EXIT_VALIDATION_FAILED
 
 
 if __name__ == "__main__":

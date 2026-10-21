@@ -849,6 +849,7 @@ Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Bloc
 - **[Security Review](./SECURITY_REVIEW.md)** - Security analysis and best practices
 - **[Event Schema](./docs/EVENT_SCHEMA.md)** — Canonical on-chain event schema for indexers
 - **[Storage Lifecycle](./docs/storage_lifecycle.md)** — TTL/rent policy for persistent keys
+- **[Access Control](./docs/ACCESS_CONTROL.md)** — Open/allowlist modes and denylist precedence
 - **[Bindings Guide](./bindings/README.md)** - TypeScript integration guide
 - **[Wallet Error Guide](./docs/WALLET_ERROR_GUIDE.md)** - Mapping of contract error codes to UI messages
 - **[Test Suite](./contracts/src/tests/)** - Comprehensive test examples

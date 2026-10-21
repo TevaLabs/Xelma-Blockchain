@@ -111,6 +111,33 @@ fn test_mutations_fail_while_paused() {
     assert!(!client.is_paused());
 }
 
+/// Issue #708: `create_next_from_template` must fail closed while paused even
+/// when a template is configured, and the rejected call must not create a
+/// round or advance the round counter. The template survives for after unpause.
+#[test]
+fn test_create_next_from_template_blocked_when_paused() {
+    let env = Env::default();
+    let (client, _cid, _admin, _oracle) = setup_contract(&env);
+
+    client.set_round_template(&1_0000000u128, &None);
+    let last_round_id = client.get_last_round_id();
+
+    client.pause_contract();
+    let result = client.try_create_next_from_template();
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+
+    // No partial effect: no active round, round counter unchanged.
+    assert_eq!(client.get_active_round(), None);
+    assert_eq!(client.get_last_round_id(), last_round_id);
+    assert!(client.get_round_template().is_some());
+
+    // Once unpaused the same template creates the next round normally.
+    client.unpause_contract();
+    let created = client.create_next_from_template();
+    assert_eq!(created, last_round_id + 1);
+    assert!(client.get_active_round().is_some());
+}
+
 #[test]
 fn test_protocol_health_paused() {
     let env = Env::default();
