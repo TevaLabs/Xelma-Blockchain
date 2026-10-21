@@ -589,8 +589,9 @@ let resolved = events.iter().find(|(_, topics, _)| {
 
 Emitted by every competitive-settlement path (UpDown indexed/legacy, Precision
 indexed/legacy) when the protocol fee is enabled (Issue #162). NOT emitted on
-refund / cancel / fallback paths — those return users' full stake and the
-treasury stays flat.
+refund paths — UpDown unchanged-price, one-sided pool, min-participants
+fallback, admin cancel, dispute-window void, and Precision zero-reveal — those
+return users' full stake and the treasury stays flat (Issue #665).
 
 | Field              | Type          | Description                                                          |
 |--------------------|---------------|----------------------------------------------------------------------|

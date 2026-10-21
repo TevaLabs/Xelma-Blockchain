@@ -38,7 +38,7 @@ use soroban_sdk::BytesN;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, Env, Map, TryIntoVal, Vec,
+    Address, Env, Map, Symbol, TryIntoVal, Vec,
 };
 use std::string::{String, ToString};
 
@@ -133,24 +133,49 @@ pub(super) fn collect_outcome_loss_events(
         .collect()
 }
 
-pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128, i128, u32)> {
+/// True when `topic` is a protocol fee-collection action symbol.
+///
+/// The canonical topic is `("protocol", "fee_coll")` (a `Symbol` is capped at
+/// 9 characters, so `fee_collected` cannot be encoded). The stale duplicate
+/// helper in `contract.rs` publishes `("protocol", "collected")`; scanning
+/// for both spellings keeps the no-fee assertions honest even if a settlement
+/// path ever calls the wrong emitter.
+fn is_protocol_fee_action(env: &Env, topic: &soroban_sdk::Val) -> bool {
+    let action: Option<Symbol> = topic.try_into_val(env).ok();
+    matches!(
+        action,
+        Some(sym) if sym == symbol_short!("fee_coll") || sym == symbol_short!("collected")
+    )
+}
+
+/// Scans the **entire** event stream for protocol fee-collection events and
+/// decodes `(round_id, fee_amount, treasury_balance, bps_active, fee_model)`.
+///
+/// Panics if a fee event carries an unexpected payload: silently dropping a
+/// malformed fee event would let a fee-on-refund regression pass unnoticed.
+pub(super) fn collect_protocol_fee_events(env: &Env) -> std::vec::Vec<(u64, i128, i128, u32, u32)> {
     env.events()
         .all()
         .iter()
         .filter_map(|e| {
             let (_contract, topics, data) = e;
-            if topics.len() != 2
-                || topics.get(0).unwrap().try_into_val(env) != Ok(symbol_short!("protocol"))
-                || topics.get(1).unwrap().try_into_val(env) != Ok(symbol_short!("fee_coll"))
-            {
+            if topics.len() != 2 || !is_protocol_fee_action(env, &topics.get(1).unwrap()) {
                 return None;
             }
-            let res: Result<(u64, i128, i128, u32), _> = data.try_into_val(env);
-            res.ok()
+            let namespace: Option<Symbol> = topics.get(0).unwrap().try_into_val(env).ok();
+            if namespace != Some(symbol_short!("protocol")) {
+                return None;
+            }
+            let res: Result<(u64, i128, i128, u32, u32), _> = data.try_into_val(env);
+            Some(res.expect(
+                "protocol fee event payload must be (round_id, fee_amount, treasury_balance, bps_active, fee_model)",
+            ))
         })
         .collect()
 }
 
+/// Counts every protocol fee-collection event in the stream, regardless of
+/// payload shape, so refund paths can assert that none were emitted.
 pub(super) fn count_protocol_fee_events(env: &Env) -> u32 {
     env.events()
         .all()
@@ -159,7 +184,7 @@ pub(super) fn count_protocol_fee_events(env: &Env) -> u32 {
             let (_contract, topics, _data) = e;
             topics.len() == 2
                 && topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("protocol"))
-                && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("fee_coll"))
+                && is_protocol_fee_action(env, &topics.get(1).unwrap())
         })
         .count() as u32
 }

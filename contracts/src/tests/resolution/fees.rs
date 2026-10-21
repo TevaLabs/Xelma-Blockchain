@@ -103,10 +103,12 @@ fn test_protocol_fee_updown_indexed_conservation() {
 
     assert_eq!(count_protocol_fee_events(&env), 1);
     let events = collect_protocol_fee_events(&env);
-    let (ev_round_id, fee, _treasury_after, bps) = events[0];
+    let (ev_round_id, fee, treasury_after_event, bps, fee_model) = events[0];
     assert_eq!(ev_round_id, 1u64);
     assert_eq!(fee, 3_000_0000i128);
+    assert_eq!(treasury_after_event, 3_000_0000i128);
     assert_eq!(bps, 200u32);
+    assert_eq!(fee_model, 0u32, "default model is FeeOnPot");
 
     let payouts = sum_pending_payouts(&env, &client.address, &[alice.clone(), bob.clone()]);
     assert_eq!(
@@ -127,6 +129,9 @@ fn test_protocol_fee_updown_indexed_conservation() {
     );
 }
 
+/// The legacy settlement path is compiled out by default; this test only
+/// exercises it with `--features legacy-map-settlement`.
+#[cfg(feature = "legacy-map-settlement")]
 #[test]
 fn test_protocol_fee_updown_legacy_conservation() {
     let env = Env::default();
@@ -263,6 +268,9 @@ fn test_protocol_fee_precision_indexed_conservation() {
     );
 }
 
+/// The legacy settlement path is compiled out by default; this test only
+/// exercises it with `--features legacy-map-settlement`.
+#[cfg(feature = "legacy-map-settlement")]
 #[test]
 fn test_protocol_fee_precision_legacy_conservation() {
     let env = Env::default();
@@ -407,8 +415,11 @@ fn test_protocol_fee_thin_losing_pool_updown() {
     );
 }
 
+/// Issue #665: an UpDown round resolving at its start price refunds every
+/// participant in full and must not emit any protocol fee event. The treasury
+/// must stay flat (a fee would silently shortchange the refunds).
 #[test]
-fn test_protocol_fee_not_collected_on_refund_paths() {
+fn test_updown_unchanged_price_refund_emits_no_fee_event() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
@@ -424,51 +435,26 @@ fn test_protocol_fee_not_collected_on_refund_paths() {
     client.mint_initial(&alice);
     client.mint_initial(&bob);
 
+    // Activate the maximum permitted fee: if any refund path leaked a fee,
+    // 10% of the pot would be impossible to miss.
     client.schedule_protocol_fee_bps(&Some(1000u32));
     env.ledger().with_mut(|li| li.sequence_number = 2000);
     client.apply_scheduled_changes(&crate::types::ConfigChangeKind::ProtocolFeeBps);
+    assert_eq!(client.get_protocol_fee_bps(), Some(1000u32));
 
     let start_price: u128 = 1_500_0000;
     client.create_round(&start_price, &None);
-    env.as_contract(&contract_id, || {
-        let mut positions = Map::<Address, UserPosition>::new(&env);
-        positions.set(
-            alice.clone(),
-            UserPosition {
-                amount: 100_000_0000,
-                side: BetSide::Up,
-            },
-        );
-        positions.set(
-            bob.clone(),
-            UserPosition {
-                amount: 50_000_0000,
-                side: BetSide::Down,
-            },
-        );
-        env.storage()
-            .persistent()
-            .set(&DataKeyCore::UpDownPositions, &positions);
-        let mut round: Round = env
-            .storage()
-            .persistent()
-            .get(&DataKeyCore::ActiveRound)
-            .unwrap();
-        round.pool_up = 100_000_0000;
-        round.pool_down = 50_000_0000;
-        env.storage()
-            .persistent()
-            .set(&DataKeyCore::ActiveRound, &round);
-    });
+    client.place_bet(&alice, &100_000_0000, &BetSide::Up);
+    client.place_bet(&bob, &50_000_0000, &BetSide::Down);
+
+    let round = client.get_active_round().unwrap();
+    let oracle_round_id = round.start_ledger;
 
     env.ledger().with_mut(|li| li.sequence_number += 12);
     client.resolve_round(&OraclePayload {
         price: start_price,
         timestamp: env.ledger().timestamp(),
-        round_id: client
-            .get_active_round()
-            .map(|r| r.start_ledger)
-            .unwrap_or(0),
+        round_id: oracle_round_id,
         nonce: 7u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
@@ -476,16 +462,43 @@ fn test_protocol_fee_not_collected_on_refund_paths() {
         attestation: None,
     });
 
+    // Full event-stream scan: no fee-collection event may appear anywhere.
+    let fee_events = collect_protocol_fee_events(&env);
+    assert!(
+        fee_events.is_empty(),
+        "price-unchanged refunds MUST NOT emit a fee-collection event, found: {:?}",
+        fee_events
+    );
     assert_eq!(
         count_protocol_fee_events(&env),
         0,
-        "price-unchanged refunds MUST NOT emit a fee event"
+        "price-unchanged refunds MUST NOT emit a protocol fee event"
     );
-    assert_eq!(client.get_protocol_fee_treasury(), 0);
+    assert_eq!(
+        client.get_protocol_fee_treasury(),
+        0,
+        "treasury must stay flat on a refund path"
+    );
+
+    assert_eq!(
+        client.get_pending_winnings(&alice),
+        100_000_0000i128,
+        "Up bettor receives their exact stake back"
+    );
+    assert_eq!(
+        client.get_pending_winnings(&bob),
+        50_000_0000i128,
+        "Down bettor receives their exact stake back"
+    );
     let payouts = sum_pending_payouts(&env, &client.address, &[alice.clone(), bob.clone()]);
     assert_eq!(
         payouts, 150_000_0000i128,
         "all participants refunded their full stake"
+    );
+    assert_eq!(
+        payouts + client.get_protocol_fee_treasury(),
+        150_000_0000i128,
+        "conservation: refunds + treasury == total pot"
     );
 }
 
