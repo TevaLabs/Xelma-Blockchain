@@ -123,7 +123,7 @@ fn test_cancel_config_change_emits_event() {
     );
     assert_eq!(
         topics.get(1).unwrap().try_into_val(&env),
-        Ok(symbol_short!("cancelled"))
+        Ok(symbol_short!("cancel"))
     );
     assert_eq!(
         data.try_into_val(&env),
@@ -146,7 +146,7 @@ fn test_schedule_windows_emits_scheduled_event() {
     );
     assert_eq!(
         topics.get(1).unwrap().try_into_val(&env),
-        Ok(symbol_short!("scheduled"))
+        Ok(symbol_short!("sched"))
     );
     let pending = client
         .get_pending_config_change(&ConfigChangeKind::Windows)
@@ -345,6 +345,19 @@ fn test_protocol_fee_timelock_full_cycle() {
     // Exactly at activation_ledger must succeed.
     env.ledger().with_mut(|li| li.sequence_number += 1);
     client.apply_scheduled_changes(&crate::types::ConfigChangeKind::ProtocolFeeBps);
+
+    // fee_bps_set event must be present immediately after apply (events reset per call).
+    let events = env.events().all();
+    let fee_bps_event = events
+        .iter()
+        .rev()
+        .find(|(_contract, topics, _data)| {
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("protocol"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("fee_bps"))
+        });
+    assert!(fee_bps_event.is_some(), "fee_bps_set event must be emitted on apply");
+
     assert_eq!(client.get_protocol_fee_bps(), Some(500u32));
 
     // Pending entry must be cleared post-apply.
@@ -353,20 +366,6 @@ fn test_protocol_fee_timelock_full_cycle() {
             .get_pending_config_change(&crate::types::ConfigChangeKind::ProtocolFeeBps)
             .is_none()
     );
-
-    // fee_bps_set event must be present.
-    let ev_count = env
-        .events()
-        .all()
-        .iter()
-        .filter(|e| {
-            let (_contract, topics, _data) = e;
-            topics.len() == 2
-                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("protocol"))
-                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("fee_bps"))
-        })
-        .count();
-    assert!(ev_count >= 1, "fee_bps_set event must be emitted on apply");
 }
 
 #[test]
