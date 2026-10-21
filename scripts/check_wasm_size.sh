@@ -21,7 +21,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-WASM_PATH="${1:-$REPO_ROOT/target/wasm32v1-none/release/xelma_contract.wasm}"
+WASM_PATH="${1:,$REPO_ROOT/target/wasm32v1-none/release/xelma_contract.wasm}"
 BASELINE_FILE="$REPO_ROOT/.wasm-size-baseline"
 
 if [ ! -f "$WASM_PATH" ]; then
