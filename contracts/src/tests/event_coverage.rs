@@ -9,7 +9,7 @@ use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, Bytes, BytesN, Env, Symbol, TryIntoVal,
+    Address, Bytes, BytesN, Env, Symbol, TryIntoVal, Val,
 };
 
 fn setup() -> (
@@ -1130,4 +1130,145 @@ fn test_event_coverage_round_summary() {
     assert_eq!(canon.9, 50_0000000i128); // total_pot
     assert_eq!(canon.10, 0i128); // fee_amount
     assert_eq!(canon.12, None); // confidence
+}
+
+// ─── `("pool", "onesided")` canonical payload (Issue #690) ──────────────────
+
+/// Collects every `("pool", "onesided")` payload emitted so far.
+fn collect_one_sided_events(env: &Env) -> std::vec::Vec<Val> {
+    env.events()
+        .all()
+        .into_iter()
+        .filter(|(_contract, topics, _data)| {
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("pool"))
+                && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("onesided"))
+        })
+        .map(|(_contract, _topics, data)| data)
+        .collect()
+}
+
+#[test]
+fn test_event_coverage_pool_onesided_payload_field_order() {
+    let (env, contract_id, _, _, client) = setup();
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    client.mint_initial(&user1);
+    client.mint_initial(&user2);
+
+    // One-sided market: every stake lands on the Up side.
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user1, &100_0000000, &BetSide::Up);
+    client.place_bet(&user2, &200_0000000, &BetSide::Up);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    let one_sided_events = collect_one_sided_events(&env);
+    assert_eq!(
+        one_sided_events.len(),
+        1,
+        "exactly one pool/onesided event must be emitted per one-sided settlement"
+    );
+
+    let data = one_sided_events[0];
+    // Payload: (round_id: u64, policy_code: u32, affected_side: u32,
+    //           refund_amount: i128, carry_amount: i128, pool_up: i128, pool_down: i128)
+    let canon: (u64, u32, u32, i128, i128, i128, i128) = data.try_into_val(&env).unwrap();
+    assert_eq!(canon.0, 1u64); // round_id
+    assert_eq!(canon.1, 0u32); // policy_code (Refund)
+    assert_eq!(canon.2, 0u32); // affected_side (Up)
+    assert_eq!(canon.3, 300_0000000i128); // refund_amount
+    assert_eq!(canon.4, 0i128); // carry_amount
+    assert_eq!(canon.5, 300_0000000i128); // pool_up
+    assert_eq!(canon.6, 0i128); // pool_down
+}
+
+#[test]
+fn test_event_coverage_pool_onesided_down_side_field_order() {
+    let (env, contract_id, _, _, client) = setup();
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+
+    // One-sided market on the Down side.
+    client.create_round(&2_0000000, &None);
+    client.place_bet(&user, &300_0000000, &BetSide::Down);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 1_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    let one_sided_events = collect_one_sided_events(&env);
+    assert_eq!(
+        one_sided_events.len(),
+        1,
+        "exactly one pool/onesided event must be emitted per one-sided settlement"
+    );
+
+    let data = one_sided_events[0];
+    let canon: (u64, u32, u32, i128, i128, i128, i128) = data.try_into_val(&env).unwrap();
+    assert_eq!(canon.0, 1u64); // round_id
+    assert_eq!(canon.1, 0u32); // policy_code (Refund)
+    assert_eq!(canon.2, 1u32); // affected_side (Down)
+    assert_eq!(canon.3, 300_0000000i128); // refund_amount
+    assert_eq!(canon.4, 0i128); // carry_amount
+    assert_eq!(canon.5, 0i128); // pool_up
+    assert_eq!(canon.6, 300_0000000i128); // pool_down
+}
+
+#[test]
+fn test_event_coverage_pool_onesided_not_emitted_for_two_sided_round() {
+    let (env, contract_id, _, _, client) = setup();
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    client.mint_initial(&user1);
+    client.mint_initial(&user2);
+
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user1, &100_0000000, &BetSide::Up);
+    client.place_bet(&user2, &200_0000000, &BetSide::Down);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    assert_eq!(
+        collect_one_sided_events(&env).len(),
+        0,
+        "competitive two-sided round must not emit pool/onesided"
+    );
 }

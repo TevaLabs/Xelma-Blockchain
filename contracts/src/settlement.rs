@@ -1295,14 +1295,12 @@ fn _complete_settlement(
     let round_id = round.round_id;
     let fee_amount = match round.mode {
         RoundMode::UpDown => {
-            let (one_sided, fee) = _resolve_updown_mode(env, round, final_price, false)?;
-            if one_sided {
-                #[allow(deprecated)]
-                env.events().publish(
-                    (symbol_short!("pool"), symbol_short!("onesided")),
-                    (round_id, round.pool_up, round.pool_down),
-                );
-            }
+            // The `("pool", "onesided")` event is published by
+            // `_apply_one_sided_policy` with the canonical 7-field payload
+            // documented in docs/EVENT_SCHEMA.md. Emitting it again here
+            // produced a second, shorter event with a different payload
+            // layout for the same topic pair.
+            let (_one_sided, fee) = _resolve_updown_mode(env, round, final_price, false)?;
             fee
         }
         RoundMode::Precision => _resolve_precision_mode(env, round_id, final_price, false)?.0,

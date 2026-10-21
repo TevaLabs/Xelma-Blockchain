@@ -298,9 +298,13 @@ All stakes are refunded; no competitive settlement occurs.
 
 ### `("pool", "onesided")`
 
-Emitted when a prediction round settles as a one-sided (degenerate) market (Issue #270).
-Triggered when bets/predictions were placed on only one side (e.g., UP only or DOWN only).
+Emitted when an **UpDown** round settles as a one-sided (degenerate) market (Issue #270).
+Triggered when bets were placed on only one side (e.g., UP only or DOWN only).
 Applies the configured deterministic settlement policy (`OneSidedPolicy::Refund` default).
+
+Emitted **exactly once** per one-sided settlement, always with the canonical
+payload below. The topic pair is never re-published with a different field
+layout, so consumers may rely on the fixed positions listed here.
 
 | Position | Field            | Type   | Description                                                              |
 |----------|------------------|--------|--------------------------------------------------------------------------|
@@ -311,6 +315,13 @@ Applies the configured deterministic settlement policy (`OneSidedPolicy::Refund`
 | 4        | `carry_amount`   | `i128` | Total stake amount carried forward to next round (in stroops)            |
 | 5        | `pool_up`        | `i128` | Total Up-side pool at settlement time (in stroops)                       |
 | 6        | `pool_down`      | `i128` | Total Down-side pool at settlement time (in stroops)                     |
+
+`refund_amount` and `carry_amount` are mutually exclusive: the `Refund` and
+`Void` policies refund the whole pot (`carry_amount = 0`), while
+`CarryForward` moves the whole pot into the next round (`refund_amount = 0`).
+`affected_side` is `0` (Up) when only the Up pool is populated, `1` (Down) when
+only the Down pool is populated, and `2` (Empty) when neither side holds a
+stake.
 
 ---
 
