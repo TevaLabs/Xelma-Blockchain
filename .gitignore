@@ -12,11 +12,11 @@ adversarial-reports/
 .soroban/
 
 # TypeScript/Node.js
+temp_auto_push.bat
 node_modules/
 bindings/dist/
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -27,3 +27,5 @@ bindings/dist/
 Thumbs.db
 CLAUDE.md
 plan.md
+.gitignore
+branch_structure.json

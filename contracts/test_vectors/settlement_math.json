@@ -475,6 +475,108 @@
       ]
     },
     {
+      "name": "closest_wins_over_exact_tie_break_by_distance",
+      "note": "Reference-model parity: the winner is the revealed entry with the smallest absolute deviation from final_price. Here index 0 is closest (distance 1), index 1 is farther (distance 2), and index 2 is farthest (distance 100). Only the closest revealed entry wins; the others receive nothing even though all are revealed.",
+      "final_price": 1000,
+      "entries": [
+        {
+          "predicted_price": 999,
+          "amount": 100,
+          "revealed": true
+        },
+        {
+          "predicted_price": 1002,
+          "amount": 200,
+          "revealed": true
+        },
+        {
+          "predicted_price": 1100,
+          "amount": 300,
+          "revealed": true
+        }
+      ],
+      "expected_payouts": [
+        600,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "closest_wins_with_unrevealed_closer_entry_excluded",
+      "note": "An unrevealed entry is excluded from the winner set even if its predicted_price is closest to final_price. The closest *revealed* entry wins and absorbs the entire pot including the unrevealed stake.",
+      "final_price": 1000,
+      "entries": [
+        {
+          "predicted_price": 1000,
+          "amount": 500,
+          "revealed": false
+        },
+        {
+          "predicted_price": 1005,
+          "amount": 100,
+          "revealed": true
+        },
+        {
+          "predicted_price": 1200,
+          "amount": 100,
+          "revealed": true
+        }
+      ],
+      "expected_payouts": [
+        0,
+        700,
+        0
+      ]
+    },
+    {
+      "name": "closest_wins_tie_between_two_revealed_splits_pot",
+      "note": "When two revealed entries are equidistant from final_price, both are winners and the pot is split evenly with any remainder going to the first winner in canonical order.",
+      "final_price": 1000,
+      "entries": [
+        {
+          "predicted_price": 990,
+          "amount": 100,
+          "revealed": true
+        },
+        {
+          "predicted_price": 1010,
+          "amount": 101,
+          "revealed": true
+        },
+        {
+          "predicted_price": 1050,
+          "amount": 50,
+          "revealed": true
+        }
+      ],
+      "expected_payouts": [
+        126,
+        125,
+        0
+      ]
+    },
+    {
+      "name": "closest_wins_negative_deviation_magnitude",
+      "note": "Deviation is measured by absolute distance, so a prediction below final_price competes equally with one above. Index 0 is 3 below (distance 3), index 1 is 4 above (distance 4); index 0 wins.",
+      "final_price": 1000,
+      "entries": [
+        {
+          "predicted_price": 997,
+          "amount": 40,
+          "revealed": true
+        },
+        {
+          "predicted_price": 1004,
+          "amount": 60,
+          "revealed": true
+        }
+      ],
+      "expected_payouts": [
+        100,
+        0
+      ]
+    }
+    {
       "name": "unrevealed_entry_never_wins_but_its_stake_still_joins_the_payout_pool",
       "note": "The unrevealed entry (index 1) never enters the winner set regardless of its address-sort position — but its stake still counts toward total_pot and is redistributed to the winners (forfeiture), and the remainder still lands on the first winner in canonical order (index 0), not the first entry overall.",
       "final_price": 7000,

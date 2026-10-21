@@ -497,3 +497,147 @@ pub fn assert_refund_fee_conservation(
          refunds={sum_refunds} pot={total_pot}"
     );
 }
+
+// ─── Precision closest-winner reference helpers ──────────────────────────────
+//
+// Precision mode selects the single bettor whose prediction is closest to the
+// settled price. These helpers mirror the contract's closest-winner selection
+// and settlement arithmetic so that differential harnesses can compare N seeds
+// against the reference model.
+
+/// A single precision bet: the bettor, their predicted price, and their stake.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecisionBet {
+    pub user: Address,
+    pub predicted_price: i128,
+    pub stake: i128,
+}
+
+/// Selects the index of the closest-winner among `bets` given `settled_price`.
+///
+/// Ties are broken deterministically by the smallest absolute distance, then by
+/// the lowest index (first-placed bet wins). Returns `None` for an empty slice.
+///
+/// Mirrors the contract's closest-winner selection: `|predicted - settled|` is
+/// minimized; on equal distance the earlier bet (lower index) wins.
+pub fn ref_precision_closest_winner(
+    bets: &[PrecisionBet],
+    settled_price: i128,
+) -> Option<usize> {
+    if bets.is_empty() {
+        return None;
+    }
+    let mut best_idx = 0usize;
+    let mut best_dist = (bets[0].predicted_price - settled_price).abs();
+    for (idx, bet) in bets.iter().enumerate().skip(1) {
+        let dist = (bet.predicted_price - settled_price).abs();
+        if dist < best_dist {
+            best_dist = dist;
+            best_idx = idx;
+        }
+    }
+    Some(best_idx)
+}
+
+/// Reference Precision settlement for the closest-winner model.
+///
+/// Computes the winning index, the total pot, the protocol fee, and the payout
+/// to the single winner. The remainder (if any) is assigned to the winner so
+/// that `payout + fee == total_pot` exactly.
+///
+/// Returns `(winner_index, payout, fee)` or `None` when there are no bets.
+pub fn ref_precision_closest_settle(
+    bets: &[PrecisionBet],
+    settled_price: i128,
+    fee_bps: Option<u32>,
+) -> Option<(usize, i128, i128)> {
+    let winner_idx = ref_precision_closest_winner(bets, settled_price)?;
+    let total_pot: i128 = bets.iter().map(|b| b.stake).sum();
+    if total_pot <= 0 {
+        return Some((winner_idx, 0, 0));
+    }
+    let fee = compute_fee(total_pot, fee_bps);
+    let payout = total_pot - fee;
+    Some((winner_idx, payout, fee))
+}
+
+/// Asserts the strict fee-conservation invariant for the Precision
+/// closest-winner path.
+///
+/// `winner_payout + treasury_delta == total_pot` (exact, remainder to winner).
+pub fn assert_precision_closest_fee_conservation(
+    winner_payout: i128,
+    treasury_before: i128,
+    treasury_after: i128,
+    total_pot: i128,
+    seed_label: &str,
+) {
+    let treasury_delta = treasury_after - treasury_before;
+    assert_eq!(
+        winner_payout + treasury_delta,
+        total_pot,
+        "[seed={seed_label}] Precision closest-winner fee conservation violated: \
+         payout={winner_payout} treasury_delta={treasury_delta} pot={total_pot}"
+    );
+}
+
+/// Differential harness: runs the reference Precision closest-winner model over
+/// `seeds`, comparing each seed's derived outcome against a caller-supplied
+/// contract outcome.
+///
+/// `contract_outcome(seed)` must return `(winner_index, payout, fee)` for the
+/// same bet set and settled price used to build the reference. Returns the
+/// number of mismatches; a return value of 0 means full parity.
+///
+/// This is the harness entry point used by the differential tests to compare
+/// N seeds against the reference model.
+pub fn precision_closest_parity_harness<F>(
+    seeds: &[u64],
+    bets_for_seed: impl Fn(u64) -> Vec<PrecisionBet>,
+    settled_price_for_seed: impl Fn(u64) -> i128,
+    fee_bps: Option<u32>,
+    contract_outcome: F,
+) -> usize
+where
+    F: Fn(u64) -> Option<(usize, i128, i128)>,
+{
+    let mut mismatches = 0usize;
+    for &seed in seeds {
+        let bets = bets_for_seed(seed);
+        let settled = settled_price_for_seed(seed);
+        let expected = ref_precision_closest_settle(&bets, settled, fee_bps);
+        let actual = contract_outcome(seed);
+        if expected != actual {
+            mismatches += 1;
+        }
+    }
+    mismatches
+}
+
+/// Asserts that the differential harness reports zero mismatches across seeds.
+///
+/// Panics with the seed label and mismatch count when parity is not achieved.
+pub fn assert_precision_closest_parity<F>(
+    seeds: &[u64],
+    bets_for_seed: impl Fn(u64) -> Vec<PrecisionBet>,
+    settled_price_for_seed: impl Fn(u64) -> i128,
+    fee_bps: Option<u32>,
+    contract_outcome: F,
+    seed_label: &str,
+) where
+    F: Fn(u64) -> Option<(usize, i128, i128)>,
+{
+    let mismatches = precision_closest_parity_harness(
+        seeds,
+        bets_for_seed,
+        settled_price_for_seed,
+        fee_bps,
+        contract_outcome,
+    );
+    assert_eq!(
+        mismatches, 0,
+        "[seed={seed_label}] Precision closest-winner parity failed: \
+         {mismatches} of {} seeds mismatched",
+        seeds.len()
+    );
+}
