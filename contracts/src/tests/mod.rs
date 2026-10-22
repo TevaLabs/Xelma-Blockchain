@@ -25,6 +25,7 @@ mod event_coverage;
 mod event_order_golden;
 mod fee_model;
 mod guard_tests;
+mod pending_outcome_key;
 // mod initialization; // upstream bug
 mod archive_participation;
 mod insurance;

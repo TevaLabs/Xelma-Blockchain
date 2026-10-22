@@ -22,6 +22,7 @@ the whole map. The new design stores each user's record under a composite
 | **`Position(round_id, user)`** | `UserPosition` | **NEW** — indexed UpDown bet |
 | **`PrecisionPosition(round_id, user)`** | `PrecisionPrediction` | **NEW** — indexed precision guess |
 | **`RoundParticipants(round_id)`** | `Vec<Address>` | **NEW** — ordered list for resolution iteration |
+| **`PendingOutcome(round_id)`** | `PendingDisputeSettlement` | Staged oracle result while a dispute window is open (`dispute_ledgers > 0`). Removed on `finalize_round` / `void_round` |
 | `CancelledRound(round_id)` | `bool` | marker for cancelled rounds (cleaned up on prune) |
 | **`ArchivedRound(round_id)`** | `ArchivedRoundSummary` | **NEW** — compact post-settlement history |
 | **`RecentArchivedRoundIds`** | `Vec<u64>` | **NEW** — FIFO index for archive retention |
@@ -102,6 +103,33 @@ This guarantees that downstream indexers and explorers see a consistent view:
 once a round is pruned, it is indistinguishable from a round that never existed,
 except for the `CancelledRound` marker which provides status continuity for
 admin-cancelled rounds.
+
+## Pending outcome (dispute window)
+
+When `dispute_ledgers > 0`, `resolve_round` does not settle. It stages the
+oracle result under its own key, `PendingOutcome(round_id)`, and clears
+`ActiveRound`. `finalize_round` (at or after the deadline) or `void_round`
+(before it) consumes the entry and removes it.
+
+Earlier versions kept every staged round in one shared `PendingDisputes` map.
+Reads still fall back to that map so rounds staged before the upgrade settle
+normally; the entry is removed from it on finalize/void.
+
+### TTL
+
+The window can outlast the usual rent bump, so staging also extends the TTL of
+everything finalize or void will read to at least
+`dispute_ledgers + TTL_BUMP_AMOUNT` ledgers:
+
+- `PendingOutcome(round_id)`
+- `RoundParticipants(round_id)`
+- each participant's `Position` / `PrecisionPosition` / `PrecisionCommitment`
+
+Reads of `PendingOutcome` bump it by the standard threshold/amount, so a keeper
+can still finalize after the deadline. With `dispute_ledgers == 0` nothing is
+staged and nothing extra is extended.
+
+Tests: `contracts/src/tests/pending_outcome_key.rs`.
 
 ## Operation cost — before vs after
 

@@ -162,6 +162,9 @@ pub enum DataKeyExt {
     Amendment(u64),
     /// Monotonic counter for amendment IDs (Issue #363).
     NextAmendmentId,
+    /// Staged oracle result for a round inside its dispute window (Issue #685).
+    /// One entry per round; removed on `finalize_round` / `void_round`.
+    PendingOutcome(u64),
 }
 
 /// Parameterised and round-scoped storage keys.

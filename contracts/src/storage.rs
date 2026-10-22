@@ -11,9 +11,9 @@
 //! (`Position` + `PrecisionPosition` + `PrecisionCommitment`) should route
 //! through `clear_user_positions` or `clear_round_storage`.
 
-use crate::types::DataKeyCore;
-use crate::types::DataKeyScoped;
-use soroban_sdk::{Address, Env, Vec};
+use crate::common::TTL_BUMP_AMOUNT;
+use crate::types::{DataKeyCore, DataKeyExt, DataKeyScoped};
+use soroban_sdk::{Address, Env, IntoVal, Val, Vec};
 
 /// Removes **all** position storage keys for a single participant,
 /// regardless of the round's mode.
@@ -76,4 +76,56 @@ pub fn clear_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>
     env.storage()
         .persistent()
         .remove(&DataKeyCore::PrecisionPositions);
+}
+
+// ─── Pending outcome (dispute window) — Issue #685 ──────────────────────────
+
+/// Key of the staged oracle result for `round_id` while its dispute window is
+/// open (`dispute_ledgers > 0`). One entry per round, so reads and writes never
+/// touch other rounds' staged results.
+#[inline]
+pub fn pending_outcome_key(round_id: u64) -> DataKeyCore {
+    DataKeyCore::Ext(DataKeyExt::PendingOutcome(round_id))
+}
+
+/// Minimum remaining TTL (in ledgers) every entry needed to settle a staged
+/// round must have: the whole dispute window plus the normal rent bump, so a
+/// keeper can still finalize or void after the deadline.
+#[inline]
+pub fn dispute_ttl_target(dispute_ledgers: u32) -> u32 {
+    dispute_ledgers.saturating_add(TTL_BUMP_AMOUNT)
+}
+
+#[inline]
+fn extend_to_at_least<K: IntoVal<Env, Val>>(env: &Env, key: &K, target: u32) {
+    if env.storage().persistent().has(key) {
+        env.storage().persistent().extend_ttl(key, target, target);
+    }
+}
+
+/// Extends the TTL of the staged outcome and of everything `finalize_round`
+/// or `void_round` will read (participant list and every position) to at least
+/// `target` ledgers. No-op for entries that already live longer.
+pub fn extend_staged_round_ttl(env: &Env, round_id: u64, participants: &Vec<Address>, target: u32) {
+    extend_to_at_least(env, &pending_outcome_key(round_id), target);
+    extend_to_at_least(env, &DataKeyScoped::RoundParticipants(round_id), target);
+    for i in 0..participants.len() {
+        if let Some(user) = participants.get(i) {
+            extend_to_at_least(
+                env,
+                &DataKeyScoped::Position(round_id, user.clone()),
+                target,
+            );
+            extend_to_at_least(
+                env,
+                &DataKeyScoped::PrecisionPosition(round_id, user.clone()),
+                target,
+            );
+            extend_to_at_least(
+                env,
+                &DataKeyScoped::PrecisionCommitment(round_id, user),
+                target,
+            );
+        }
+    }
 }

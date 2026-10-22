@@ -16,7 +16,9 @@ use crate::settlement_math::{
     classify_price_direction, compute_deviation_bps, compute_updown_winner_payout,
     is_one_sided_pool, total_pot_updown, PriceDirection,
 };
-use crate::storage::clear_round_storage;
+use crate::storage::{
+    clear_round_storage, dispute_ttl_target, extend_staged_round_ttl, pending_outcome_key,
+};
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
     HbGateConfig, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord,
@@ -30,19 +32,21 @@ use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, 
 
 #[contracttype]
 #[derive(Clone)]
-struct PendingDisputeSettlement {
-    round: Round,
-    final_price: u128,
-    confidence: Option<u32>,
-    resolved_at_ledger: u32,
-    deadline_ledger: u32,
+pub(crate) struct PendingDisputeSettlement {
+    pub(crate) round: Round,
+    pub(crate) final_price: u128,
+    pub(crate) confidence: Option<u32>,
+    pub(crate) resolved_at_ledger: u32,
+    pub(crate) deadline_ledger: u32,
 }
 
-fn _pending_disputes_key(env: &Env) -> Symbol {
+/// Legacy shared-map key. Rounds staged before Issue #685 live here; new
+/// rounds use the per-round `pending_outcome_key`. Kept for read-through only.
+pub(crate) fn _pending_disputes_key(env: &Env) -> Symbol {
     Symbol::new(env, "PendingDisputes")
 }
 
-fn _read_pending_dispute(env: &Env, round_id: u64) -> Option<PendingDisputeSettlement> {
+fn _read_legacy_pending_dispute(env: &Env, round_id: u64) -> Option<PendingDisputeSettlement> {
     let key = _pending_disputes_key(env);
     if env.storage().persistent().has(&key) {
         env.storage()
@@ -57,35 +61,62 @@ fn _read_pending_dispute(env: &Env, round_id: u64) -> Option<PendingDisputeSettl
     pending.get(round_id)
 }
 
-fn _write_pending_dispute(env: &Env, settlement: &PendingDisputeSettlement) {
-    let key = _pending_disputes_key(env);
-    let mut pending: Map<u64, PendingDisputeSettlement> = env
+pub(crate) fn _read_pending_dispute(env: &Env, round_id: u64) -> Option<PendingDisputeSettlement> {
+    let key = pending_outcome_key(round_id);
+    if let Some(pending) = env
         .storage()
         .persistent()
-        .get(&key)
-        .unwrap_or(Map::new(env));
-    pending.set(settlement.round.round_id, settlement.clone());
-    env.storage().persistent().set(&key, &pending);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
-}
-
-fn _remove_pending_dispute(env: &Env, round_id: u64) {
-    let key = _pending_disputes_key(env);
-    let mut pending: Map<u64, PendingDisputeSettlement> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Map::new(env));
-    pending.remove(round_id);
-    if pending.is_empty() {
-        env.storage().persistent().remove(&key);
-    } else {
-        env.storage().persistent().set(&key, &pending);
+        .get::<_, PendingDisputeSettlement>(&key)
+    {
         env.storage()
             .persistent()
             .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
+        return Some(pending);
+    }
+    _read_legacy_pending_dispute(env, round_id)
+}
+
+/// Stages the oracle result under its own per-round key and makes sure the
+/// staged outcome, participant list and positions all outlive the dispute
+/// window (Issue #685).
+fn _write_pending_dispute(
+    env: &Env,
+    settlement: &PendingDisputeSettlement,
+    participants: &Vec<Address>,
+    dispute_ledgers: u32,
+) {
+    let round_id = settlement.round.round_id;
+    let key = pending_outcome_key(round_id);
+    env.storage().persistent().set(&key, settlement);
+    extend_staged_round_ttl(
+        env,
+        round_id,
+        participants,
+        dispute_ttl_target(dispute_ledgers),
+    );
+}
+
+fn _remove_pending_dispute(env: &Env, round_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&pending_outcome_key(round_id));
+
+    // Also drop a legacy entry staged before the per-round key existed.
+    let legacy_key = _pending_disputes_key(env);
+    if let Some(mut pending) = env
+        .storage()
+        .persistent()
+        .get::<_, Map<u64, PendingDisputeSettlement>>(&legacy_key)
+    {
+        pending.remove(round_id);
+        if pending.is_empty() {
+            env.storage().persistent().remove(&legacy_key);
+        } else {
+            env.storage().persistent().set(&legacy_key, &pending);
+            env.storage()
+                .persistent()
+                .extend_ttl(&legacy_key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
+        }
     }
 }
 
@@ -1263,6 +1294,11 @@ fn _settle_round_with_price(
         let deadline_ledger = resolved_at_ledger
             .checked_add(dispute_ledgers)
             .ok_or(ContractError::Overflow)?;
+        let staged_participants: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKeyScoped::RoundParticipants(round_id))
+            .unwrap_or(Vec::new(env));
         _write_pending_dispute(
             env,
             &PendingDisputeSettlement {
@@ -1272,6 +1308,8 @@ fn _settle_round_with_price(
                 resolved_at_ledger,
                 deadline_ledger,
             },
+            &staged_participants,
+            dispute_ledgers,
         );
 
         env.storage().persistent().remove(&DataKeyCore::ActiveRound);
