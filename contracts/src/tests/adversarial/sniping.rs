@@ -5,7 +5,10 @@ use super::super::config_helpers::apply_windows;
 use super::{emit_result, setup_contract};
 use crate::errors::ContractError;
 use crate::types::BetSide;
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
 
 /// Attacker snipes at the close-buffer edge in UpDown mode.
 /// Defense: close buffer rejects bets before `bet_end_ledger`; balance unchanged.
@@ -33,13 +36,13 @@ fn test_critical_last_ledger_sniping_updown_blocked() {
     env.ledger().with_mut(|li| li.sequence_number = 3);
     let balance_before = client.balance(&sniper);
     let result = client.try_place_bet(&sniper, &50_0000000, &BetSide::Down);
-    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
     assert_eq!(client.balance(&sniper), balance_before);
 
     emit_result(
         "last_ledger_sniping_updown",
         "pass",
-        "RoundEnded (close buffer)",
+        "BettingClosed (close buffer)",
         "none when close_buffer configured",
         "medium",
         true,
@@ -64,13 +67,13 @@ fn test_last_ledger_sniping_precision_blocked() {
     env.ledger().with_mut(|li| li.sequence_number = 4);
     let balance_before = client.balance(&sniper);
     let result = client.try_place_precision_prediction(&sniper, &50_0000000, &2297);
-    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(result, Err(Ok(ContractError::BettingClosed)));
     assert_eq!(client.balance(&sniper), balance_before);
 
     emit_result(
         "last_ledger_sniping_precision",
         "pass",
-        "RoundEnded (close buffer)",
+        "BettingClosed (close buffer)",
         "none when close_buffer configured",
         "medium",
         false,

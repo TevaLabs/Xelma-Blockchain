@@ -46,7 +46,8 @@ fn create_and_resolve_round(
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 }
 
 #[test]
@@ -331,7 +332,10 @@ fn test_user_archived_participation_returns_none_after_prune() {
 
     // Round 2 still has its outcome
     let outcome2 = client.get_user_archived_participation(&user, &1);
-    assert!(outcome2.is_some(), "outcome should exist for retained round");
+    assert!(
+        outcome2.is_some(),
+        "outcome should exist for retained round"
+    );
 }
 
 /// Verifies that when a cancelled round is pruned, its `CancelledRound` marker
@@ -359,11 +363,10 @@ fn test_prune_cleans_cancelled_round_marker() {
 
     // CancelledRound marker exists before prune
     env.as_contract(&contract_id_obj, || {
-        assert!(
-            env.storage()
-                .persistent()
-                .has(&DataKeyScoped::CancelledRound(0u64))
-        );
+        assert!(env
+            .storage()
+            .persistent()
+            .has(&DataKeyScoped::CancelledRound(0u64)));
     });
 
     // Create and cancel round 2 — this should prune round 1

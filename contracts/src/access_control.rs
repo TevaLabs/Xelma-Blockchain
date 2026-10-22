@@ -55,10 +55,8 @@ pub fn set_access_control_enabled(env: Env, enabled: bool) -> Result<(), Contrac
     }
 
     #[allow(deprecated)]
-    env.events().publish(
-        (symbol_short!("access"), symbol_short!("mode")),
-        (enabled,),
-    );
+    env.events()
+        .publish((symbol_short!("access"), symbol_short!("mode")), (enabled,));
 
     Ok(())
 }
@@ -201,9 +199,17 @@ pub fn is_denylisted(env: Env, user: Address) -> bool {
 /// Denylist takes precedence over allowlist. An address that is neither marked
 /// resolves to `Open`, regardless of whether allowlist mode is enabled.
 pub fn get_access_state(env: Env, user: Address) -> AccessState {
-    if env.storage().persistent().has(&DataKeyScoped::Denylisted(user.clone())) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKeyScoped::Denylisted(user.clone()))
+    {
         AccessState::Denylisted
-    } else if env.storage().persistent().has(&DataKeyScoped::Allowlisted(user)) {
+    } else if env
+        .storage()
+        .persistent()
+        .has(&DataKeyScoped::Allowlisted(user))
+    {
         AccessState::Allowlisted
     } else {
         AccessState::Open

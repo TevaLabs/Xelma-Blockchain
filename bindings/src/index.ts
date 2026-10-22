@@ -643,7 +643,9 @@ export const ContractError = {
   /** The insurance fund cannot cover the requested payout. */
   100: {message:"InsuranceInsufficientFund"},
   /** The supplied token amount is invalid. */
-  101: {message:"InvalidAmount"}
+  101: {message:"InvalidAmount"},
+  /** The close-buffer has frozen betting before the betting window ends. */
+  102: {message:"BettingClosed"}
 }
 
 /**

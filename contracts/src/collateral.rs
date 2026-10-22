@@ -3,8 +3,8 @@
 //! Provides abstract collateral operations for escrow, release, payout, and protocol fee collection.
 //! Supports both Virtual Mode (internal balances for testing/demo) and Real Mode (Stellar Asset Contract / Soroban token).
 
-use soroban_sdk::{Address, Env, IntoVal, Symbol, Val};
 use crate::errors::ContractError;
+use soroban_sdk::{Address, Env, IntoVal, Symbol, Val};
 
 /// Mode of operation for collateral management
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,7 +27,8 @@ pub trait CollateralAdapter {
     fn payout(&self, env: &Env, to: &Address, amount: i128) -> Result<(), ContractError>;
 
     /// Transfer protocol fee to treasury
-    fn collect_fee(&self, env: &Env, treasury: &Address, amount: i128) -> Result<(), ContractError>;
+    fn collect_fee(&self, env: &Env, treasury: &Address, amount: i128)
+        -> Result<(), ContractError>;
 }
 
 /// Concrete implementation of CollateralAdapter supporting both Virtual and Real Token modes
@@ -64,10 +65,14 @@ impl CollateralAdapter for StandardCollateralAdapter {
                 Ok(())
             }
             CollateralMode::RealToken => {
-                let token_addr = self.token_address.as_ref().ok_or(ContractError::InvalidAmount)?;
+                let token_addr = self
+                    .token_address
+                    .as_ref()
+                    .ok_or(ContractError::InvalidAmount)?;
                 let contract_addr = env.current_contract_address();
                 let args: soroban_sdk::Vec<Val> = (from, &contract_addr, amount).into_val(env);
-                let _res: Val = env.invoke_contract(token_addr, &Symbol::new(env, "transfer"), args);
+                let _res: Val =
+                    env.invoke_contract(token_addr, &Symbol::new(env, "transfer"), args);
                 Ok(())
             }
         }
@@ -81,10 +86,14 @@ impl CollateralAdapter for StandardCollateralAdapter {
         match self.mode {
             CollateralMode::Virtual => Ok(()),
             CollateralMode::RealToken => {
-                let token_addr = self.token_address.as_ref().ok_or(ContractError::InvalidAmount)?;
+                let token_addr = self
+                    .token_address
+                    .as_ref()
+                    .ok_or(ContractError::InvalidAmount)?;
                 let contract_addr = env.current_contract_address();
                 let args: soroban_sdk::Vec<Val> = (&contract_addr, to, amount).into_val(env);
-                let _res: Val = env.invoke_contract(token_addr, &Symbol::new(env, "transfer"), args);
+                let _res: Val =
+                    env.invoke_contract(token_addr, &Symbol::new(env, "transfer"), args);
                 Ok(())
             }
         }
@@ -94,7 +103,12 @@ impl CollateralAdapter for StandardCollateralAdapter {
         self.release(env, to, amount)
     }
 
-    fn collect_fee(&self, env: &Env, treasury: &Address, amount: i128) -> Result<(), ContractError> {
+    fn collect_fee(
+        &self,
+        env: &Env,
+        treasury: &Address,
+        amount: i128,
+    ) -> Result<(), ContractError> {
         self.release(env, treasury, amount)
     }
 }

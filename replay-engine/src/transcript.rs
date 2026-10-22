@@ -190,8 +190,14 @@ impl RoundTranscript {
 pub enum TranscriptError {
     UnsupportedSchema(u32),
     EmptyParticipants,
-    ParticipantOrder { expected_index: usize, found_index: usize },
-    ParticipantCountMismatch { declared: u32, actual: u32 },
+    ParticipantOrder {
+        expected_index: usize,
+        found_index: usize,
+    },
+    ParticipantCountMismatch {
+        declared: u32,
+        actual: u32,
+    },
 }
 
 impl std::fmt::Display for TranscriptError {
@@ -199,7 +205,10 @@ impl std::fmt::Display for TranscriptError {
         match self {
             Self::UnsupportedSchema(v) => write!(f, "unsupported transcript schema version {v}"),
             Self::EmptyParticipants => write!(f, "transcript has no participants"),
-            Self::ParticipantOrder { expected_index, found_index } => {
+            Self::ParticipantOrder {
+                expected_index,
+                found_index,
+            } => {
                 write!(
                     f,
                     "participants must be sorted by index: expected {expected_index}, found {found_index}"

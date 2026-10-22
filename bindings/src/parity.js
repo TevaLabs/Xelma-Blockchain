@@ -20,15 +20,15 @@ const errorsContractCode = fs.readFileSync(errorsContractPath, 'utf8');
 const bindingsCode = fs.readFileSync(bindingsPath, 'utf8');
 const errorDocsCode = fs.readFileSync(errorDocsPath, 'utf8');
 
-// Parse contract exports inside `impl VirtualTokenContract`
+// Parse contract exports inside `impl VirtualTokenContract` 
 const contractFns = [];
 const contractSegments = contractCode.split('impl VirtualTokenContract');
 if (contractSegments.length > 1) {
     const implBlock = contractSegments[1];
     const lines = implBlock.split('\n');
     for (const line of lines) {
-        const match = line.match(/^\s*pub\s+fn\s+([a-zA-Z0-9_]+)\s*\(/);
-        const isPubCrate = line.match(/^\s*pub\(crate\)\s+fn/);
+        const match = line.match(/^\s*pubs\+fn\s+([a-zA-Z0-9_]+)\s*\(/);
+        const isPubCrate = line.match(/^\s*pub\(crate\)\s+pubs\+fn/);
         if (match && !isPubCrate) {
             contractFns.push(match[1]);
         }
@@ -116,7 +116,7 @@ for (const [name, val] of Object.entries(errorVariants)) {
     }
 }
 
-// Parse the canonical documentation table: `| 94 | PageSizeExceeded |`.
+// Parse the canonical documentation table: `| 94 | PageSizeExceeded |.
 const documentedErrors = {};
 for (const line of errorDocsCode.split('\n')) {
     const match = line.match(/^\|\s*([0-9]+)\s*\|\s*`?([a-zA-Z0-9_]+)`?\s*\|/);
@@ -176,7 +176,7 @@ if (errorsDrift.length > 0) {
 }
 
 if (failed) {
-    console.error("\n💡 To resolve parity drift:");
+    console.error("\n\n💡 To resolve parity drift:");
     console.error("  1. For method drift, regenerate/update the fromJSON map in bindings/src/index.ts.");
     console.error("  2. For error drift, update bindings/src/index.ts and docs/CONTRACT_ERRORS.md to match contracts/src/errors.rs.");
     console.error("  3. Run `npm run test:parity` and consult CONTRIBUTING.md before committing.");

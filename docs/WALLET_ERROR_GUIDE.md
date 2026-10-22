@@ -60,6 +60,8 @@ This guide maps each smart‑contract error defined in `contracts/src/errors.rs`
 | `0x51` | 81 | InvalidPhaseForCashout | Early cash-out is only permitted during the running phase | "Early cash-out only available during running phase."
 | `0x52` | 82 | WrongModeForCashout | Early cash-out is only supported for UpDown rounds | "Early cash-out is not supported in Precision mode."
 
+| `0x66` | 102 | BettingClosed | Close-buffer window has frozen; betting is closed early but the round has not ended | "Betting is closed early. The round is still in progress." |
+
 ## Integration Walkthroughs
 ### 1. Handling errors in a Freighter wallet
 ```ts

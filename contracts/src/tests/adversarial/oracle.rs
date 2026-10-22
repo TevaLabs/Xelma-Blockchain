@@ -5,7 +5,10 @@ use super::super::config_helpers::apply_oracle_stale_threshold;
 use super::{emit_result, oracle_payload, setup_contract};
 use crate::errors::ContractError;
 use crate::types::BetSide;
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
 
 /// Attacker (or compromised oracle service) marks heartbeat offline to block settlement.
 /// Defense: `OracleNotLive` — admin may arm override as recovery path.
@@ -26,13 +29,7 @@ fn test_oracle_heartbeat_griefing_blocks_settlement() {
         li.timestamp = 200;
     });
 
-    let result = client.try_resolve_round(&oracle_payload(
-        &env,
-        &contract_id,
-        1_5000000,
-        0,
-        1,
-    ));
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 0, 1));
     assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
     assert!(client.get_active_round().is_some());
 

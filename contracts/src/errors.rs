@@ -121,6 +121,8 @@ pub enum ContractError {
     InsuranceInsufficientFund = 100,
     /// The supplied token amount is invalid for the requested operation.
     InvalidAmount = 101,
+    /// The close-buffer has frozen betting before the round's betting window ends.
+    BettingClosed = 102,
     /// The dispute window for `void_round` has expired, or dispute windows
     /// are not configured (`dispute_ledgers == 0`).
     DisputeWindowExpired = 91,

@@ -43,7 +43,8 @@ fn test_round_with_no_participants() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Should clear round without errors
     assert_eq!(client.get_active_round(), None);
@@ -89,7 +90,8 @@ fn test_round_with_only_one_side() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Winners should only get their bets back (no losing pool to split)
     assert_eq!(client.get_pending_winnings(&alice), 100_0000000);
@@ -154,7 +156,8 @@ fn test_accumulate_pending_winnings() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let first_pending = client.get_pending_winnings(&alice);
     assert!(first_pending > 0);
@@ -176,7 +179,8 @@ fn test_accumulate_pending_winnings() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Should have accumulated pending from both rounds
     let total_pending = client.get_pending_winnings(&alice);
@@ -272,7 +276,8 @@ fn test_stats_checked_overflow() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert!(result.is_err());
 }
 
@@ -313,7 +318,8 @@ fn test_one_sided_pool_emits_event_and_refunds() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Capture events immediately — each subsequent contract call resets the log.
     let events = env.events().all();
@@ -365,7 +371,8 @@ fn test_one_sided_pool_down_side_emits_event_and_refunds() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Capture events before subsequent contract calls reset the log.
     let events = env.events().all();
@@ -417,7 +424,8 @@ fn test_two_sided_pool_does_not_emit_onesided_event() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let events = env.events().all();
     let one_sided_count = events

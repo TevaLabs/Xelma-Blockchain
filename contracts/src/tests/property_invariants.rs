@@ -10,7 +10,8 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::{
-    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, PrecisionPrediction, Round, UserPosition, UserStats,
+    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, PrecisionPrediction, Round, UserPosition,
+    UserStats,
 };
 use proptest::prelude::*;
 use soroban_sdk::{
