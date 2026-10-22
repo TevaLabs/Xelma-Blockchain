@@ -137,4 +137,7 @@ pub enum ContractError {
     RoundStartLedgerReused = 93,
     /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
     PageSizeExceeded = 94,
+    /// The ledger sequence is not strictly greater than the previous heartbeat.
+    /// for `oneway_update` (docs/WALLET_ERROR_GUIDE.md, doc drift guard).
+    LedgerBehind = 103,
 }
