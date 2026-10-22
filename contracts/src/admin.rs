@@ -370,6 +370,24 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// Returns whether the oracle deviation override is currently armed.
+pub fn get_oracle_deviation_override_armed(env: Env) -> bool {
+    let override_key = DataKeyCore::OracleDeviationOverrideArmed;
+    env.storage().persistent().get(&override_key).unwrap_or(false)
+}
+
+/// Consumes the one-shot oracle deviation override if armed (called from settlement).
+/// Returns true if the override was consumed.
+pub fn _consume_oracle_deviation_override(env: &Env) -> bool {
+    let override_key = DataKeyCore::OracleDeviationOverrideArmed;
+    if env.storage().persistent().get(&override_key).unwrap_or(false) {
+        env.storage().persistent().remove(&override_key);
+        true
+    } else {
+        false
+    }
+}
+
 /// Loads the deviation guardrail config, returning the `StartPrice` default if unset (Issue #266).
 pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
     let key = DeviationConfigKey::DevCfg;

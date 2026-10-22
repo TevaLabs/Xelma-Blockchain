@@ -1158,12 +1158,12 @@ fn test_oracle_deviation_override_allows_over_threshold_and_emits_event() {
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
-        li.timestamp = 1000;
+        li.timestamp = 100;
     });
 
     client.resolve_round(&OraclePayload {
         price: 2_0000000u128, // 100% jump
-        timestamp: 900,
+        timestamp: 100,
         round_id: round.start_ledger,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
@@ -1184,12 +1184,122 @@ fn test_oracle_deviation_override_allows_over_threshold_and_emits_event() {
 
     // Override is one-shot and must be cleared
     env.as_contract(&contract_id, || {
-        let armed: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKeyCore::OracleDeviationOverrideArmed)
-            .unwrap_or(false);
+        let armed: bool = crate::admin::get_oracle_deviation_override_armed(env.clone());
         assert!(!armed, "override must be cleared after use");
+    });
+}
+
+/// Deviation override is one-shot: succeeds once then fails without re-arming.
+#[test]
+fn test_oracle_deviation_override_is_one_shot() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    apply_oracle_max_deviation_bps(&env, &client, Some(500u32)); // 5%
+
+    // First round: arm override and resolve exceeding deviation (100% jump > 5%)
+    client.create_round(&1_0000000u128, &None);
+    let round1 = client.get_active_round().unwrap();
+
+    client.arm_oracle_deviation_override();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+        li.timestamp = 100;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000u128, // 100% jump
+        timestamp: 100,
+        round_id: round1.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    // Verify override was consumed (one-shot)
+    env.as_contract(&contract_id, || {
+        assert!(
+            !crate::admin::get_oracle_deviation_override_armed(env.clone()),
+            "override must be cleared after use"
+        );
+    });
+
+    // Second round: create and resolve exceeding deviation WITHOUT re-arm -> must fail
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 15;
+        li.timestamp = 150;
+    });
+    client.create_round(&1_0000000u128, &None);
+    let round2 = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 27;
+        li.timestamp = 250;
+    });
+
+    let result = client.try_resolve_round(&OraclePayload {
+        price: 2_0000000u128, // 100% jump without override
+        timestamp: 250,
+        round_id: round2.start_ledger,
+        nonce: 2u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(result, Err(Ok(ContractError::OracleDeviationExceeded)));
+
+    // Re-arm override -> settlement succeeds
+    client.arm_oracle_deviation_override();
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000u128,
+        timestamp: 250,
+        round_id: round2.start_ledger,
+        nonce: 2u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(client.get_active_round(), None);
+}
+
+/// Unit test verifying _consume_oracle_deviation_override semantics in admin.
+#[test]
+fn test_consume_oracle_deviation_override_admin_semantics() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &oracle);
+
+    env.as_contract(&contract_id, || {
+        // Initially not armed
+        assert!(!crate::admin::get_oracle_deviation_override_armed(env.clone()));
+        assert!(!crate::admin::_consume_oracle_deviation_override(&env));
+
+        // Arm override
+        crate::admin::arm_oracle_deviation_override(env.clone()).unwrap();
+        assert!(crate::admin::get_oracle_deviation_override_armed(env.clone()));
+
+        // Consume once -> succeeds and returns true
+        assert!(crate::admin::_consume_oracle_deviation_override(&env));
+        assert!(!crate::admin::get_oracle_deviation_override_armed(env.clone()));
+
+        // Subsequent consume without re-arm -> returns false
+        assert!(!crate::admin::_consume_oracle_deviation_override(&env));
     });
 }
 
