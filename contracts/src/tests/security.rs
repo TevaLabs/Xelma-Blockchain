@@ -315,6 +315,79 @@ fn test_resolve_round_unique_nonce_resolves() {
     });
 }
 
+/// End-to-end replay attempt (Issue #675): resolve a round for real, start a
+/// new round, then resubmit the exact original payload (same round_id and
+/// nonce) against the new round. The `InvalidOracleRound` guard (payload's
+/// stale round_id no longer matches the new active round) fires first, which
+/// is a *stronger* rejection than nonce replay alone, producing the same
+/// stroop-safety outcome (the stale payload can never settle anything) via
+/// the single-active-round invariant. `OracleNonceReused` (code 33) itself
+/// is exercised
+/// directly in `test_resolve_round_duplicate_nonce_rejected` above, which is
+/// the only way to isolate that specific guard: once a round resolves,
+/// `ActiveRound` is cleared, so no second real call against that same round
+/// can ever reach the nonce check to begin with.
+#[test]
+fn test_resolve_round_stale_round_replay_after_genuine_resolve_rejected() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.create_round(&1_0000000, &None);
+    let first_round = client.get_active_round().unwrap();
+
+    // Default run window is 12 ledgers * 5s/ledger = 60s, with a 300s skew
+    // tolerance on each side, so any timestamp within that combined window
+    // (here, well inside it at 100s) is accepted as fresh.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+        li.timestamp = 100;
+    });
+
+    let original_payload = OraclePayload {
+        price: 1_5000000,
+        timestamp: 100,
+        round_id: first_round.start_ledger,
+        nonce: 7u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    };
+    let first_resolve = client.try_resolve_round(&original_payload);
+    assert!(
+        first_resolve.is_ok(),
+        "the genuine first resolve must succeed, got {:?}",
+        first_resolve
+    );
+    assert_eq!(client.get_active_round(), None);
+
+    // Start a fresh round, then replay the exact original payload verbatim.
+    client.create_round(&1_0000000, &None);
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 12;
+        li.timestamp += 100;
+    });
+
+    let replay_result = client.try_resolve_round(&original_payload);
+    assert_eq!(
+        replay_result,
+        Err(Ok(ContractError::InvalidOracleRound)),
+        "a replayed payload from an already-resolved round must never be \
+         accepted against a later round: its round_id no longer matches the \
+         new active round"
+    );
+
+    // The second (new) round must remain untouched by the replay attempt.
+    assert!(client.get_active_round().is_some());
+}
+
 // ─── Oracle heartbeat and liveness tests ─────────────────────────────────────
 
 #[test]
