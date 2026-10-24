@@ -2,8 +2,11 @@
 //! Exhaustive mode x action tests for the central PolicyGate (Issue #261).
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::PolicyAction;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use crate::types::{BetSide, PolicyAction};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger as _},
+    Address, Env,
+};
 
 fn setup(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address) {
     let contract_id = env.register(VirtualTokenContract, ());
@@ -74,6 +77,40 @@ fn test_policy_gate_matches_actual_entrypoint_behaviour_round_mutation() {
     assert!(client.is_action_allowed(&PolicyAction::AdminConfig));
     client.create_round(&1_0000000, &None);
     assert!(client.get_active_round().is_some());
+}
+
+/// Regression (Issue #696): `cash_out_early` is `RoundMutation`-gated via
+/// `_ensure_normal_mode`, so a `ClaimsOnly` incident (the state the admin
+/// enters mid-round to let existing claims settle while blocking new round
+/// activity) must block it exactly like `place_bet`, even though the round
+/// itself is still technically active and the user still holds an open
+/// position.
+#[test]
+fn test_policy_gate_claims_only_blocks_cash_out_early() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup(&env);
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user, &10_0000000, &BetSide::Up);
+
+    client.set_runtime_mode(&1u32); // ClaimsOnly
+    assert!(!client.is_action_allowed(&PolicyAction::RoundMutation));
+
+    // Must be in the Running phase (betting closed, round not yet ended)
+    // for cash_out_early to reach the policy gate rather than an earlier
+    // phase check.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+
+    let result = client.try_cash_out_early(&user);
+    assert!(
+        result.is_err(),
+        "cash_out_early must be blocked in ClaimsOnly, like every other \
+         RoundMutation-gated entrypoint"
+    );
 }
 
 #[test]
