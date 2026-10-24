@@ -517,25 +517,56 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         _emit_action_rejected(&env, &oracle, symbol_short!("resolve"), e);
     })?;
 
-    // Heartbeat health enforcement (Issue #264) — must come before any
-    // state mutation (nonce consumption) so a stale oracle cannot race
-    // the admin override.
-    let hb_config = _load_hb_config(&env);
-    if _check_heartbeat_health_blocked(&env, &hb_config) {
-        _emit_action_rejected(
-            &env,
-            &oracle,
-            symbol_short!("resolve"),
-            ContractError::OracleHeartbeatUnhealthy,
-        );
-        return Err(ContractError::OracleHeartbeatUnhealthy);
-    }
-
     let round: Round = env
         .storage()
         .persistent()
         .get(&DataKeyCore::ActiveRound)
         .ok_or(ContractError::NoActiveRound)?;
+
+    // Heartbeat health enforcement (Issue #264) — must come before any
+    // state mutation (nonce consumption) so a stale oracle cannot race
+    // the admin override. The health check itself runs regardless of
+    // strict mode (a non-strict caller still gets OracleHeartbeatUnhealthy
+    // on a dead oracle); strict mode changes only the error code
+    // (OracleNotLive) and adds the hoverride/hblocked events, matching
+    // resolve_round_multi's parity gate, which this single-feed path was
+    // previously missing entirely.
+    let hb_config = _load_hb_config(&env);
+    if _check_heartbeat_health_blocked(&env, &hb_config) {
+        if hb_config.override_armed {
+            // Consume the one-shot override
+            crate::admin::_consume_hb_override(&env);
+
+            if hb_config.strict_mode {
+                #[allow(deprecated)]
+                env.events().publish(
+                    (symbol_short!("oracle"), symbol_short!("hoverride")),
+                    (round.round_id,),
+                );
+            }
+        } else if hb_config.strict_mode {
+            #[allow(deprecated)]
+            env.events().publish(
+                (symbol_short!("oracle"), symbol_short!("hblocked")),
+                (round.round_id,),
+            );
+            _emit_action_rejected(
+                &env,
+                &oracle,
+                symbol_short!("resolve"),
+                ContractError::OracleNotLive,
+            );
+            return Err(ContractError::OracleNotLive);
+        } else {
+            _emit_action_rejected(
+                &env,
+                &oracle,
+                symbol_short!("resolve"),
+                ContractError::OracleHeartbeatUnhealthy,
+            );
+            return Err(ContractError::OracleHeartbeatUnhealthy);
+        }
+    }
 
     // Verify round ID matches to prevent cross-round replays
     if payload.round_id != round.start_ledger {
