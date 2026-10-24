@@ -5,17 +5,21 @@
 //! under normal execution:
 //!
 //!   1. `claim_winnings`: the `PendingWinnings` storage slot is cleared
-//!      *before* the user balance is increased.
+//!      *before* the user balance is increased, preventing any double-pay
+//!      across repeated claims, batch claims (`claim_many`), or expiry reclaims.
 //!   2. `cancel_config_change`: the `PendingConfigChange` storage key is
 //!      removed *before* the cancellation event is emitted.
 
+use super::config_helpers::apply_pending_winnings_expiry;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, ConfigChangeKind};
+use crate::types::{
+    BetSide, ConfigChangeKind, DataKeyCore, DataKeyScoped, PendingWinningsUpdatedAtKey,
+};
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Events, Ledger as _},
-    Address, Env, TryIntoVal,
+    testutils::{storage::Persistent as _, Address as _, Events, Ledger as _},
+    Address, Env, TryIntoVal, Vec,
 };
 
 /// Must match `CONFIG_TIMELOCK_LEDGERS` in contract.rs.
@@ -34,6 +38,24 @@ fn setup() -> (Env, Address, Address, VirtualTokenContractClient<'static>) {
     client.initialize(&admin, &oracle);
     client.update_oracle_heartbeat(&0u32);
     (env, admin, oracle, client)
+}
+
+fn count_claim_winnings_events(env: &Env, user: &Address) -> usize {
+    env.events()
+        .all()
+        .iter()
+        .filter(|e| {
+            let (_contract, topics, data) = e;
+            if topics.len() != 2
+                || topics.get(0).unwrap().try_into_val(env) != Ok(symbol_short!("claim"))
+                || topics.get(1).unwrap().try_into_val(env) != Ok(symbol_short!("winnings"))
+            {
+                return false;
+            }
+            let parsed: Result<(Address, i128, i128, i128), _> = data.clone().try_into_val(env);
+            matches!(parsed, Ok((ref ev_user, _, _, _)) if ev_user == user)
+        })
+        .count()
 }
 
 // ─── SR-2026-06-001: claim_winnings CEI ordering ─────────────────────────────
@@ -147,6 +169,243 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
         balance_after_claim,
         "balance must not change on empty claim"
     );
+}
+
+/// Verifies that CEI ordering eliminates double-pay risks across repeated
+/// single claims (`claim_winnings`) and batch claims (`claim_many`), in both
+/// directions, and ensures no duplicate `(claim, winnings)` events are emitted.
+#[test]
+fn test_claim_winnings_cei_no_double_pay_across_single_and_batch_claims() {
+    let (env, _admin, _oracle, client) = setup();
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+        li.timestamp = 1_000_000;
+    });
+    client.create_round(&1_0000000, &None);
+
+    // Both Alice and Bob bet Up so both win when price rises.
+    client.place_bet(&alice, &400_0000000, &BetSide::Up);
+    client.place_bet(&bob, &600_0000000, &BetSide::Up);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 130;
+        li.timestamp = 1_000_700;
+    });
+
+    let round = client.get_active_round().expect("round should exist");
+    client.resolve_round(&crate::types::OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: client.address.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    let alice_pending = client.get_pending_winnings(&alice);
+    let bob_pending = client.get_pending_winnings(&bob);
+    assert!(alice_pending > 0);
+    assert!(bob_pending > 0);
+
+    let alice_bal_before = client.balance(&alice);
+    let bob_bal_before = client.balance(&bob);
+
+    // 1. Alice claims individually first.
+    let alice_claimed = client.claim_winnings(&alice);
+    assert_eq!(alice_claimed, alice_pending);
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.balance(&alice), alice_bal_before + alice_pending);
+
+    // Verify both PendingWinnings and PendingWinningsUpdatedAtKey are removed from persistent storage.
+    env.as_contract(&client.address, || {
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKeyScoped::PendingWinnings(alice.clone())));
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&PendingWinningsUpdatedAtKey(alice.clone())));
+    });
+
+    // 2. Batch claim containing Alice (already claimed) and Bob (unclaimed).
+    // Alice must receive 0 (no double-pay), while Bob receives his exact payout once.
+    let mut batch: Vec<Address> = Vec::new(&env);
+    batch.push_back(alice.clone());
+    batch.push_back(bob.clone());
+
+    let batch_amounts = client.claim_many(&batch);
+    assert_eq!(
+        batch_amounts.get(0).unwrap(),
+        0,
+        "already-claimed user must get 0 in claim_many"
+    );
+    assert_eq!(
+        batch_amounts.get(1).unwrap(),
+        bob_pending,
+        "unclaimed user must get exact pending in claim_many"
+    );
+
+    assert_eq!(
+        client.balance(&alice),
+        alice_bal_before + alice_pending,
+        "alice balance must not be double-paid by claim_many"
+    );
+    assert_eq!(
+        client.balance(&bob),
+        bob_bal_before + bob_pending,
+        "bob balance must be credited exactly once"
+    );
+
+    // 3. Subsequent single claim and batch claim for Bob must also return 0 (no double-pay).
+    assert_eq!(client.claim_winnings(&bob), 0);
+    let batch_retry = client.claim_many(&batch);
+    assert_eq!(batch_retry.get(0).unwrap(), 0);
+    assert_eq!(batch_retry.get(1).unwrap(), 0);
+    assert_eq!(client.balance(&bob), bob_bal_before + bob_pending);
+
+    // Each user must have emitted at most one (claim, winnings) event across all attempts.
+    assert_eq!(count_claim_winnings_events(&env, &alice), 1);
+    assert_eq!(count_claim_winnings_events(&env, &bob), 1);
+}
+
+/// Verifies that CEI slot removal prevents double-payment between user
+/// `claim_winnings` and admin `reclaim_expired_pending_winnings`.
+#[test]
+fn test_claim_winnings_and_reclaim_expired_cei_no_double_pay() {
+    let (env, admin, _oracle, client) = setup();
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    apply_pending_winnings_expiry(&env, &client, 200);
+
+    let start_seq = env.ledger().sequence() + 10;
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start_seq;
+        li.timestamp = 1_000_000;
+    });
+    client.update_oracle_heartbeat(&0u32);
+    client.create_round(&1_0000000, &None);
+
+    client.place_bet(&alice, &300_0000000, &BetSide::Up);
+    client.place_bet(&bob, &300_0000000, &BetSide::Up);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start_seq + 30;
+        li.timestamp = 1_000_700;
+    });
+    client.update_oracle_heartbeat(&0u32);
+
+    let round = client.get_active_round().expect("round should exist");
+    client.resolve_round(&crate::types::OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: client.address.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    let alice_pending = client.get_pending_winnings(&alice);
+    let bob_pending = client.get_pending_winnings(&bob);
+    assert!(alice_pending > 0);
+    assert!(bob_pending > 0);
+
+    // Advance past expiry threshold.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 250;
+    });
+
+    // Path A: Alice claims first; admin reclaim must then fail with PendingWinningsNotFound.
+    let alice_bal_before = client.balance(&alice);
+    let admin_bal_before = client.balance(&admin);
+    assert_eq!(client.claim_winnings(&alice), alice_pending);
+    assert_eq!(client.balance(&alice), alice_bal_before + alice_pending);
+
+    let reclaim_alice = client.try_reclaim_expired_pending_winnings(&alice);
+    assert_eq!(
+        reclaim_alice,
+        Err(Ok(ContractError::PendingWinningsNotFound)),
+        "admin cannot reclaim winnings already claimed by user"
+    );
+    assert_eq!(client.balance(&admin), admin_bal_before);
+
+    // Path B: Admin reclaims Bob's expired winnings first; Bob's subsequent claim must return 0.
+    let bob_bal_before = client.balance(&bob);
+    let reclaimed_bob = client.reclaim_expired_pending_winnings(&bob);
+    assert_eq!(reclaimed_bob, bob_pending);
+    assert_eq!(client.balance(&admin), admin_bal_before + bob_pending);
+
+    assert_eq!(
+        client.claim_winnings(&bob),
+        0,
+        "user cannot double-claim winnings already reclaimed after expiry"
+    );
+    assert_eq!(client.balance(&bob), bob_bal_before);
+}
+
+/// Verifies the CEI Check-before-Effect guarantee on overflow: if
+/// `balance + pending` overflows `i128::MAX`, `claim_winnings` rejects with
+/// `PayoutOverflow` without clearing `PendingWinnings`, mutating `Balance`, or
+/// emitting an event; once the balance is lowered, the pending payout can be
+/// claimed exactly once with no double-pay.
+#[test]
+fn test_claim_winnings_cei_overflow_preserves_single_claim() {
+    let (env, _admin, _oracle, client) = setup();
+
+    let alice = Address::generate(&env);
+    let pending_amount: i128 = 500_0000000;
+
+    // Seed Alice at i128::MAX - 100 so adding pending_amount overflows i128.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::Balance(alice.clone()), &(i128::MAX - 100));
+        env.storage().persistent().set(
+            &DataKeyScoped::PendingWinnings(alice.clone()),
+            &pending_amount,
+        );
+    });
+
+    let res = client.try_claim_winnings(&alice);
+    assert_eq!(res, Err(Ok(ContractError::PayoutOverflow)));
+    assert_eq!(
+        client.get_pending_winnings(&alice),
+        pending_amount,
+        "pending winnings must remain intact when overflow check fails"
+    );
+    assert_eq!(client.balance(&alice), i128::MAX - 100);
+
+    // Lower balance to normal range; now Alice can claim exactly once.
+    let normal_balance: i128 = 1_000_0000000;
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::Balance(alice.clone()), &normal_balance);
+    });
+
+    let claimed = client.claim_winnings(&alice);
+    assert_eq!(claimed, pending_amount);
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.balance(&alice), normal_balance + pending_amount);
+
+    // Repeat claim must return 0 (no double-pay).
+    assert_eq!(client.claim_winnings(&alice), 0);
+    assert_eq!(client.balance(&alice), normal_balance + pending_amount);
 }
 
 // ─── SR-2026-06-002: cancel_config_change CEI ordering ───────────────────────
