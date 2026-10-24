@@ -67,7 +67,7 @@ fn assert_last_config_scheduled(env: &Env, kind: ConfigChangeKind, expected_acti
         .find(|(_contract, topics, _data)| {
             topics.len() == 2
                 && topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("config"))
-                && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("sched"))
+                && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("scheduled"))
         })
         .expect("config sched event should exist");
 
@@ -97,7 +97,7 @@ fn assert_last_config_cancelled(env: &Env, kind: ConfigChangeKind, expected_canc
         .find(|(_contract, topics, _data)| {
             topics.len() == 2
                 && topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("config"))
-                && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("cancel"))
+                && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("cancelled"))
         })
         .expect("config cancel event should exist");
 

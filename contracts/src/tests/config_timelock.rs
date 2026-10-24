@@ -309,7 +309,6 @@ fn test_set_windows_schedules_without_immediate_apply() {
 //   schedule -> activation_ledger = now + CONFIG_TIMELOCK_LEDGERS ->
 //   apply_scheduled_changes (any caller) -> storage flipped -> event emitted.
 
-
 #[test]
 fn test_protocol_fee_timelock_full_cycle() {
     let env = Env::default();
@@ -333,28 +332,24 @@ fn test_protocol_fee_timelock_full_cycle() {
     let pending = client
         .get_pending_config_change(&crate::types::ConfigChangeKind::ProtocolFeeBps)
         .unwrap();
-    assert_eq!(pending.activation_ledger, pending.scheduled_at_ledger + 1440);
+    assert_eq!(
+        pending.activation_ledger,
+        pending.scheduled_at_ledger + 1440
+    );
 
     // Advancing the ledger by an insufficient amount must NOT activate.
     env.ledger().with_mut(|li| li.sequence_number += 1439);
-    let err = client.try_apply_scheduled_changes(
-        &crate::types::ConfigChangeKind::ProtocolFeeBps,
-    );
+    let err = client.try_apply_scheduled_changes(&crate::types::ConfigChangeKind::ProtocolFeeBps);
     assert!(err.is_err(), "apply before activation_ledger must fail");
 
     // Exactly at activation_ledger must succeed.
     env.ledger().with_mut(|li| li.sequence_number += 1);
     client.apply_scheduled_changes(&crate::types::ConfigChangeKind::ProtocolFeeBps);
-    assert_eq!(client.get_protocol_fee_bps(), Some(500u32));
 
-    // Pending entry must be cleared post-apply.
-    assert!(
-        client
-            .get_pending_config_change(&crate::types::ConfigChangeKind::ProtocolFeeBps)
-            .is_none()
-    );
-
-    // fee_bps_set event must be present.
+    // fee_bps_set event must be present. This read must happen immediately after
+    // apply_scheduled_changes: the test environment's event log only retains the
+    // most recent top-level contract invocation, so any further client call
+    // (even a read-only getter) would clear it before we get a chance to assert.
     let ev_count = env
         .events()
         .all()
@@ -367,6 +362,41 @@ fn test_protocol_fee_timelock_full_cycle() {
         })
         .count();
     assert!(ev_count >= 1, "fee_bps_set event must be emitted on apply");
+
+    assert_eq!(client.get_protocol_fee_bps(), Some(500u32));
+
+    // Pending entry must be cleared post-apply.
+    assert!(client
+        .get_pending_config_change(&crate::types::ConfigChangeKind::ProtocolFeeBps)
+        .is_none());
+}
+
+/// Regression: 10_001 bps (MAX_PROTOCOL_FEE_BPS + 1) must be rejected with
+/// InvalidProtocolFeeBps; the boundary value MAX_PROTOCOL_FEE_BPS itself must
+/// still be accepted (Issue #671).
+#[test]
+fn test_protocol_fee_bps_rejects_one_above_max() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    let too_high = client.try_schedule_protocol_fee_bps(&Some(1_001u32));
+    assert_eq!(too_high, Err(Ok(ContractError::InvalidProtocolFeeBps)));
+    assert!(
+        client
+            .get_pending_config_change(&crate::types::ConfigChangeKind::ProtocolFeeBps)
+            .is_none(),
+        "a rejected schedule must not leave a pending change behind"
+    );
+
+    let at_max = client.try_schedule_protocol_fee_bps(&Some(1_000u32));
+    assert!(at_max.is_ok(), "the boundary value itself must be accepted");
 }
 
 #[test]
@@ -384,11 +414,9 @@ fn test_protocol_fee_timelock_admin_can_cancel_before_activation() {
     client.schedule_protocol_fee_bps(&Some(100u32));
     // cancel before activation must be admin-only and clear the pending entry.
     client.cancel_config_change(&crate::types::ConfigChangeKind::ProtocolFeeBps);
-    assert!(
-        client
-            .get_pending_config_change(&crate::types::ConfigChangeKind::ProtocolFeeBps)
-            .is_none()
-    );
+    assert!(client
+        .get_pending_config_change(&crate::types::ConfigChangeKind::ProtocolFeeBps)
+        .is_none());
     assert_eq!(client.get_protocol_fee_bps(), None);
 }
 
@@ -409,25 +437,24 @@ fn test_protocol_fee_timelock_disable_via_none() {
 
     client.schedule_protocol_fee_bps(&Some(500u32));
     env.ledger().with_mut(|li| li.sequence_number = 2000);
-    client.apply_scheduled_changes(
-        &crate::types::ConfigChangeKind::ProtocolFeeBps,
-    );
+    client.apply_scheduled_changes(&crate::types::ConfigChangeKind::ProtocolFeeBps);
     assert_eq!(client.get_protocol_fee_bps(), Some(500u32));
 
     client.schedule_protocol_fee_bps(&None);
     env.ledger().with_mut(|li| li.sequence_number = 10_000);
-    client.apply_scheduled_changes(
-        &crate::types::ConfigChangeKind::ProtocolFeeBps,
+    client.apply_scheduled_changes(&crate::types::ConfigChangeKind::ProtocolFeeBps);
+    assert_eq!(
+        client.get_protocol_fee_bps(),
+        None,
+        "re-issuing with None must remove the storage key entirely"
     );
-    assert_eq!(client.get_protocol_fee_bps(), None,
-        "re-issuing with None must remove the storage key entirely");
 }
 
 /// Regression: every ConfigChangeKind variant must have a unique discriminant (Issue #383).
 #[test]
 fn config_change_kind_discriminants_are_unique() {
-    use core::mem::discriminant;
     use crate::types::ConfigChangeKind;
+    use core::mem::discriminant;
 
     let kinds = [
         ConfigChangeKind::Windows,
