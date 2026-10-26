@@ -1181,6 +1181,56 @@ mod tests {
     }
 
     #[test]
+    fn test_precision_5way_tie_indivisible_pot_remainder() {
+        let entries = vec![
+            PrecisionEntry {
+                index: 0,
+                predicted_price: 2000,
+                amount: 21,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 1,
+                predicted_price: 2000,
+                amount: 21,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 2,
+                predicted_price: 2000,
+                amount: 21,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 3,
+                predicted_price: 2000,
+                amount: 20,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 4,
+                predicted_price: 2000,
+                amount: 20,
+                revealed: true,
+            },
+        ];
+        // Total pot = 21 + 21 + 21 + 20 + 20 = 103.
+        // 103 / 5 = 20 remainder 3.
+        // The first winner in resolution order receives per_winner + remainder = 20 + 3 = 23.
+        let payouts = compute_precision_payouts(&entries, 2000, None).unwrap();
+        assert_eq!(payouts.len(), 5);
+        assert_eq!(payouts[0].payout, 23);
+        assert_eq!(payouts[1].payout, 20);
+        assert_eq!(payouts[2].payout, 20);
+        assert_eq!(payouts[3].payout, 20);
+        assert_eq!(payouts[4].payout, 20);
+
+        // Conservation invariant: sum of payouts must equal total pot exactly.
+        let total: i128 = payouts.iter().map(|p| p.payout).sum();
+        assert_eq!(total, 103);
+    }
+
+    #[test]
     fn test_split_pot_single_winner() {
         let payouts = split_pot_among_winners(500, 1).unwrap();
         assert_eq!(payouts, vec![500]);
