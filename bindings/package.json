@@ -15,6 +15,7 @@
   "author": "TevaLabs",
   "license": "MIT",
   "scripts": {
+    "regenerate": "cargo rustc --manifest-path=../contracts/Cargo.toml --crate-type=cdylib --target=wasm32v1-none --release --locked && stellar contract bindings typescript --wasm ../target/wasm32v1-none/release/xelma_contract.wasm --output-dir ./generated --overwrite",
     "build": "tsc",
     "lint": "tsc --noEmit",
     "test:parity": "node src/parity.js",

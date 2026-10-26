@@ -670,3 +670,74 @@ proptest! {
             sum_refunds, total_pot);
     }
 }
+
+// ─── Bet-amount bounds (min_bet / max_stake) ─────────────────────────────────
+//
+// Valid amounts (`min_bet <= amount <= max_stake`) must always succeed;
+// invalid amounts must be rejected with the right error and leave no state
+// behind (balance, pools and position untouched).
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(40))]
+
+    #[test]
+    fn bet_amount_within_bounds_succeeds_and_outside_is_rejected_without_mutation(
+        min_bet in 1i128..=1_000i128,
+        span in 0i128..=5_000i128,
+        below_gap in 1i128..=500i128,
+        above_gap in 1i128..=500i128,
+        pick in 0i128..=5_000i128,
+    ) {
+        use crate::errors::ContractError;
+        use super::config_helpers::{apply_max_stake};
+
+        let max_stake = min_bet + span;
+        let valid = min_bet + (pick % (span + 1));
+        let too_low = min_bet - below_gap.min(min_bet); // 0..min_bet-1 (0 hits InvalidBetAmount)
+        let too_high = max_stake + above_gap;
+
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
+
+        client.schedule_min_bet(&Some(min_bet));
+        env.ledger().with_mut(|li| {
+            li.sequence_number += crate::common::CONFIG_TIMELOCK_LEDGERS + 1;
+        });
+        client.apply_scheduled_changes(&crate::types::ConfigChangeKind::MinBet);
+        apply_max_stake(&env, &client, Some(max_stake));
+
+        client.create_round(&1_0000000u128, &None);
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+
+        // Invalid amounts: rejected, nothing mutated.
+        let balance_before = client.balance(&user);
+        let round_before = client.get_active_round().unwrap();
+        let low = client.try_place_bet(&user, &too_low, &BetSide::Up);
+        let expected_low = if too_low <= 0 {
+            ContractError::InvalidBetAmount
+        } else {
+            ContractError::BelowMinBet
+        };
+        prop_assert_eq!(low, Err(Ok(expected_low)));
+        let high = client.try_place_bet(&user, &too_high, &BetSide::Up);
+        prop_assert_eq!(high, Err(Ok(ContractError::StakeExceedsMax)));
+        prop_assert_eq!(client.balance(&user), balance_before);
+        prop_assert_eq!(client.get_user_position(&user), None);
+        let round_after = client.get_active_round().unwrap();
+        prop_assert_eq!(round_after.pool_up, round_before.pool_up);
+        prop_assert_eq!(round_after.pool_down, round_before.pool_down);
+
+        // Valid amount: always succeeds and debits exactly `valid`.
+        prop_assert!(client.try_place_bet(&user, &valid, &BetSide::Up).is_ok());
+        prop_assert_eq!(client.balance(&user), balance_before - valid);
+        let pos = client.get_user_position(&user).unwrap();
+        prop_assert_eq!(pos.amount, valid);
+    }
+}

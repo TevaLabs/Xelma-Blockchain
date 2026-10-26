@@ -220,3 +220,41 @@ fn test_batch_touch_ttl_rejects_paused_contract() {
         "batch_touch_ttl should fail when contract is paused"
     );
 }
+
+/// Issue #722: `ActiveRound` is deliberately excluded from the TTL-touch
+/// allowlist, even while a round is live and the key exists in storage.
+/// A batch containing it fails atomically with the dedicated error.
+#[test]
+fn test_batch_touch_ttl_rejects_active_round_key() {
+    use crate::errors::ContractError;
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.create_round(&1_0000000, &None);
+
+    let has_round = env.as_contract(&contract_id, || {
+        env.storage().persistent().has(&DataKeyCore::ActiveRound)
+    });
+    assert!(has_round, "ActiveRound must exist for this test");
+
+    // A valid key before the rejected one must not mask the rejection.
+    let mixed: Vec<DataKeyCore> =
+        Vec::from_array(&env, [DataKeyCore::Admin, DataKeyCore::ActiveRound]);
+    assert_eq!(
+        client.try_batch_touch_ttl(&mixed),
+        Err(Ok(ContractError::UnsupportedDataKeyForTtlTouch))
+    );
+
+    let only: Vec<DataKeyCore> = Vec::from_array(&env, [DataKeyCore::ActiveRound]);
+    assert_eq!(
+        client.try_batch_touch_ttl(&only),
+        Err(Ok(ContractError::UnsupportedDataKeyForTtlTouch))
+    );
+}

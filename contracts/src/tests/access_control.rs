@@ -307,3 +307,27 @@ fn test_protocol_health_reports_access_mode() {
         "allowlist mode should surface ACCESS_RESTRICTED"
     );
 }
+
+/// `add_allowlisted` clears a stale denylist marker (Issue #704): the user must
+/// resolve to `Allowlisted`, not remain stuck as `Denylisted`.
+#[test]
+fn test_add_allowlisted_clears_denylist_marker() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.set_access_control_enabled(&true);
+    client.add_denylisted(&user);
+    assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
+    assert!(client.is_denylisted(&user));
+
+    client.add_allowlisted(&user);
+
+    assert!(!client.is_denylisted(&user), "deny marker must be cleared");
+    assert!(client.is_allowlisted(&user));
+    assert_eq!(client.get_access_state(&user), AccessState::Allowlisted);
+
+    // The user is actually admitted again, not just reported as allowlisted.
+    client.mint_initial(&user);
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&user, &100, &BetSide::Up);
+}

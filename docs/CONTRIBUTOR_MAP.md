@@ -621,10 +621,15 @@ cd bindings && npm run test:parity
 cargo rustc --manifest-path=contracts/Cargo.toml --crate-type=cdylib --target=wasm32v1-none --release --locked
 stellar contract bindings typescript \
   --wasm target/wasm32v1-none/release/xelma_contract.wasm \
-  --output-dir ./bindings/src \
+  --output-dir ./bindings/generated \
   --overwrite
 cd bindings && npm install && npm run build
 ```
+
+Or run `cd bindings && npm run regenerate`, which performs the first two
+steps. `bindings/src/index.ts` is hand-maintained, so generated output goes to
+the git-ignored `bindings/generated/` and is diffed/ported by hand (see
+`CONTRIBUTING.md`).
 
 ---
 
