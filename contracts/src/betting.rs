@@ -329,7 +329,10 @@ pub fn place_bet(
 
     _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
 
-    // Verify round is in Up/Down mode
+    // Verify round is in Up/Down mode. This guard runs before any balance,
+    // pool, or position write, so a wrong-mode bet on a Precision round
+    // leaves `pool_up` / `pool_down` — and the caller's balance — exactly
+    // as they were (Issue #662).
     if round.mode != RoundMode::UpDown {
         return Err(ContractError::WrongModeForPrediction);
     }
@@ -416,6 +419,20 @@ pub fn place_bet(
     Ok(())
 }
 
+/// Places a direct Precision prediction for `user` in the active round.
+///
+/// # Window semantics (Issue #661)
+///
+/// Accepted only while the bet window is open (`ledger < bet_end_ledger`).
+/// Once the reveal-only window starts (`bet_end_ledger ≤ ledger <
+/// end_ledger`) a direct prediction is rejected with
+/// [`ContractError::RoundEnded`] — reveals (`reveal_prediction`) are the
+/// only submission a round accepts until `end_ledger`. `commit_prediction`
+/// is closed by the same check.
+///
+/// The round-mode guard runs *before* the window check, so on an Up/Down
+/// round the call fails with [`ContractError::WrongModeForPrediction`]
+/// regardless of which window the ledger is in (Issue #662).
 pub fn place_precision_prediction(
     env: Env,
     user: Address,

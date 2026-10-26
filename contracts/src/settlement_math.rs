@@ -12,6 +12,7 @@
 use alloc::vec::Vec;
 
 use crate::errors::ContractError;
+use crate::fee_incidence::FeeIncidence;
 use crate::math_common::{payout_add, payout_mul, BPS_DENOMINATOR};
 
 /// Payout policy for Precision mode
@@ -72,65 +73,152 @@ pub fn is_one_sided_pool(pool_up: i128, pool_down: i128) -> bool {
 
 // ─── Protocol fee math (pure) ────────────────────────────────────────────────
 
-/// Splits a `(winning_pool, losing_pool)` pair into the post-fee pools
-/// and the treasury's cut.
+/// Returns the amount of stake that is *taxable* for the protocol fee under
+/// the given incidence model, before applying `bps`.
 ///
-/// Conservation invariant **always** holds:
+/// Both round modes express "winnings" the same way: the losing side's stake
+/// is exactly the profit that winning participants realise. That makes
+/// `losing_pool` the taxable base for `FeeOnWinnings` in UpDown, and
+/// `total_pot - winner_stakes` in Precision.
+///
+/// A non-positive base means there is nothing to tax, so the fee is zero.
+pub fn fee_taxable_base(
+    model: FeeIncidence,
+    winning_pool: i128,
+    losing_pool: i128,
+) -> Result<i128, ContractError> {
+    match model {
+        FeeIncidence::FeeOnPot => payout_add(winning_pool, losing_pool),
+        FeeIncidence::FeeOnWinnings => Ok(losing_pool),
+    }
+}
+
+/// Splits a `(winning_pool, losing_pool)` pair into the post-fee pools
+/// and the treasury's cut, honouring the configured fee incidence model.
+///
+/// Conservation invariant **always** holds, for every model:
 ///   `dist_winning + dist_losing + fee == winning + losing`
 ///
-/// In the pathological case `fee > losing_pool` (very thin losing-side
-/// liquidity near the bps cap), the spillover is deducted from
-/// `winning_pool`.
+/// The fee is drawn from the losing side first. In the pathological case
+/// `fee > losing_pool` (very thin losing-side liquidity, or a bps value above
+/// `MAX_PROTOCOL_FEE_BPS` reached through a replay transcript rather than
+/// `set_protocol_fee_bps`) the spillover is deducted from `winning_pool`, so
+/// value is never silently dropped and `dist_losing` can never underflow.
+/// At the protocol cap (`bps <= 1000`) the spillover branch is unreachable
+/// under either model; it exists so the invariant is structural rather than
+/// contingent on a configuration bound.
+pub fn compute_updown_fee_with_model(
+    winning_pool: i128,
+    losing_pool: i128,
+    fee_bps: Option<u32>,
+    model: FeeIncidence,
+) -> Result<(i128, i128, i128), ContractError> {
+    let bps_value = match fee_bps {
+        None => return Ok((winning_pool, losing_pool, 0)),
+        Some(bps) => bps,
+    };
+
+    let taxable_base = fee_taxable_base(model, winning_pool, losing_pool)?;
+    if taxable_base <= 0 {
+        return Ok((winning_pool, losing_pool, 0));
+    }
+
+    // Precision/payout arithmetic (Issue #405): a fee derived from payout
+    // values must overflow as `PayoutOverflow`, not a generic `Overflow`.
+    let fee_amount = taxable_base
+        .checked_mul(bps_value as i128)
+        .ok_or(ContractError::PayoutOverflow)?
+        / BPS_DENOMINATOR;
+    if fee_amount <= 0 {
+        return Ok((winning_pool, losing_pool, 0));
+    }
+
+    let fee_from_losing = fee_amount.min(losing_pool);
+    let fee_from_winning = fee_amount - fee_from_losing;
+    let dist_winning = winning_pool
+        .checked_sub(fee_from_winning)
+        .ok_or(ContractError::PayoutOverflow)?;
+    let dist_losing = losing_pool
+        .checked_sub(fee_from_losing)
+        .ok_or(ContractError::PayoutOverflow)?;
+    Ok((dist_winning, dist_losing, fee_amount))
+}
+
+/// [`compute_updown_fee_with_model`] under the default [`FeeIncidence::FeeOnPot`].
+///
+/// Retained so the pinned golden vectors and the offline replay engine keep
+/// compiling against the historical signature.
 pub fn compute_updown_fee(
     winning_pool: i128,
     losing_pool: i128,
     fee_bps: Option<u32>,
 ) -> Result<(i128, i128, i128), ContractError> {
-    if fee_bps.is_none() {
-        return Ok((winning_pool, losing_pool, 0));
-    }
-    let bps_value = fee_bps.unwrap();
-    let total_pot = payout_add(winning_pool, losing_pool)?;
-    let fee_amount = total_pot
-        .checked_mul(bps_value as i128)
-        .ok_or(ContractError::Overflow)?
-        / BPS_DENOMINATOR;
-    if fee_amount == 0 {
-        return Ok((winning_pool, losing_pool, 0));
-    }
-    let fee_from_losing = fee_amount.min(losing_pool);
-    let fee_from_winning = fee_amount
-        .checked_sub(fee_from_losing)
-        .ok_or(ContractError::Overflow)?;
-    let dist_winning = winning_pool
-        .checked_sub(fee_from_winning)
-        .ok_or(ContractError::Overflow)?;
-    let dist_losing = losing_pool
-        .checked_sub(fee_from_losing)
-        .ok_or(ContractError::Overflow)?;
-    Ok((dist_winning, dist_losing, fee_amount))
+    compute_updown_fee_with_model(winning_pool, losing_pool, fee_bps, FeeIncidence::FeeOnPot)
 }
 
-/// Splits a precision-mode `total_pot` into the distributable amount and
-/// the treasury's cut.  Returns `(distributable, fee_amount)`.
-pub fn compute_precision_fee(
+/// Splits a precision-mode `total_pot` into the distributable amount and the
+/// treasury's cut, honouring the configured fee incidence model.
+/// Returns `(distributable, fee_amount)`.
+///
+/// Conservation invariant **always** holds:
+///   `distributable + fee == total_pot`
+///
+/// For `FeeOnWinnings` the taxable base is the winners' realised profit
+/// (`total_pot - winner_stakes`). When that profit is zero or negative
+/// (a lone winner staked the whole pot) there is nothing to tax and the pot
+/// is distributed intact.
+pub fn compute_precision_fee_with_model(
     total_pot: i128,
+    winner_stakes: i128,
     fee_bps: Option<u32>,
+    model: FeeIncidence,
 ) -> Result<(i128, i128), ContractError> {
-    if fee_bps.is_none() || total_pot <= 0 {
+    let bps_value = match fee_bps {
+        None => return Ok((total_pot, 0)),
+        Some(bps) => bps,
+    };
+    if total_pot <= 0 {
         return Ok((total_pot, 0));
     }
-    let bps_value = fee_bps.unwrap();
+
+    let taxable_base = match model {
+        FeeIncidence::FeeOnPot => total_pot,
+        FeeIncidence::FeeOnWinnings => {
+            let profit = total_pot
+                .checked_sub(winner_stakes)
+                .ok_or(ContractError::PayoutOverflow)?;
+            if profit <= 0 {
+                return Ok((total_pot, 0));
+            }
+            profit
+        }
+    };
+
     // Precision fee/pot arithmetic is payout arithmetic (Issue #405):
     // overflow must surface as `PayoutOverflow`, not a generic `Overflow`.
-    let fee_amount = total_pot
+    let fee_amount = taxable_base
         .checked_mul(bps_value as i128)
         .ok_or(ContractError::PayoutOverflow)?
         / BPS_DENOMINATOR;
+    if fee_amount <= 0 {
+        return Ok((total_pot, 0));
+    }
     let distributable = total_pot
         .checked_sub(fee_amount)
         .ok_or(ContractError::PayoutOverflow)?;
     Ok((distributable, fee_amount))
+}
+
+/// [`compute_precision_fee_with_model`] under the default
+/// [`FeeIncidence::FeeOnPot`].
+///
+/// Retained so the pinned golden vectors and the offline replay engine keep
+/// compiling against the historical signature.
+pub fn compute_precision_fee(
+    total_pot: i128,
+    fee_bps: Option<u32>,
+) -> Result<(i128, i128), ContractError> {
+    compute_precision_fee_with_model(total_pot, total_pot, fee_bps, FeeIncidence::FeeOnPot)
 }
 
 // ─── UpDown payout math ──────────────────────────────────────────────────────
@@ -370,24 +458,49 @@ pub struct UpDownPayoutEntry {
     pub is_refund: bool,
 }
 
-/// Computes the full payout vector for an UpDown round.
+/// Everything an UpDown settlement produces under one fee incidence model.
+///
+/// Returning the fee alongside the payout vector (instead of making callers
+/// re-derive it from the pools) is what keeps the offline replay engine
+/// direction-aware: the fee must be computed on the *losing* pool for
+/// [`FeeIncidence::FeeOnWinnings`], which a caller cannot infer from
+/// `pool_up`/`pool_down` without re-deriving the price direction.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpDownSettlement {
+    /// One entry per input position, in input order.
+    pub payouts: Vec<UpDownPayoutEntry>,
+    /// Stake on the winning side (post fee), or the gross pool on refund.
+    pub dist_winning: i128,
+    /// Stake on the losing side, post fee. Never distributed to anyone.
+    pub dist_losing: i128,
+    /// Total distributed to winners, fee excluded. Equals
+    /// `dist_winning + dist_losing` on a competitive settlement.
+    pub total_distributable: i128,
+    /// Fee routed to the treasury. Always `0` on a refund.
+    pub fee_amount: i128,
+}
+
+/// Computes the full payout vector for an UpDown round under an explicit fee
+/// incidence model.
 ///
 /// Inputs are the round-level parameters and the list of participant
-/// positions.  Returns one `UpDownPayoutEntry` per participant.
-pub fn compute_updown_payouts(
+/// positions. Returns one `UpDownPayoutEntry` per participant.
+pub fn compute_updown_payouts_with_model(
     positions: &[UpDownPosition],
     start_price: u128,
     final_price: u128,
     pool_up: i128,
     pool_down: i128,
     fee_bps: Option<u32>,
-) -> Result<Vec<UpDownPayoutEntry>, ContractError> {
+    model: FeeIncidence,
+) -> Result<UpDownSettlement, ContractError> {
     let direction = classify_price_direction(start_price, final_price);
     let one_sided = is_one_sided_pool(pool_up, pool_down);
 
     let mut results: Vec<UpDownPayoutEntry> = Vec::new();
 
-    // Refund scenarios
+    // Refund scenarios. No competitive outcome => no realised winnings =>
+    // no fee, under *either* incidence model.
     if direction == PriceDirection::Unchanged || one_sided {
         for pos in positions {
             results.push(UpDownPayoutEntry {
@@ -398,7 +511,14 @@ pub fn compute_updown_payouts(
                 is_refund: true,
             });
         }
-        return Ok(results);
+        let total_pot = payout_add(pool_up, pool_down)?;
+        return Ok(UpDownSettlement {
+            payouts: results,
+            dist_winning: pool_up,
+            dist_losing: pool_down,
+            total_distributable: total_pot,
+            fee_amount: 0,
+        });
     }
 
     // Competitive settlement
@@ -419,11 +539,18 @@ pub fn compute_updown_payouts(
                 is_refund: true,
             });
         }
-        return Ok(results);
+        let total_pot = payout_add(pool_up, pool_down)?;
+        return Ok(UpDownSettlement {
+            payouts: results,
+            dist_winning: winning_pool,
+            dist_losing: losing_pool,
+            total_distributable: total_pot,
+            fee_amount: 0,
+        });
     }
 
-    let (dist_winning, dist_losing, _fee_amount) =
-        compute_updown_fee(winning_pool, losing_pool, fee_bps)?;
+    let (dist_winning, dist_losing, fee_amount) =
+        compute_updown_fee_with_model(winning_pool, losing_pool, fee_bps, model)?;
     let total_distributable = payout_add(dist_winning, dist_losing)?;
 
     for pos in positions {
@@ -442,7 +569,38 @@ pub fn compute_updown_payouts(
         });
     }
 
-    Ok(results)
+    Ok(UpDownSettlement {
+        payouts: results,
+        dist_winning,
+        dist_losing,
+        total_distributable,
+        fee_amount,
+    })
+}
+
+/// [`compute_updown_payouts_with_model`] under the default
+/// [`FeeIncidence::FeeOnPot`], returning just the payout vector.
+///
+/// Retained so the pinned golden vectors keep compiling against the
+/// historical signature.
+pub fn compute_updown_payouts(
+    positions: &[UpDownPosition],
+    start_price: u128,
+    final_price: u128,
+    pool_up: i128,
+    pool_down: i128,
+    fee_bps: Option<u32>,
+) -> Result<Vec<UpDownPayoutEntry>, ContractError> {
+    Ok(compute_updown_payouts_with_model(
+        positions,
+        start_price,
+        final_price,
+        pool_up,
+        pool_down,
+        fee_bps,
+        FeeIncidence::FeeOnPot,
+    )?
+    .payouts)
 }
 
 // ─── Composite: compute full Precision payout vector ─────────────────────────
@@ -456,6 +614,21 @@ pub struct PrecisionPayoutEntry {
     pub payout: i128,
     pub is_winner: bool,
     pub is_refund: bool,
+}
+
+/// Everything a Precision settlement produces under one fee incidence model.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PrecisionSettlement {
+    /// One entry per input entry, in input order.
+    pub payouts: Vec<PrecisionPayoutEntry>,
+    /// Pot amount available to winners, fee excluded.
+    pub distributable: i128,
+    /// Fee routed to the treasury. Always `0` on a refund.
+    pub fee_amount: i128,
+    /// Sum of winner stakes — the base `FeeOnWinnings` taxes.
+    pub winner_stakes: i128,
+    /// Total pot, fee included.
+    pub total_pot: i128,
 }
 
 pub fn compute_precision_payouts(
@@ -475,7 +648,8 @@ pub fn compute_precision_payouts(
     )
 }
 
-/// Computes the full payout vector for a Precision round using explicit scoring and payout policies.
+/// Computes the full payout vector for a Precision round using explicit scoring
+/// and payout policies, under the default [`FeeIncidence::FeeOnPot`].
 pub fn compute_precision_payouts_with_policy(
     entries: &[PrecisionEntry],
     final_price: u128,
@@ -483,9 +657,30 @@ pub fn compute_precision_payouts_with_policy(
     scoring_policy: PrecisionScoringPolicy,
     payout_policy: PrecisionPayoutPolicy,
 ) -> Result<Vec<PrecisionPayoutEntry>, ContractError> {
+    Ok(compute_precision_payouts_with_policy_and_model(
+        entries,
+        final_price,
+        fee_bps,
+        scoring_policy,
+        payout_policy,
+        FeeIncidence::FeeOnPot,
+    )?
+    .payouts)
+}
+
+/// Computes the full payout vector for a Precision round using explicit scoring,
+/// payout, and fee incidence policies.
+pub fn compute_precision_payouts_with_policy_and_model(
+    entries: &[PrecisionEntry],
+    final_price: u128,
+    fee_bps: Option<u32>,
+    scoring_policy: PrecisionScoringPolicy,
+    payout_policy: PrecisionPayoutPolicy,
+    model: FeeIncidence,
+) -> Result<PrecisionSettlement, ContractError> {
     let result = find_precision_winners_with_policy(entries, final_price, scoring_policy);
 
-    // All-unrevealed: refund everyone
+    // All-unrevealed: refund everyone, no fee.
     if result.winner_indices.is_empty() && result.total_pot > 0 {
         let mut payouts: Vec<PrecisionPayoutEntry> = Vec::new();
         for entry in entries {
@@ -498,7 +693,13 @@ pub fn compute_precision_payouts_with_policy(
                 is_refund: true,
             });
         }
-        return Ok(payouts);
+        return Ok(PrecisionSettlement {
+            payouts,
+            distributable: result.total_pot,
+            fee_amount: 0,
+            winner_stakes: 0,
+            total_pot: result.total_pot,
+        });
     }
 
     // No pot: nothing to distribute
@@ -514,10 +715,24 @@ pub fn compute_precision_payouts_with_policy(
                 is_refund: false,
             });
         }
-        return Ok(payouts);
+        return Ok(PrecisionSettlement {
+            payouts,
+            distributable: 0,
+            fee_amount: 0,
+            winner_stakes: 0,
+            total_pot: result.total_pot,
+        });
     }
 
-    let (distributable, _fee_amount) = compute_precision_fee(result.total_pot, fee_bps)?;
+    // Sum winner stakes for the `FeeOnWinnings` base. Must propagate overflow
+    // rather than silently truncating.
+    let mut winner_stakes: i128 = 0;
+    for &idx in &result.winner_indices {
+        winner_stakes = payout_add(winner_stakes, entries[idx].amount)?;
+    }
+
+    let (distributable, fee_amount) =
+        compute_precision_fee_with_model(result.total_pot, winner_stakes, fee_bps, model)?;
 
     let winner_payouts = match payout_policy {
         PrecisionPayoutPolicy::Equal => {
@@ -554,7 +769,13 @@ pub fn compute_precision_payouts_with_policy(
         });
     }
 
-    Ok(payouts)
+    Ok(PrecisionSettlement {
+        payouts,
+        distributable,
+        fee_amount,
+        winner_stakes,
+        total_pot: result.total_pot,
+    })
 }
 
 // ─── Oracle deviation math ───────────────────────────────────────────────────

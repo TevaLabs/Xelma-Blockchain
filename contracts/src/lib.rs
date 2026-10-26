@@ -24,6 +24,7 @@ pub mod common;
 mod config;
 mod contract;
 mod errors;
+mod fee_incidence;
 mod governance;
 mod insurance;
 mod leaderboard;
