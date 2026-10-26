@@ -271,6 +271,8 @@ pub fn get_pending_config_change(env: Env, kind: ConfigChangeKind) -> Option<Pen
         .get(&DataKeyScoped::PendingConfigChange(kind))
 }
 
+/// Applies a pending change once `activation_ledger`
+/// (`scheduled_at_ledger + CONFIG_TIMELOCK_LEDGERS`) has been reached.
 pub fn apply_scheduled_changes(env: Env, kind: ConfigChangeKind) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     _ensure_normal_mode(&env)?;
@@ -1249,6 +1251,10 @@ pub fn _current_config_payload(env: &Env, kind: &ConfigChangeKind) -> ConfigChan
     }
 }
 
+/// Schedules `payload` for delayed activation. The change becomes applicable
+/// at `scheduled_at_ledger + CONFIG_TIMELOCK_LEDGERS` (1440 ledgers, ~2 h at
+/// 5 s/ledger; defined in `common.rs`). See `GOVERNANCE.md`
+/// ("Config Change Timelock") for the full lifecycle.
 pub fn _schedule_config_change(
     env: &Env,
     kind: ConfigChangeKind,
