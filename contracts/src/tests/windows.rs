@@ -355,8 +355,6 @@ fn test_close_buffer_precision_prediction_distinct_error() {
 
 #[test]
 fn test_close_buffer_commit_prediction_distinct_error() {
-    use soroban_sdk::BytesN;
-
     let env = Env::default();
     env.ledger().with_mut(|li| {
         li.sequence_number = 0;
