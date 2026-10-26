@@ -1,0 +1,218 @@
+{
+  "event_schema_version": 1,
+  "doc": "Golden fixture for EVENT_SCHEMA v1 (Issue #716). Pins docs/EVENT_SCHEMA.md to a machine-checkable contract so indexers can detect consumer drift. Loaded and verified by bindings/tests/event-schema.v1.test.ts. Every event carries exactly two Symbol topics forming a canonical (namespace, action) pair; payload fields are positional and order-sensitive. Field `position` is 0-indexed and matches the positional tables in docs/EVENT_SCHEMA.md.",
+  "events": [
+    {
+      "namespace": "round",
+      "action": "created",
+      "description": "Emitted when a new prediction round is opened.",
+      "fields": [
+        { "position": 0, "name": "round_id", "type": "u64", "description": "Monotonically increasing round identifier" },
+        { "position": 1, "name": "start_price", "type": "u128", "description": "Starting XLM price (4 decimal places)" },
+        { "position": 2, "name": "start_ledger", "type": "u32", "description": "Ledger sequence when the round was created" },
+        { "position": 3, "name": "bet_end_ledger", "type": "u32", "description": "Last ledger at which new bets are accepted" },
+        { "position": 4, "name": "end_ledger", "type": "u32", "description": "Ledger at or after which the round can be resolved" },
+        { "position": 5, "name": "mode", "type": "u32", "description": "Round mode: 0 = UpDown, 1 = Precision" }
+      ]
+    },
+    {
+      "namespace": "bet",
+      "action": "placed",
+      "description": "Emitted when a user places an Up/Down bet.",
+      "fields": [
+        { "position": 0, "name": "user", "type": "Address", "description": "User who placed the bet" },
+        { "position": 1, "name": "round_id", "type": "u64", "description": "Round the bet belongs to" },
+        { "position": 2, "name": "amount", "type": "i128", "description": "Bet amount in stroops" },
+        { "position": 3, "name": "side", "type": "u32", "description": "Prediction side: 0 = Up, 1 = Down" }
+      ]
+    },
+    {
+      "namespace": "predict",
+      "action": "price",
+      "description": "Emitted when a user submits a Precision mode price prediction.",
+      "fields": [
+        { "position": 0, "name": "user", "type": "Address", "description": "User who submitted the prediction" },
+        { "position": 1, "name": "round_id", "type": "u64", "description": "Round the prediction belongs to" },
+        { "position": 2, "name": "predicted_price", "type": "u128", "description": "Predicted price (4 decimal places)" },
+        { "position": 3, "name": "amount", "type": "i128", "description": "Bet amount in stroops" }
+      ]
+    },
+    {
+      "namespace": "commit",
+      "action": "predict",
+      "description": "Emitted when a user locks a Precision stake behind a commitment hash.",
+      "fields": [
+        { "position": 0, "name": "user", "type": "Address", "description": "User who submitted the commitment" },
+        { "position": 1, "name": "round_id", "type": "u64", "description": "Round the commitment belongs to" },
+        { "position": 2, "name": "commitment", "type": "BytesN<32>", "description": "SHA-256 commitment digest" },
+        { "position": 3, "name": "amount", "type": "i128", "description": "Locked stake in stroops" }
+      ]
+    },
+    {
+      "namespace": "reveal",
+      "action": "predict",
+      "description": "Emitted after a commitment is successfully opened during the reveal window. The salt is intentionally omitted.",
+      "fields": [
+        { "position": 0, "name": "user", "type": "Address", "description": "User who revealed the commitment" },
+        { "position": 1, "name": "round_id", "type": "u64", "description": "Round the revealed prediction belongs to" },
+        { "position": 2, "name": "predicted_price", "type": "u128", "description": "Revealed price (4 decimal places)" },
+        { "position": 3, "name": "amount", "type": "i128", "description": "Locked stake in stroops" }
+      ]
+    },
+    {
+      "namespace": "forfeit",
+      "action": "predict",
+      "description": "Emitted at competitive Precision settlement for each commitment that was not revealed.",
+      "fields": [
+        { "position": 0, "name": "user", "type": "Address", "description": "User whose unrevealed commitment was forfeited" },
+        { "position": 1, "name": "round_id", "type": "u64", "description": "Round settled" },
+        { "position": 2, "name": "amount", "type": "i128", "description": "Forfeited stake in stroops" }
+      ]
+    },
+    {
+      "namespace": "round",
+      "action": "summary",
+      "description": "Canonical terminal round event emitted on every terminal transition (resolution, cancellation, fallback, void) with the full round state.",
+      "fields": [
+        { "position": 0, "name": "round_id", "type": "u64", "description": "Monotonically increasing round identifier" },
+        { "position": 1, "name": "status", "type": "u32", "description": "Terminal status: 0 = Resolved, 1 = Cancelled, 2 = FallbackRefund, 3 = Voided" },
+        { "position": 2, "name": "mode", "type": "u32", "description": "Round mode: 0 = UpDown, 1 = Precision" },
+        { "position": 3, "name": "price_final", "type": "u128", "description": "Settlement price from oracle, or 0 for cancelled/fallback rounds" },
+        { "position": 4, "name": "participant_count", "type": "u32", "description": "Total unique user participants" },
+        { "position": 5, "name": "total_pot", "type": "i128", "description": "Total accumulated round pot (stroops)" },
+        { "position": 6, "name": "fee_amount", "type": "i128", "description": "Protocol fees collected (stroops), 0 for non-competitive paths" },
+        { "position": 7, "name": "settled_at_ledger", "type": "u32", "description": "Ledger sequence when the round was archived" },
+        { "position": 8, "name": "confidence", "type": "Option<u32>", "description": "Oracle confidence in basis points" },
+        { "position": 9, "name": "fee_model", "type": "u32", "description": "Fee incidence model: 0 = FeeOnPot, 1 = FeeOnWinnings" }
+      ]
+    },
+    {
+      "namespace": "round",
+      "action": "pending",
+      "description": "Emitted after a valid oracle result is staged and payouts/fees are deferred for the dispute window.",
+      "fields": [
+        { "position": 0, "name": "round_id", "type": "u64", "description": "Round awaiting a terminal dispute decision" },
+        { "position": 1, "name": "final_price", "type": "u128", "description": "Validated oracle settlement price" },
+        { "position": 2, "name": "resolved_at_ledger", "type": "u32", "description": "Ledger where the oracle result was staged" },
+        { "position": 3, "name": "deadline_ledger", "type": "u32", "description": "First ledger where finalization is permitted" }
+      ]
+    },
+    {
+      "namespace": "round",
+      "action": "voided",
+      "description": "Emitted when any caller voids a staged round strictly before its deadline. Each participant is credited exactly their recorded stake.",
+      "fields": [
+        { "position": 0, "name": "round_id", "type": "u64", "description": "Voided round" },
+        { "position": 1, "name": "participant_count", "type": "u32", "description": "Number of refunded participants" },
+        { "position": 2, "name": "total_refund", "type": "i128", "description": "Sum of full-stake refunds in stroops" }
+      ]
+    },
+    {
+      "namespace": "round",
+      "action": "finalized",
+      "description": "Emitted when any caller finalizes a staged round at or after its frozen deadline.",
+      "fields": [
+        { "position": 0, "name": "round_id", "type": "u64", "description": "Finalized round" },
+        { "position": 1, "name": "final_price", "type": "u128", "description": "Staged oracle settlement price" },
+        { "position": 2, "name": "participant_count", "type": "u32", "description": "Number of settled participants" },
+        { "position": 3, "name": "fee_amount", "type": "i128", "description": "Protocol fee collected in stroops" }
+      ]
+    },
+    {
+      "namespace": "payout",
+      "action": "outcome",
+      "description": "Emitted once per participant during round resolution after that participant's settlement outcome is known.",
+      "fields": [
+        { "position": 0, "name": "round_id", "type": "u64", "description": "Round that produced the participant outcome" },
+        { "position": 1, "name": "mode", "type": "u32", "description": "Round mode: 0 = UpDown, 1 = Precision" },
+        { "position": 2, "name": "user", "type": "Address", "description": "Participant address" },
+        { "position": 3, "name": "gross_payout", "type": "i128", "description": "Amount credited to pending winnings, in stroops" },
+        { "position": 4, "name": "outcome_type", "type": "u32", "description": "0 = win, 1 = loss, 2 = refund, 3 = void" }
+      ]
+    },
+    {
+      "namespace": "outcome",
+      "action": "loss",
+      "description": "Emitted per losing participant on competitive settlement. Additive within schema v1.",
+      "fields": [
+        { "position": 0, "name": "user", "type": "Address", "description": "Address of the losing participant" },
+        { "position": 1, "name": "round_id", "type": "u64", "description": "Round the loss occurred in" },
+        { "position": 2, "name": "mode", "type": "u32", "description": "Round mode: 0 = UpDown, 1 = Precision" },
+        { "position": 3, "name": "amount", "type": "i128", "description": "Stake amount the user loses, in stroops" },
+        { "position": 4, "name": "side", "type": "u32", "description": "UpDown losing side: 0 = Up, 1 = Down. 0 for Precision mode" },
+        { "position": 5, "name": "predicted_price", "type": "u128", "description": "Precision guess (4 decimal places). 0 for UpDown or unrevealed" }
+      ]
+    },
+    {
+      "namespace": "claim",
+      "action": "winnings",
+      "description": "Emitted when a user successfully claims pending winnings.",
+      "fields": [
+        { "position": 0, "name": "user", "type": "Address", "description": "User who claimed" },
+        { "position": 1, "name": "amount", "type": "i128", "description": "Amount credited to balance (in stroops)" }
+      ]
+    },
+    {
+      "namespace": "mint",
+      "action": "initial",
+      "description": "Emitted when a new user mints their one-time initial vXLM allocation.",
+      "fields": [
+        { "position": 0, "name": "user", "type": "Address", "description": "User who received the allocation" },
+        { "position": 1, "name": "amount", "type": "i128", "description": "Minted amount (always 10 000 000 000 stroops = 1 000 vXLM)" }
+      ]
+    },
+    {
+      "namespace": "windows",
+      "action": "updated",
+      "description": "Emitted when the admin reconfigures the bet and run window lengths.",
+      "fields": [
+        { "position": 0, "name": "bet_window_ledgers", "type": "u32", "description": "New bet-acceptance window in ledger counts" },
+        { "position": 1, "name": "run_window_ledgers", "type": "u32", "description": "New round-duration window in ledger counts" }
+      ]
+    },
+    {
+      "namespace": "oracle",
+      "action": "heartbeat",
+      "description": "Emitted when the oracle records an on-chain liveness heartbeat.",
+      "fields": [
+        { "position": 0, "name": "timestamp", "type": "u64", "description": "Unix epoch seconds when the heartbeat was recorded" },
+        { "position": 1, "name": "status", "type": "u32", "description": "Oracle status: 0 = active, 1 = degraded, 2 = offline" }
+      ]
+    },
+    {
+      "namespace": "mode",
+      "action": "transition",
+      "description": "Emitted when the contract's emergency runtime mode is changed by the admin.",
+      "fields": [
+        { "position": 0, "name": "old_mode", "type": "u32", "description": "Previous runtime mode: 0 = Normal, 1 = ClaimsOnly, 2 = Paused" },
+        { "position": 1, "name": "new_mode", "type": "u32", "description": "New runtime mode: 0 = Normal, 1 = ClaimsOnly, 2 = Paused" }
+      ]
+    },
+    {
+      "namespace": "protocol",
+      "action": "fee_coll",
+      "description": "Emitted by every competitive-settlement path when the protocol fee is enabled.",
+      "fields": [
+        { "position": 0, "name": "round_id", "type": "u64", "description": "The id of the settled round" },
+        { "position": 1, "name": "fee_amount", "type": "i128", "description": "Stroops routed to the on-chain treasury this round" },
+        { "position": 2, "name": "treasury_balance", "type": "i128", "description": "Cumulative treasury balance AFTER this round's credit" },
+        { "position": 3, "name": "bps_active", "type": "u32", "description": "The fee's bps that produced fee_amount (echoes storage)" },
+        { "position": 4, "name": "fee_model", "type": "u32", "description": "Fee incidence model: 0 = FeeOnPot, 1 = FeeOnWinnings" }
+      ]
+    },
+    {
+      "namespace": "pool",
+      "action": "onesided",
+      "description": "Emitted when a prediction round settles as a one-sided (degenerate) market.",
+      "fields": [
+        { "position": 0, "name": "round_id", "type": "u64", "description": "Round that was settled as one-sided" },
+        { "position": 1, "name": "policy_code", "type": "u32", "description": "Policy applied: 0 = Refund, 1 = Void, 2 = CarryForward" },
+        { "position": 2, "name": "affected_side", "type": "u32", "description": "Side containing positions: 0 = Up, 1 = Down, 2 = Empty" },
+        { "position": 3, "name": "refund_amount", "type": "i128", "description": "Total stake refunded across all participants (stroops)" },
+        { "position": 4, "name": "carry_amount", "type": "i128", "description": "Total stake carried forward to next round (stroops)" },
+        { "position": 5, "name": "pool_up", "type": "i128", "description": "Total Up-side pool at settlement time (stroops)" },
+        { "position": 6, "name": "pool_down", "type": "i128", "description": "Total Down-side pool at settlement time (stroops)" }
+      ]
+    }
+  ]
+}

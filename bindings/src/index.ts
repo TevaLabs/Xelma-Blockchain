@@ -175,6 +175,38 @@ export interface ProtocolHealthStatus {
   status_code: u32;
 }
 
+/**
+ * Canonical Xelma event schema version documented by `docs/EVENT_SCHEMA.md`.
+ * Indexers use this to detect when the documented contract becomes stale
+ * relative to a decoded event payload (Issue #716).
+ */
+export const EVENT_SCHEMA_VERSION = 1 as const;
+
+/** A single positional field within an event payload. */
+export interface EventSchemaField {
+  position: number;
+  name: string;
+  type: string;
+  description: string;
+}
+
+/** One canonical event, identified by its `(namespace, action)` topic pair. */
+export interface EventSchemaEntry {
+  namespace: string;
+  action: string;
+  description: string;
+  fields: EventSchemaField[];
+}
+
+/**
+ * Top-level shape of `bindings/tests/fixtures/event_schema_v1.json`, the golden
+ * fixture that pins `docs/EVENT_SCHEMA.md` to a machine-checkable contract.
+ */
+export interface EventSchemaFixture {
+  event_schema_version: number;
+  events: EventSchemaEntry[];
+}
+
 export interface RoundPoolStats {
   round_id: u64;
   mode: RoundMode;
