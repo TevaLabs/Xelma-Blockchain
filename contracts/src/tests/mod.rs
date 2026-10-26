@@ -20,6 +20,7 @@ mod deviation_reference;
 mod dispute_window;
 mod drill;
 mod drill_chaos_migration;
+mod early_cashout_pool_stats;
 mod edge_cases;
 mod event_coverage;
 mod event_order_golden;

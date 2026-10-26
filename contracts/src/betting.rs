@@ -769,6 +769,10 @@ pub fn reveal_prediction(
 /// - Only for UpDown rounds (not Precision).
 /// - User must have an active position in the current round.
 /// - Feature must be enabled via `EarlyCashoutBps`.
+///
+/// **Pool stats**: the full stake leaves the active pool in the same call, so
+/// `get_round_pool_stats` and `get_market_snapshot` show the reduced totals,
+/// participant count and ratios immediately (Issue #695).
 /// - Blocked when contract is paused or not in Normal mode.
 pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;

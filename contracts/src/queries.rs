@@ -22,6 +22,11 @@ pub fn get_active_round(env: Env) -> Option<Round> {
 }
 
 /// Returns live pool-composition metrics for the currently active round.
+///
+/// Derived from live state on every call, so it reflects bets and early
+/// cash-outs immediately: `cash_out_early` removes the user's full stake from
+/// their side's pool and their participant entry, and the totals, participant
+/// counts and stake ratios here drop accordingly (Issue #695).
 pub fn get_round_pool_stats(env: Env) -> Option<RoundPoolStats> {
     let round: Round = env.storage().persistent().get(&DataKeyCore::ActiveRound)?;
     let participants_key = DataKeyScoped::RoundParticipants(round.round_id);
