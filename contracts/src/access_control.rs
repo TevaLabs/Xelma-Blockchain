@@ -1,27 +1,29 @@
 // SPDX-License-Identifier: MIT
-//! Optional participant access control (Issue #274).
-//!
-//! This gates who may bet / predict on private or hackathon deployments
-//! without forking the protocol. The model is intentionally simple and safe:
-//!
-//! - **Default open**: until an admin explicitly enables allowlist mode via
-//!   [`set_access_control_enabled`], every address may participate (subject to
-//!   the existing min-bet / cap / mode / window rules). Deploying the feature
-//!   changes nothing on its own.
-//! - **Denylist overrides**: a denylisted address is refused **regardless of
-//!   mode**. This is an emergency block / ban that works on open deployments
-//!   too, and always takes precedence over the allowlist.
-//! - **Allowlist mode**: when enabled via
-//!   [`set_access_control_enabled(true)`], only addresses that are explicitly
-//!   allowlisted are admitted. The admin signal (`DataKeyCore::AccessControlEnabled`)
-//!   is the single on/off switch; the per-address markers
-//!   (`DataKeyScoped::Allowlisted` / `DataKeyScoped::Denylisted`) are operative
-//!   state.
-//! - **Admin-only mutations**: every entrypoint below calls `admin.require_auth()`
-//!   and is gated by the policy gate, so a non-admin can neither add nor remove
-//!   addresses nor toggle the mode.
-//! - **List update events**: each mutation emits a structured event so indexers
-//!   and dashboards can track membership changes without replaying storage.
+/// Optional participant access control (Issue #274).
+///
+/// This gates who may bet / predict on private or hackathon deployments
+/// without forking the protocol. The model is intentionally simple and safe:
+///
+/// - **Default open**: until an admin explicitly enables allowlist mode via
+///   [`set_access_control_enabled`], every address may participate (subject to
+///   the existing min-bet / cap / mode / window rules). Deploying the feature
+///   changes nothing on its own.
+/// - **Denylist overrides**: a denylisted address is refused **regardless of
+///   mode**. This is an emergency block / ban that works on open deployments
+///   too, and always takes precedence over the allowlist. If an address is
+///   simultaneously marked on both lists, the denylist wins and the address
+///   is blocked.
+/// - **Allowlist mode**: when enabled via
+///   [`set_access_control_enabled(true)`], only addresses that are explicitly
+///   allowlisted are admitted. The admin signal (`DataKeyCore::AccessControlEnabled`)
+///   is the single on/off switch; the per-address markers
+///   (`DataKeyScoped::Allowlisted` / `DataKeyScoped::Denylisted`) are operative
+///   state.
+/// - **Admin-only mutations**: every entrypoint below calls `admin.require_auth()`
+///   and is gated by the policy gate, so a non-admin can neither add nor remove
+///   addresses nor toggle the mode.
+/// - **List update events**: each mutation emits a structured event so indexers
+///   and dashboards can track membership changes without replaying storage.
 
 use crate::admin::{_ensure_not_paused, _require_supported_schema};
 use crate::common::_emit_action_rejected;
@@ -58,7 +60,7 @@ pub fn set_access_control_enabled(env: Env, enabled: bool) -> Result<(), Contrac
     env.events()
         .publish((symbol_short!("access"), symbol_short!("mode")), (enabled,));
 
-    Ok(())
+    Ok(()
 }
 
 /// Returns whether allowlist mode is currently enabled (`false` = open).
@@ -69,10 +71,11 @@ pub fn is_access_control_enabled(env: Env) -> bool {
         .unwrap_or(false)
 }
 
-/// Adds `user` to the allowlist and clears any stale denylist entry (admin only).
+/// Adds `user` to the allowlist (admin only).
 ///
-/// Removing an address from the denylist when it is allowlisted guarantees the
-/// two markers never conflict (denylist would otherwise silently win).
+/// If the address is also denylisted, the denylist marker is preserved: the
+/// denylist wins over the allowlist, so the address remains blocked. This makes
+/// the precedence rule explicit and independent of operation order.
 pub fn add_allowlisted(env: Env, user: Address) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env
@@ -89,12 +92,11 @@ pub fn add_allowlisted(env: Env, user: Address) -> Result<(), ContractError> {
     env.storage().persistent().set(&allow_key, &true);
     _extend_persistent_ttl(&env, &allow_key);
 
-    // Clear a conflicting denylist marker so the allowlist actually takes effect.
+    // Do not clear a conflicting denylist marker: the denylist wins over the
+    // allowlist, so an address on both lists remains blocked. Report the conflict
+    // via the event so operators can see the addition did not grant access.
     let deny_key = DataKeyScoped::Denylisted(user.clone());
     let was_denied = env.storage().persistent().has(&deny_key);
-    if was_denied {
-        env.storage().persistent().remove(&deny_key);
-    }
 
     _emit_list_changed(&env, "allow", "add", &user, was_denied);
     Ok(())
@@ -125,7 +127,7 @@ pub fn remove_allowlisted(env: Env, user: Address) -> Result<(), ContractError> 
     Ok(())
 }
 
-/// Adds `user` to the denylist and clears any stale allowlist entry (admin only).
+/// Adds `user` to the denylist (admin only).
 ///
 /// The denylist wins over the allowlist, so an allowlisted user who is later
 /// denied is blocked. The conflicting allowlist marker is removed for clarity.
@@ -177,7 +179,7 @@ pub fn remove_denylisted(env: Env, user: Address) -> Result<(), ContractError> {
     env.storage().persistent().remove(&deny_key);
 
     _emit_list_changed(&env, "deny", "rm", &user, false);
-    Ok(())
+    Ok(()
 }
 
 /// Returns whether `user` is allowlisted (read-only).
@@ -196,8 +198,10 @@ pub fn is_denylisted(env: Env, user: Address) -> bool {
 
 /// Returns the resolved access state for `user` (read-only).
 ///
-/// Denylist takes precedence over allowlist. An address that is neither marked
-/// resolves to `Open`, regardless of whether allowlist mode is enabled.
+/// Denylist takes precedence over allowlist. An address that is both
+/// allowlisted and denylisted resolves to `AccessState::Denylisted` (blocked).
+/// An address that is neither marked resolves to `Open`, regardless of whether
+/// allowlist mode is enabled.
 pub fn get_access_state(env: Env, user: Address) -> AccessState {
     if env
         .storage()
@@ -226,7 +230,8 @@ pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
 ///
 /// Rules (applied in this order):
 /// 1. A denylisted `user` is always rejected — this is an emergency block and
-///    must win even on open deployments.
+///    must win even on open deployments, and even if the address is also
+///    allowlisted.
 /// 2. If allowlist mode is enabled, an `user` that is not allowlisted is rejected.
 /// 3. Otherwise, the call proceeds (default open).
 ///
@@ -258,9 +263,11 @@ pub fn _enforce_access_control(env: &Env, user: &Address) -> Result<(), Contract
 
 /// Emits a list-mutation event under the `("access", <detail>)` topic.
 /// `reconciled` reports whether the write additionally cleared a conflicting
-/// marker on the other list (so indexers can detect a policy flip).
+/// marker on the other list (so indexers can detect a policy flip). For
+/// `allow_add`, true means the address was already denylisted and remains
+/// blocked (denylist wins).
 fn _emit_list_changed(env: &Env, list: &str, action: &str, user: &Address, reconciled: bool) {
-    let detail: soroban_sdk::Symbol = match (list, action) {
+    let detail: soroban_sdk:Symbol = match (list, action) {
         ("allow", "add") => symbol_short!("allow_add"),
         ("allow", "rm") => symbol_short!("allow_rm"),
         ("deny", "add") => symbol_short!("deny_add"),

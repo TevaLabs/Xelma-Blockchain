@@ -58,6 +58,32 @@ fn test_denylist_blocks_bet_in_open_mode() {
     assert_eq!(ContractError::AccessDenied as u32, 79);
 }
 
+/// `test_denylist_wins_over_allowlist_on_bet` — when an address is present on
+/// both the allowlist and the denylist, the denylist takes precedence and the
+/// bet is blocked, even though the address is still allowlisted.
+#[test]
+fn test_denylist_wins_over_allowlist_on_bet() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.set_access_control_enabled(&true);
+    client.add_allowlisted(&user);
+    client.mint_initial(&user);
+
+    // Add to the denylist without clearing the allowlist marker, so the
+    // address is present on both lists simultaneously.
+    client.add_denylisted(&user);
+    assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
+
+    client.create_round(&1_0000000, &None);
+    let result = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
+    assert_eq!(
+        result,
+        Err(Ok(ContractError::AccessDenied)),
+        "denylist must win over allowlist on bet"
+    );
+}
+
 /// `test_allowlist_enforced` — once allowlist mode is enabled, only allowlisted
 /// addresses may mint / bet; everyone else is refused with `AccessDenied`.
 #[test]
