@@ -22,28 +22,31 @@ const bindingsCode = readIfFound(bindingsPath);
 const docsCode = readIfFound(docsPath);
 
 // --- Rust: parse enum variants and their explicit codes ---
-const rustVariants = [];
-for (const line of errorsCode.split("\n")) {
-  const m = line.match(/^\s*(\w+)\s*=\s*(\d+),?\s*$/);
-  if (m) {
-    rustVariants.push({ name: m[1], code: parseInt(m[2], 10) });
+const rustEnumMatch = errorsCode.match(/enum\s+ContractError\s*\{([\s\S]*?)^\}/m);
+if (!rustEnumMatch) {
+  throw new Error("Could not find ContractError enum in contracts/src/errors.rs");
+}
+
+const rustCodes = new Map();
+for (const line of rustEnumMatch[1].split("\n")) {
+  const match = line.match(/^\s*(\w+)\s*=\s*(\d+),?\s*$/);
+  if (match) {
+    rustCodes.set(Number(match[2]), match[1]);
   }
 }
 
 // --- TypeScript: parse the ContractError map ---
-const tsMapMatch = bindingsCode.match(/export\s+const\s+ContractError\s*=\s*\{([\s\S]*)\}/);
+const tsMapMatch = bindingsCode.match(/export\s+const\s+ContractError\s*=\s*\{([\s\S]*?)^\}/m);
 if (!tsMapMatch) {
   throw new Error("Could not find ContractError map in bindings/src/index.ts");
 }
 
 const tsCodes = new Map();
-const tsEntryRegex = /^\s*(\d+)\s*:\s*\{message:"[^"]+"\}/gm;
+const tsEntryRegex = /^\s*(\d+)\s*:\s*\{message:"([^"]+)"\}/gm;
 let entry;
 while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
-  tsCodes.set(parseInt(entry[1], 10), entry[2]);
+  tsCodes.set(Number(entry[1]), entry[2]);
 }
-
-const rustCodes = new Map(rustVariants.map(v => [v,code, v.name]));
 
 // --- Docs: parse the markdown registry table ---
 const docsCodes = new Map();
@@ -60,16 +63,10 @@ function formatMismatches(label, mismatches) {
 }
 
 describe("Contract Error Parity", () => {
-  it("maps AccessDenied to its stable contract code", () => {
-    expect(rustCodes.get(79)).toBe("AccessDenied");
-    expect(tsCodes.get(79)).toBe("AccessDenied");
-  });
-
   it("has no missing error codes in TS", () => {
     const missingInTS = [];
     for (const [code, name] of rustCodes) {
-      const tsName = tsCodes.get(code);
-      if (!tsName) {
+      if (!tsCodes.has(code)) {
         missingInTS.push(`${code}: ${name}`);
       }
     }
@@ -86,15 +83,32 @@ describe("Contract Error Parity", () => {
     expect(extraInTS, formatMismatches("Extra in TypeScript", extraInTS)).toEqual([]);
   });
 
-  it("has no error name mismatches", () => {
-    const nameMismatches = [];
+  it("maps every public error code to its Rust variant message", () => {
+    const messageMismatches = [];
     for (const [code, name] of rustCodes) {
-      const tsName = tsCodes.get(code);
-      if (tsName && tsName !== name) {
-        nameMismatches.push(`Code ${code}: Rust name is "${name}", TS name is "${tsName}"`);
+      const message = tsCodes.get(code);
+      if (message && message !== name) {
+        messageMismatches.push(`Code ${code}: Rust variant is "${name}", TypeScript message is "${message}"`);
       }
     }
-    expect(nameMismatches, formatMismatches("Name mismatches", nameMismatches)).toEqual([]);
+    expect(messageMismatches, formatMismatches("Variant/message mismatches", messageMismatches)).toEqual([]);
+  });
+
+  it("keeps dispute errors mapped to their public codes and messages", () => {
+    const disputeErrors = [
+      [91, "DisputeWindowExpired"],
+      [92, "ClaimLocked"],
+    ];
+    const mismatches = [];
+    for (const [code, expected] of disputeErrors) {
+      if (rustCodes.get(code) !== expected) {
+        mismatches.push(`Rust code ${code}: expected ${expected}, found ${rustCodes.get(code) ?? "missing"}`);
+      }
+      if (tsCodes.get(code) !== expected) {
+        mismatches.push(`TypeScript code ${code}: expected message ${expected}, found ${tsCodes.get(code) ?? "missing"}`);
+      }
+    }
+    expect(mismatches, formatMismatches("Dispute error parity failures", mismatches)).toEqual([]);
   });
 
   it("keeps the documented registry identical to Rust", () => {

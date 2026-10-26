@@ -6,8 +6,9 @@ use crate::common::{
     TTL_BUMP_THRESHOLD,
 };
 use crate::errors::ContractError;
+use crate::storage::is_ttl_touch_allowed;
 use crate::types::{
-    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt, DeviationConfig,
+    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DeviationConfig,
     DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey, OracleHeartbeatRecord,
     OracleQuorumConfig, PendingWinningsUpdatedAtKey, PolicyAction, ProtocolHealthStatus, Round,
     RuntimeMode, PENDING_WINNINGS_EXPIRY_KEY,
@@ -999,45 +1000,6 @@ pub fn _schema_version(env: &Env) -> Option<u32> {
     env.storage().persistent().get(&DataKeyCore::SchemaVersion)
 }
 
-/// Returns `true` if a `DataKeyCore` variant is eligible for batch TTL touch
-/// by a maintainer. Only system-critical, long-lived keys are allowlisted.
-pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
-    matches!(
-        key,
-        DataKeyCore::Admin
-            | DataKeyCore::Oracle
-            | DataKeyCore::SchemaVersion
-            | DataKeyCore::Paused
-            | DataKeyCore::BetWindowLedgers
-            | DataKeyCore::RunWindowLedgers
-            | DataKeyCore::CloseBufferLedgers
-            | DataKeyCore::MaxStake
-            | DataKeyCore::MaxUserRoundExposure
-            | DataKeyCore::MaxPendingWinnings
-            | DataKeyCore::MinParticipants
-            | DataKeyCore::MaxPrecisionParticipants
-            | DataKeyCore::OracleHeartbeat
-            | DataKeyCore::OracleStaleThreshold
-            | DataKeyCore::OracleMaxDeviationBps
-            | DataKeyCore::OracleDeviationOverrideArmed
-            | DataKeyCore::OracleMinConfidenceBps
-            | DataKeyCore::OracleStrictMode
-            | DataKeyCore::ProtocolFeeBps
-            | DataKeyCore::ProtocolFeeTreasury
-            | DataKeyCore::MigratedToV3
-            | DataKeyCore::ArchiveRetention
-            | DataKeyCore::RoundTemplate
-            | DataKeyCore::Ext(DataKeyExt::LeaderboardWins)
-            | DataKeyCore::Ext(DataKeyExt::LeaderboardStreak)
-            | DataKeyCore::Ext(DataKeyExt::SeasonId)
-            | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardWins)
-            | DataKeyCore::Ext(DataKeyExt::SeasonLeaderboardStreak)
-            | DataKeyCore::LastRoundId
-            | DataKeyCore::OracleRotationProposal
-            | DataKeyCore::MintLimitConfig
-    )
-}
-
 /// Auth-gated batch TTL extension for allowlisted storage keys (admin only).
 ///
 /// Accepts a vector of `DataKeyCore` variants. Each key is validated against the
@@ -1066,7 +1028,7 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
     let mut skipped: u32 = 0;
 
     for key in keys.iter() {
-        if !_is_ttl_touch_allowed(&key) {
+        if !is_ttl_touch_allowed(&key) {
             _emit_action_rejected(
                 &env,
                 &admin,
