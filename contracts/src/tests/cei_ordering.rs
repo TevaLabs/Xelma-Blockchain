@@ -7,7 +7,7 @@
 //!   1. `claim_winnings`: the `PendingWinnings` storage slot is cleared
 //!      *before* the user balance is increased.
 //!   2. `cancel_config_change`: the `PendingConfigChange` storage key is
-//!      removed *before* the cancellation event is emitted.
+//!      removed *before* the cancellation event is emitted (CEI_AUDIT).
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
