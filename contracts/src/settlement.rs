@@ -688,11 +688,8 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
             .try_into()
             .map_err(|_| ContractError::Overflow)?;
 
-        let override_armed: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKeyCore::OracleDeviationOverrideArmed)
-            .unwrap_or(false);
+        let override_armed: bool =
+            crate::admin::get_oracle_deviation_override_armed(env.clone());
 
         if diff_bps > max_bps && !override_armed {
             #[allow(deprecated)]
@@ -710,9 +707,7 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
         }
 
         if diff_bps > max_bps && override_armed {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyCore::OracleDeviationOverrideArmed);
+            crate::admin::_consume_oracle_deviation_override(&env);
 
             #[allow(deprecated)]
             env.events().publish(
@@ -1120,11 +1115,8 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
             .try_into()
             .map_err(|_| ContractError::Overflow)?;
 
-        let override_armed: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKeyCore::OracleDeviationOverrideArmed)
-            .unwrap_or(false);
+        let override_armed: bool =
+            crate::admin::get_oracle_deviation_override_armed(env.clone());
 
         if diff_bps > max_bps && !override_armed {
             #[allow(deprecated)]
@@ -1136,9 +1128,7 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         }
 
         if diff_bps > max_bps && override_armed {
-            env.storage()
-                .persistent()
-                .remove(&DataKeyCore::OracleDeviationOverrideArmed);
+            crate::admin::_consume_oracle_deviation_override(&env);
 
             #[allow(deprecated)]
             env.events().publish(

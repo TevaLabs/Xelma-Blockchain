@@ -124,7 +124,7 @@ helpers, and the business logic for dual-mode prediction markets.
 | Round management | `create_round`, `get_active_round`, `get_last_round_id` |
 | Archived rounds | `get_archived_round`, `get_recent_archived_rounds` |
 | Access control queries | `get_admin`, `get_oracle` |
-| Oracle deviation guardrails | `set_oracle_max_deviation_bps`, `get_oracle_max_deviation_bps`, `arm_oracle_deviation_override` |
+| Oracle deviation guardrails | `set_oracle_max_deviation_bps`, `get_oracle_max_deviation_bps`, `arm_oracle_deviation_override`, `get_oracle_deviation_override_armed` |
 | Oracle heartbeat | `update_oracle_heartbeat`, `get_oracle_heartbeat`, `is_oracle_live`, `set_oracle_stale_threshold`, `get_oracle_stale_threshold` |
 | Window management | `set_windows` (schedules via timelock) |
 | Economic controls | `set_max_stake`, `get_max_stake`, `set_max_user_exposure`, `get_max_user_exposure`, `set_max_pending_winnings` |
@@ -140,7 +140,7 @@ helpers, and the business logic for dual-mode prediction markets.
 | Resolution & settlement | `resolve_round` (UpDown + Precision payout logic), `cancel_round`, `_accumulate_pending` |
 | Balance & minting | `balance`, `mint_initial`, `_set_balance`, `_add_balance` |
 | Claim winnings | `claim_winnings` |
-| Private helpers | `assert_no_active_round`, `_ensure_not_paused`, `_require_supported_schema`, `_schema_version`, `_extend_persistent_ttl`, `_validate_windows`, `_validate_max_stake`, `_validate_oracle_stale_threshold`, `_validate_oracle_max_deviation_bps`, `_schedule_config_change`, `_apply_config_payload`, `_validate_oracle_payload_context`, `_update_stats_win`, `_update_stats_loss`, `_archive_round`, `payout_add`, `payout_mul` |
+| Private helpers | `assert_no_active_round`, `_ensure_not_paused`, `_require_supported_schema`, `_schema_version`, `_extend_persistent_ttl`, `_validate_windows`, `_validate_max_stake`, `_validate_oracle_stale_threshold`, `_validate_oracle_max_deviation_bps`, `_schedule_config_change`, `_apply_config_payload`, `_validate_oracle_payload_context`, `_update_stats_win`, `_update_stats_loss`, `_archive_round`, `payout_add`, `payout_mul`, `_consume_oracle_deviation_override` |
 
 **Related tests:**
 
@@ -423,7 +423,7 @@ cargo test --package xelma-contract security -- --nocapture
   `FutureOracleData` (24)
 - [ ] Test that an oracle payload targeting a different network is rejected
   with `OracleNetworkMismatch` (49)
-- [ ] Test the one-shot deviation override — arm it, resolve (allow),
+- [x] Test the one-shot deviation override — arm it, resolve (allow),
   resolve again without override (expect `OracleDeviationExceeded`)
 
 ---
