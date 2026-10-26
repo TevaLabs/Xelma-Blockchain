@@ -104,7 +104,7 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
 
     assert_eq!(
         client.try_void_round(&round_id),
-        Err(Ok(ContractError::RoundNotCancellable))
+        Err(Ok(ContractError::DisputeWindowExpired))
     );
 
     let treasury_before = client.get_protocol_fee_treasury();
