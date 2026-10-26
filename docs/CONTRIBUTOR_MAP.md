@@ -418,9 +418,9 @@ cargo test --package xelma-contract security -- --nocapture
 ```
 
 **Advanced tasks:**
-- [ ] Test that reusing the same nonce returns `OracleNonceReused` (33)
-- [ ] Test that an oracle payload with a future timestamp returns
-  `FutureOracleData` (24)
+- [x] Test that reusing the same nonce returns `OracleNonceReused` (33) — ✅ `test_resolve_round_duplicate_nonce_rejected`
+- [x] Test that an oracle payload with a future timestamp returns
+  `FutureOracleData` (24) — ✅ `test_resolve_round_future_timestamp`
 - [ ] Test that an oracle payload targeting a different network is rejected
   with `OracleNetworkMismatch` (49)
 - [ ] Test the one-shot deviation override — arm it, resolve (allow),

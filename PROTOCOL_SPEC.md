@@ -58,9 +58,11 @@ commitment = sha256( predicted_price.to_xdr() || salt.to_xdr() )
 
 | Situation | Policy |
 |---|---|
-| ≥1 prediction revealed (or placed directly) | Unrevealed commitments **forfeit to the pot** and count as losers (anti-griefing). |
-| Nobody revealed | All committed stakes are **refunded** to pending winnings (conservation; no locked liquidity). |
+| ≥2 predictions revealed (or placed directly) | Unrevealed commitments **forfeit to the pot** and count as losers (anti-griefing). |
+| 0 or 1 prediction revealed | All stakes (revealed + unrevealed commitments) are **refunded** to pending winnings (no competition, analogous to UpDown one-sided pool). |
 | Admin `cancel_round` / insufficient-participants fallback | All stakes including unrevealed commitments are **refunded**. |
+
+**Precision under-threshold (degenerate market):** When a Precision round has 0 or 1 revealed prediction at settlement time, there is no meaningful competition for the "closest guess" win condition. This is analogous to the one-sided pool scenario in UpDown mode. In this case, all participants receive a full refund with no protocol fee charged and no stats mutation, matching the conservation and fairness properties of UpDown one-sided refunds.
 
 Pot conservation (I8) still holds: with mixed reveals,
 `Σ winner payouts + protocol fee == total pot` (including forfeited

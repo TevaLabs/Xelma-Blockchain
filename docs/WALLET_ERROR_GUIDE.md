@@ -110,5 +110,35 @@ assert.include(errorText, "Insufficient balance");
 ### 5. Monitoring contract upgrades for documentation drift
 Add the script `scripts/check-doc-drift.js` to your CI pipeline. If the script exits with a non‑zero status, the CI job fails, prompting a documentation update before merging.
 
+### 6. Handling FutureOracleData in Oracle Integration
+```ts
+import { ContractErrorDecoder } from "@xelma/contracts";
+
+async function resolveRound(payload: OraclePayload) {
+  try {
+    const result = await contract.resolve_round(payload);
+    return { success: true, result };
+  } catch (error: any) {
+    const code = error.result?.xdr?.value?.val?.code;
+    
+    if (code === 24) { // FutureOracleData
+      console.warn("Future oracle timestamp detected. System clock may be ahead.");
+      console.warn("Payload timestamp:", payload.timestamp);
+      console.warn("Ledger timestamp:", await getLedgerTimestamp());
+      
+      // Alert operator to check NTP synchronization
+      return { 
+        success: false, 
+        error: "FUTURE_TIMESTAMP",
+        message: ContractErrorDecoder(code),
+        remedy: "Verify system clock synchronization via NTP"
+      };
+    }
+    
+    throw error; // Re-throw other errors
+  }
+}
+```
+
 ---
 *Last updated: 2026‑06‑27*
