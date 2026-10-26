@@ -3,7 +3,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKey, OraclePayload, ProtocolStatus};
+use crate::types::{BetSide, DataKey, OraclePayload, ProtocolStatus, RoundArchiveStatus};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, BytesN, Env,
@@ -479,4 +479,68 @@ fn test_chaos_recovery_migrate_active_round_pause_cancel() {
     });
     client.create_round(&1_0000000, &None);
     assert!(client.get_active_round().is_some());
+}
+
+/// Pause during an open dispute window must block `void_round` and
+/// `finalize_round` until recovery, after which the dispute window still
+/// closes normally. (Issue #700)
+#[test]
+fn test_pause_during_dispute_window_blocks_void_and_finalize() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.set_dispute_ledgers(&5u32);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &60_0000000, &BetSide::Up);
+    client.place_bet(&bob, &40_0000000, &BetSide::Down);
+
+    let round = client.get_active_round().unwrap();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+    });
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    // Round is now inside its dispute window (pending dispute, no active round).
+    assert_eq!(client.get_active_round(), None);
+
+    // ── Pause mid-dispute ─────────────────────────────────────────────────
+    client.pause_contract();
+    assert!(client.is_paused());
+    assert_eq!(client.get_runtime_mode(), 2u32);
+
+    // void_round and finalize_round are both locked while paused.
+    assert_eq!(
+        client.try_void_round(&round.round_id),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert_eq!(
+        client.try_finalize_round(&round.round_id),
+        Err(Ok(ContractError::ContractPaused))
+    );
+
+    // ── Recover: unpause restores Normal mode ─────────────────────────────
+    client.unpause_contract();
+    assert!(!client.is_paused());
+    assert_eq!(client.get_runtime_mode(), 0u32);
+
+    // Still inside the dispute window (no ledger advance): void succeeds.
+    client.void_round(&round.round_id);
+    assert_eq!(
+        client.get_archived_round(&round.round_id).unwrap().status,
+        RoundArchiveStatus::Voided
+    );
 }
