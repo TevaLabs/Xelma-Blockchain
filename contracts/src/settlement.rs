@@ -1524,6 +1524,13 @@ pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// Permissionlessly finalizes the staged oracle result once the dispute window
+/// has closed by applying the stored outcome after the window. Calling at the
+/// exact deadline is allowed.
+pub fn finalize(env: Env, round_id: u64) -> Result<(), ContractError> {
+    finalize_round(env, round_id)
+}
+
 /// Deterministically selects the active one-sided settlement policy for a round.
 pub fn _select_one_sided_policy(_round: &Round) -> OneSidedPolicy {
     OneSidedPolicy::Refund

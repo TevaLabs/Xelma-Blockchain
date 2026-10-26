@@ -126,3 +126,30 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
         symbol_short!("finalized")
     ));
 }
+
+
+#[test]
+fn finalize_helper_applies_stored_outcome_after_window() {
+    let env = Env::default();
+    let (client, contract_id, alice, bob, round_id) = setup(&env);
+    env.ledger().with_mut(|ledger| ledger.sequence_number += 5);
+
+    let treasury_before = client.get_protocol_fee_treasury();
+    crate::settlement::finalize(env.clone(), round_id).unwrap();
+
+    let alice_payout = client.get_pending_winnings(&alice);
+    let bob_payout = client.get_pending_winnings(&bob);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+    assert_eq!(alice_payout, 100);
+    assert_eq!(bob_payout, 0);
+    assert_eq!(alice_payout + bob_payout + treasury_delta, 100);
+    assert_eq!(
+        client.get_archived_round(&round_id).unwrap().status,
+        RoundArchiveStatus::Resolved
+    );
+    assert!(has_round_event(
+        &env,
+        &contract_id,
+        symbol_short!("finalized")
+    ));
+}
