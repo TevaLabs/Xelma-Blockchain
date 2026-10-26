@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { decodeContractError } from "../src/index.js";
 import {
   mintIfNeeded,
   placeBetChecked,
@@ -12,7 +13,11 @@ import {
   StakeExceedsMaxError,
   ExposureCapExceededError,
   NoRoundTemplateError,
+  OracleTimestampOutsideWindowError,
+  EpochBudgetExceededError,
+  OracleNotLiveError,
   AccessDeniedError,
+  PendingWinningsNotExpiredError,
   wrapContractError,
   type MintResult,
   type ClaimResult,
@@ -217,6 +222,33 @@ describe("wrapContractError", () => {
     const err = wrapContractError({ code: 79 });
     expect(err).toBeInstanceOf(AccessDeniedError);
     expect((err as AccessDeniedError).variant).toBe("AccessDenied");
+  });
+
+  it("maps disambiguated code 66 to OracleTimestampOutsideWindowError and keeps 67, 68, 86 distinct", () => {
+    const err66 = wrapContractError({ code: 66 });
+    expect(err66).toBeInstanceOf(OracleTimestampOutsideWindowError);
+    expect((err66 as OracleTimestampOutsideWindowError).variant).toBe(
+      "OracleTimestampOutsideWindow"
+    );
+
+    const err67 = wrapContractError({ code: 67 });
+    expect(err67).toBeInstanceOf(EpochBudgetExceededError);
+    expect((err67 as EpochBudgetExceededError).variant).toBe("EpochBudgetExceeded");
+
+    const err68 = wrapContractError({ code: 68 });
+    expect(err68).toBeInstanceOf(OracleNotLiveError);
+    expect((err68 as OracleNotLiveError).variant).toBe("OracleNotLive");
+
+    const err86 = wrapContractError({ code: 86 });
+    expect(err86).toBeInstanceOf(PendingWinningsNotExpiredError);
+    expect((err86 as PendingWinningsNotExpiredError).variant).toBe(
+      "PendingWinningsNotExpired"
+    );
+
+    expect(decodeContractError(66)?.variant).toBe("OracleTimestampOutsideWindow");
+    expect(decodeContractError(67)?.variant).toBe("EpochBudgetExceeded");
+    expect(decodeContractError(68)?.variant).toBe("OracleNotLive");
+    expect(decodeContractError(86)?.variant).toBe("PendingWinningsNotExpired");
   });
 });
 
