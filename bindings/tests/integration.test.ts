@@ -18,6 +18,10 @@ import {
   type ClaimResult,
   type PlaceBetParams,
   type SimulateBetResult,
+  decodeAccessPolicy,
+  checkAccessPolicy,
+  type DecodedAccessPolicy,
+  type AccessStateTag,
 } from "../src/helpers.js";
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -279,5 +283,95 @@ describe("type exports", () => {
   it("SimulateBetResult has expected shape", () => {
     const s: SimulateBetResult = { simulated: true, minResourceFee: "100" };
     expect(s.simulated).toBe(true);
+  });
+});
+
+// ─── decodeAccessPolicy & checkAccessPolicy ───────────────────
+
+describe("decodeAccessPolicy", () => {
+  it("decodes open mode with open state as allowed", () => {
+    const policy = decodeAccessPolicy([false, 0]);
+    expect(policy.accessControlEnabled).toBe(false);
+    expect(policy.state).toBe("Open");
+    expect(policy.allowed).toBe(true);
+    expect(policy.reason).toBeUndefined();
+  });
+
+  it("decodes open mode with allowlisted state as allowed", () => {
+    const policy = decodeAccessPolicy([false, 1]);
+    expect(policy.accessControlEnabled).toBe(false);
+    expect(policy.state).toBe("Allowlisted");
+    expect(policy.allowed).toBe(true);
+  });
+
+  it("decodes open mode with denylisted state as blocked (denylist precedence)", () => {
+    const policy = decodeAccessPolicy([false, 2]);
+    expect(policy.accessControlEnabled).toBe(false);
+    expect(policy.state).toBe("Denylisted");
+    expect(policy.allowed).toBe(false);
+    expect(policy.reason).toMatch(/denylisted/i);
+  });
+
+  it("decodes allowlist mode with allowlisted state as allowed", () => {
+    const policy = decodeAccessPolicy([true, 1]);
+    expect(policy.accessControlEnabled).toBe(true);
+    expect(policy.state).toBe("Allowlisted");
+    expect(policy.allowed).toBe(true);
+    expect(policy.reason).toBeUndefined();
+  });
+
+  it("decodes allowlist mode with open state as blocked", () => {
+    const policy = decodeAccessPolicy([true, 0]);
+    expect(policy.accessControlEnabled).toBe(true);
+    expect(policy.state).toBe("Open");
+    expect(policy.allowed).toBe(false);
+    expect(policy.reason).toMatch(/not allowlisted/i);
+  });
+
+  it("decodes allowlist mode with denylisted state as blocked", () => {
+    const policy = decodeAccessPolicy([true, 2]);
+    expect(policy.accessControlEnabled).toBe(true);
+    expect(policy.state).toBe("Denylisted");
+    expect(policy.allowed).toBe(false);
+    expect(policy.reason).toMatch(/denylisted/i);
+  });
+
+  it("handles object formats and string tags", () => {
+    const fromTag = decodeAccessPolicy({
+      accessControlEnabled: true,
+      state: { tag: "Allowlisted" },
+    });
+    expect(fromTag.allowed).toBe(true);
+    expect(fromTag.state).toBe("Allowlisted");
+
+    const fromString = decodeAccessPolicy({
+      enabled: false,
+      state: "Denylisted",
+    });
+    expect(fromString.allowed).toBe(false);
+    expect(fromString.state).toBe("Denylisted");
+  });
+});
+
+describe("checkAccessPolicy", () => {
+  it("queries contract get_access_policy and returns decoded result", async () => {
+    const client = createMockClient() as any;
+    client.get_access_policy = vi.fn().mockResolvedValue(mockTx([true, { tag: "Allowlisted" }]));
+
+    const result = await checkAccessPolicy(client, "GABC");
+    expect(client.get_access_policy).toHaveBeenCalledWith({ user: "GABC" }, undefined);
+    expect(result.allowed).toBe(true);
+    expect(result.accessControlEnabled).toBe(true);
+    expect(result.state).toBe("Allowlisted");
+  });
+
+  it("passes custom MethodOptions to get_access_policy", async () => {
+    const client = createMockClient() as any;
+    client.get_access_policy = vi.fn().mockResolvedValue(mockTx([false, 0]));
+
+    const opts = { timeoutInSeconds: 30 } as any;
+    const result = await checkAccessPolicy(client, "GABC", opts);
+    expect(client.get_access_policy).toHaveBeenCalledWith({ user: "GABC" }, opts);
+    expect(result.allowed).toBe(true);
   });
 });
