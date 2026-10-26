@@ -16,6 +16,8 @@ jobs:
           targets: wasm32v1-none
       - name: Run Extended Fuzz Tests
         run: FUZZ_MODE=extended cargo test --package xelma-contract --lib tests::fuzz_lifecycle -- --nocapture
+      - name: Run Extended Differential Invariant Harness
+        run: SEQUENCE_LENGTH=200 cargo test --package xelma-contract --lib tests::invariant_harness -- --nocapture
       - name: Archive Fuzz Logs & Artifacts
         if: always()
         uses: actions/upload-artifact@v4

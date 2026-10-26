@@ -16,7 +16,8 @@ use std::vec::Vec;
 
 use super::reference_model::ReferenceModel;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::BetSide;
+use crate::settlement::_apply_one_sided_policy;
+use crate::types::{BetSide, OneSidedPolicy};
 
 /// Represents an action performed in differential testing.
 #[derive(Debug, Clone)]
@@ -253,5 +254,66 @@ fn differential_invariant_harness() {
             );
             pretty_print_failure(seed_opt, step_idx, &actions, act, &diff);
         }
+    }
+}
+
+/// Differential check of the one-sided (degenerate) market policy dimension:
+/// `OneSidedPolicy::Refund` and `OneSidedPolicy::CarryForward` must both
+/// reproduce the reference model's one-sided outcome (100% stake refund to
+/// `pending_winnings`), since the contract currently has no on-chain config
+/// to pick a policy other than `Refund` and `CarryForward` falls back to the
+/// same refund mechanics (see `test_carry_forward_behavior_fallback`).
+#[test]
+fn one_sided_policy_matches_reference() {
+    for policy in [OneSidedPolicy::Refund, OneSidedPolicy::CarryForward] {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin, &oracle);
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        client.mint_initial(&alice);
+        client.mint_initial(&bob);
+
+        client.create_round(&1_0000000u128, &None);
+        client.place_bet(&alice, &100_0000000i128, &BetSide::Up);
+        client.place_bet(&bob, &200_0000000i128, &BetSide::Up);
+        let round = client.get_active_round().unwrap();
+
+        // Build the expected outcome from the reference model's own
+        // one-sided refund branch rather than hand-computed numbers.
+        let mut model = ReferenceModel::new();
+        model.deposit(&alice, 1000_0000000);
+        model.deposit(&bob, 1000_0000000);
+        model.create_round(round.start_ledger);
+        model.place_bet(&alice, 100_0000000, true);
+        model.place_bet(&bob, 200_0000000, true);
+        model.resolve_round(true);
+
+        let participants = soroban_sdk::vec![&env, alice.clone(), bob.clone()];
+        env.as_contract(&contract_id, || {
+            _apply_one_sided_policy(&env, &round, policy, &participants, &None)
+        })
+        .unwrap();
+
+        let expected_alice = *model.pending_winnings.get(&alice).unwrap_or(&0);
+        let expected_bob = *model.pending_winnings.get(&bob).unwrap_or(&0);
+        let actual_alice = client.get_pending_winnings(&alice);
+        let actual_bob = client.get_pending_winnings(&bob);
+
+        assert_eq!(
+            actual_alice, expected_alice,
+            "policy {:?}: alice pending winnings diverge from reference model",
+            policy
+        );
+        assert_eq!(
+            actual_bob, expected_bob,
+            "policy {:?}: bob pending winnings diverge from reference model",
+            policy
+        );
     }
 }

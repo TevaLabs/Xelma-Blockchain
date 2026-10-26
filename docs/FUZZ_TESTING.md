@@ -16,10 +16,19 @@ FUZZ_MODE=fast cargo test --package xelma-contract --lib tests::fuzz_lifecycle
 ```
 
 ### 2. Extended Mode (Nightly & Local Stress Testing)
-Runs extended randomized action sequences (longer trace depth, higher case count) for deep state exploration. This mode runs automatically every night via [.github/workflows/nightly-fuzz-extended.yml](file:///C:/Users/SOSA/Downloads/od/Xelma-Blockchain/.github/workflows/nightly-fuzz-extended.yml) or on manual `workflow_dispatch`.
+Runs extended randomized action sequences (longer trace depth, higher case count) for deep state exploration. This mode runs automatically every night via [.github/workflows/nightly-fuzz-extended.yml](../.github/workflows/nightly-fuzz-extended.yml) (cron `0 2 * * *`) or on manual `workflow_dispatch`.
 
 ```bash
 FUZZ_MODE=extended cargo test --package xelma-contract --lib tests::fuzz_lifecycle
+```
+
+The same nightly job also runs the differential invariant harness
+(`contracts/src/tests/invariant_harness.rs`) with a longer action sequence via
+the `SEQUENCE_LENGTH` environment variable (the harness does not use
+`FUZZ_MODE`), since PR CI only runs its default, shorter sequence length:
+
+```bash
+SEQUENCE_LENGTH=200 cargo test --package xelma-contract --lib tests::invariant_harness
 ```
 
 ---
