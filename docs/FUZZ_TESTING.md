@@ -47,6 +47,12 @@ To replay and debug a specific failing run deterministically, supply the reporte
 SEED=1847291048291 cargo test --package xelma-contract --lib tests::fuzz_lifecycle -- --nocapture
 ```
 
+### Dispute Void/Finalize Timing
+
+The harness randomizes the timing of dispute `void` and `finalize` steps relative to round settlement and claim actions. Dispute resolution actions are interleaved at arbitrary points in the action trace (including before settlement, mid-settlement, and after partial claims) to exercise edge cases where void/finalize races against user claims and round lifecycle transitions. The generator selects void vs. finalize with randomized probability and randomizes the number of intervening actions between dispute initiation and resolution.
+
+When a dispute timing invariant is violated, the failure diagnostics include the `DisputeVoid` or `DisputeFinalize` action in the trace history along with the step index, allowing deterministic replay via the `SEED` environment variable as described above.
+
 ---
 
 ## Core Invariants Enforced
@@ -61,6 +67,8 @@ SEED=1847291048291 cargo test --package xelma-contract --lib tests::fuzz_lifecyc
    When no round is active, attempting to place a bet fails cleanly without mutating user balances or contract state.
 5. **Claim Protection & Idempotency**:
    Calling `claim_winnings` for a user with 0 pending winnings yields `0` payout and leaves user balance unchanged.
+6. **Dispute Void/Finalize Consistency**:
+   A dispute resolved via `void` refunds all staked amounts and leaves no pending winnings; a dispute resolved via `finalize` settles the round exactly once. Void and finalize are mutually exclusive, and neither mutates state after the round has already been resolved.
 
 ---
 
@@ -68,3 +76,4 @@ SEED=1847291048291 cargo test --package xelma-contract --lib tests::fuzz_lifecyc
 
 - **Adding New Actions**: Add a variant to `LifecycleAction` in `contracts/src/tests/fuzz_lifecycle.rs`, update `action_generator()`, and handle execution in `fuzz_protocol_lifecycle_invariants()`.
 - **Adding New Invariants**: Implement assertion logic inside the action execution loop in `fuzz_protocol_lifecycle_invariants()`.
+- **Dispute Timing**: When extending dispute-related actions, ensure `DisputeVoid` and `DisputeFinalize` remain mutually exclusive per round and that the generator preserves randomized interleaving with settlement and claim actions.
