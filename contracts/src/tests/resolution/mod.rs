@@ -10,6 +10,7 @@
 //! - `events` – payout/outcome event emission & loss event semantics
 //! - `golden` – pure settlement_math golden-vector tests
 //! - `policy` – precision payout policy (equal vs. stake-weighted)
+//! - `quorum` – multi-feed quorum gate & no-partial-settle (Issue #681)
 
 #![allow(clippy::inconsistent_digit_grouping)]
 
@@ -20,6 +21,7 @@ mod golden;
 mod min_participants;
 mod policy;
 mod precision;
+mod quorum;
 mod updown;
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};

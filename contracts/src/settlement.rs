@@ -837,6 +837,13 @@ pub fn resolve_round(env: Env, payload: OraclePayload) -> Result<(), ContractErr
 /// rejects outliers beyond the configured threshold, and requires a quorum
 /// of agreeing feeds before settlement proceeds.
 ///
+/// Quorum is hard, never partial (Issue #681): if fewer than
+/// `quorum_threshold` observations survive outlier rejection the call fails
+/// with [`ContractError::InsufficientOracleQuorum`] and nothing is settled —
+/// no price is archived, no payout is queued, no TWAP sample is recorded and
+/// the payload nonce stays unused, so the same nonce can be replayed with a
+/// corrected payload. The nonce is burned only after the quorum gate passes.
+///
 /// The legacy single-oracle `resolve_round` path remains available and
 /// unaffected by this function.
 pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), ContractError> {
@@ -992,6 +999,9 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
     }
 
     // ── Nonce replay protection ───────────────────────────────────────────
+    // Reject reuse here, but only burn the nonce after the quorum gate below.
+    // A failed quorum check is not a settlement attempt: it must not consume
+    // the payload's nonce (no partial settle, Issue #681).
     let nonce_key = DataKeyScoped::ConsumedOracleNonce(round.round_id, payload.nonce);
     if env.storage().persistent().has(&nonce_key) {
         _emit_action_rejected(
@@ -1002,7 +1012,6 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         );
         return Err(ContractError::OracleNonceReused);
     }
-    env.storage().persistent().set(&nonce_key, &true);
 
     // ── Verify round end ledger ───────────────────────────────────────────
     let current_ledger = env.ledger().sequence();
@@ -1190,6 +1199,10 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         );
         return Err(ContractError::InsufficientOracleQuorum);
     }
+
+    // Quorum passed. Burn the nonce (replay protection) only now, immediately
+    // before the settlement writes, so a rejected quorum leaves no trace.
+    env.storage().persistent().set(&nonce_key, &true);
 
     // ── Emit multi-feed summary event ─────────────────────────────────────
     #[allow(deprecated)]

@@ -850,6 +850,7 @@ Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Bloc
 - **[Event Schema](./docs/EVENT_SCHEMA.md)** — Canonical on-chain event schema for indexers
 - **[Protocol Fee Incidence](./docs/FEE_MODEL.md)** — FeeOnPot vs FeeOnWinnings, who bears the fee in each round mode, and the conservation invariants
 - **[Storage Lifecycle](./docs/storage_lifecycle.md)** — TTL/rent policy for persistent keys
+- **[Access Control](./docs/ACCESS_CONTROL.md)** — Open/allowlist modes and denylist precedence
 - **[Bindings Guide](./bindings/README.md)** - TypeScript integration guide
 - **[Wallet Error Guide](./docs/WALLET_ERROR_GUIDE.md)** - Mapping of contract error codes to UI messages
 - **[Test Suite](./contracts/src/tests/)** - Comprehensive test examples

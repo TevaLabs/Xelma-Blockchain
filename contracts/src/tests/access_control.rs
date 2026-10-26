@@ -58,6 +58,39 @@ fn test_denylist_blocks_bet_in_open_mode() {
     assert_eq!(ContractError::AccessDenied as u32, 79);
 }
 
+/// Issue #706: open mode has no denylist bypass. "Open" only disables the
+/// allowlist; a ban still applies to minting and every betting entrypoint, and
+/// the only way back in is an explicit admin mutation.
+#[test]
+fn test_open_mode_denylist_has_no_bypass() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    // Fund before the ban, then ban while the deployment is still open.
+    client.mint_initial(&user);
+    client.add_denylisted(&user);
+    assert!(!client.is_access_control_enabled(), "mode must remain open");
+    assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
+
+    // Open mode does not admit the banned address on any entrypoint.
+    assert!(client.try_mint_initial(&user).is_err());
+    client.create_round(&1_0000000, &None);
+    assert_eq!(
+        client.try_place_bet(&user, &10_0000000, &BetSide::Up),
+        Err(Ok(ContractError::AccessDenied))
+    );
+    assert_eq!(
+        client.try_place_precision_prediction(&user, &10_0000000, &1_1000000),
+        Err(Ok(ContractError::AccessDenied))
+    );
+
+    // The supported bypass is the admin lifting the ban.
+    client.remove_denylisted(&user);
+    assert_eq!(client.get_access_state(&user), AccessState::Open);
+    client.place_bet(&user, &10_0000000, &BetSide::Up);
+    assert_eq!(client.balance(&user), 990_0000000);
+}
+
 /// `test_allowlist_enforced` — once allowlist mode is enabled, only allowlisted
 /// addresses may mint / bet; everyone else is refused with `AccessDenied`.
 #[test]
