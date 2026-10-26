@@ -145,6 +145,8 @@ pub enum DataKeyCore {
     NextGovProposalId,
     /// Overflow bucket for leaderboard/season keys under XDR 50-case limit.
     Ext(DataKeyExt),
+    /// Optional address authorized to create rounds from the configured template.
+    Keeper,
 }
 
 #[contracttype]

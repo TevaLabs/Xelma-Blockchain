@@ -139,21 +139,31 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
         .ok_or(ContractError::AdminNotSet)?;
 
     admin.require_auth();
+    _create_round(&env, start_price, round_mode, mode_value, &admin)
+}
+
+fn _create_round(
+    env: &Env,
+    start_price: u128,
+    round_mode: RoundMode,
+    mode_value: u32,
+    actor: &Address,
+) -> Result<(), ContractError> {
     _ensure_not_paused(&env).inspect_err(|&e| {
-        _emit_action_rejected(&env, &admin, symbol_short!("create"), e);
+        _emit_action_rejected(env, actor, symbol_short!("create"), e);
     })?;
-    assert_no_active_round(&env).inspect_err(|&e| {
-        _emit_action_rejected(&env, &admin, symbol_short!("create"), e);
+    assert_no_active_round(env).inspect_err(|&e| {
+        _emit_action_rejected(env, actor, symbol_short!("create"), e);
     })?;
 
     // Get configured windows (with defaults)
-    _extend_persistent_ttl(&env, &DataKeyCore::BetWindowLedgers);
+    _extend_persistent_ttl(env, &DataKeyCore::BetWindowLedgers);
     let bet_ledgers: u32 = env
         .storage()
         .persistent()
         .get(&DataKeyCore::BetWindowLedgers)
         .unwrap_or(DEFAULT_BET_WINDOW_LEDGERS);
-    _extend_persistent_ttl(&env, &DataKeyCore::RunWindowLedgers);
+    _extend_persistent_ttl(env, &DataKeyCore::RunWindowLedgers);
     let run_ledgers: u32 = env
         .storage()
         .persistent()
@@ -176,8 +186,8 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
         .has(&DataKeyScoped::RoundStartLedger(start_ledger))
     {
         _emit_action_rejected(
-            &env,
-            &admin,
+            env,
+            actor,
             symbol_short!("create"),
             ContractError::RoundStartLedgerReused,
         );
@@ -185,7 +195,7 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
     }
 
     // Generate unique round ID
-    _extend_persistent_ttl(&env, &DataKeyCore::LastRoundId);
+    _extend_persistent_ttl(env, &DataKeyCore::LastRoundId);
     let last_round_id: u64 = env
         .storage()
         .persistent()
@@ -197,7 +207,7 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
     env.storage()
         .persistent()
         .set(&DataKeyCore::LastRoundId, &round_id);
-    _extend_persistent_ttl(&env, &DataKeyCore::LastRoundId);
+    _extend_persistent_ttl(env, &DataKeyCore::LastRoundId);
 
     let bet_end_ledger = start_ledger
         .checked_add(bet_ledgers)
@@ -223,7 +233,7 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
     env.storage()
         .persistent()
         .set(&DataKeyCore::ActiveRound, &round);
-    _extend_persistent_ttl(&env, &DataKeyCore::ActiveRound);
+    _extend_persistent_ttl(env, &DataKeyCore::ActiveRound);
 
     // Claim this ledger sequence for this round, so no later round can reuse it.
     let start_ledger_key = DataKeyScoped::RoundStartLedger(start_ledger);
@@ -246,15 +256,12 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
     Ok(())
 }
 
-/// Creates the next round from the admin-configured template (admin only).
+/// Creates the next round from the admin-configured template.
 ///
 /// This is the "keeper" entry point for always-on demos: rather than an
 /// operator re-supplying `start_price` / `mode` after every settle or
-/// cancel, a keeper (holding the admin key) calls this once a round has
-/// left the active state. Round creation is delegated to [`create_round`]
-/// itself, so the single-active-round guard (`RoundAlreadyActive`) is
-/// inherited verbatim — overlap is structurally impossible, not just
-/// checked twice in two places that could drift apart.
+/// cancel, a configured Keeper can call this without admin privileges. When
+/// no Keeper is configured, the admin retains the existing authorization.
 pub fn create_next_from_template(env: Env) -> Result<u64, ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env
@@ -262,9 +269,14 @@ pub fn create_next_from_template(env: Env) -> Result<u64, ContractError> {
         .persistent()
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
-    admin.require_auth();
+    let actor: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::Keeper)
+        .unwrap_or(admin);
+    actor.require_auth();
     _ensure_not_paused(&env).inspect_err(|&e| {
-        _emit_action_rejected(&env, &admin, symbol_short!("nxttmpl"), e);
+        _emit_action_rejected(&env, &actor, symbol_short!("nxttmpl"), e);
     })?;
 
     let template: RoundTemplate = env
@@ -273,10 +285,22 @@ pub fn create_next_from_template(env: Env) -> Result<u64, ContractError> {
         .get(&DataKeyCore::RoundTemplate)
         .ok_or(ContractError::NoRoundTemplate)
         .inspect_err(|&e| {
-            _emit_action_rejected(&env, &admin, symbol_short!("nxttmpl"), e);
+            _emit_action_rejected(&env, &actor, symbol_short!("nxttmpl"), e);
         })?;
 
-    create_round(env.clone(), template.start_price, template.mode)?;
+    let mode_value = template.mode.unwrap_or(0);
+    if template.start_price < MIN_START_PRICE || template.start_price > MAX_START_PRICE {
+        return Err(ContractError::InvalidStartPrice);
+    }
+    if mode_value > 1 {
+        return Err(ContractError::InvalidMode);
+    }
+    let round_mode = if mode_value == 0 {
+        RoundMode::UpDown
+    } else {
+        RoundMode::Precision
+    };
+    _create_round(&env, template.start_price, round_mode, mode_value, &actor)?;
 
     let round_id: u64 = env
         .storage()

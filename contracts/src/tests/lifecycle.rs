@@ -1088,6 +1088,36 @@ fn test_create_next_from_template_requires_template() {
     assert_eq!(client.get_active_round(), None);
 }
 
+#[test]
+fn test_configured_keeper_creates_template_round_without_admin_auth() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let keeper = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.set_keeper(&Some(keeper.clone()));
+    client.set_round_template(&1_5000000u128, &None);
+    client.create_round(&1_0000000u128, &None);
+    client.cancel_round(&1u32);
+    env.ledger().with_mut(|ledger| ledger.sequence_number += 1);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &keeper,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "create_next_from_template",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert_eq!(client.create_next_from_template(), 2);
+    assert_eq!(client.get_active_round().unwrap().price_start, 1_5000000);
+}
+
 /// Acceptance: overlap is impossible. With a round already active,
 /// `create_next_from_template` must fail exactly like `create_round` would,
 /// and must not disturb the round that is already running.

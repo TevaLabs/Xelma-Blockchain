@@ -1625,8 +1625,7 @@ fn test_protocol_health_round_running_phase() {
 }
 // ── Oracle confidence score tests ────────────────────────────────────────────
 
-#[test]
-fn test_confidence_below_threshold_rejected() {
+fn assert_confidence_matrix_case(strict: bool, confidence: Option<u32>, expect_accept: bool) {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
     let client = VirtualTokenContractClient::new(&env, &contract_id);
@@ -1637,6 +1636,9 @@ fn test_confidence_below_threshold_rejected() {
     client.initialize(&admin, &oracle);
     client.update_oracle_heartbeat(&0u32);
     client.set_oracle_min_confidence_bps(&Some(8000u32));
+    if strict {
+        client.set_oracle_strict_mode(&true);
+    }
     client.create_round(&1_0000000, &None);
 
     env.ledger().with_mut(|li| {
@@ -1644,114 +1646,39 @@ fn test_confidence_below_threshold_rejected() {
         li.timestamp = 100;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
+    let payload = OraclePayload {
         price: 1_2000000,
         timestamp: env.ledger().timestamp(),
         round_id: 0,
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
-        confidence: Some(5000u32),
+        confidence,
         attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
+    };
+
+    if expect_accept {
+        client.resolve_round(&payload);
+    } else {
+        let result = client.try_resolve_round(&payload);
+        assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
+    }
 }
 
 #[test]
-fn test_confidence_above_threshold_accepted() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
+fn test_confidence_validation_matrix_strict_vs_permissive() {
+    let cases = [
+        (false, Some(5000u32), false),
+        (false, Some(9000u32), true),
+        (false, None, true),
+        (true, Some(5000u32), false),
+        (true, Some(9000u32), true),
+        (true, None, false),
+    ];
 
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.set_oracle_min_confidence_bps(&Some(8000u32));
-    client.create_round(&1_0000000, &None);
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
-
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: Some(9000u32),
-        attestation: None,
-    });
-}
-
-#[test]
-fn test_missing_confidence_accepted_when_not_strict() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.set_oracle_min_confidence_bps(&Some(8000u32));
-    // strict mode NOT enabled
-    client.create_round(&1_0000000, &None);
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
-
-    // Legacy payload without confidence accepted when strict mode is off
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-}
-
-#[test]
-fn test_missing_confidence_rejected_in_strict_mode() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.set_oracle_min_confidence_bps(&Some(8000u32));
-    client.set_oracle_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
+    for (strict, confidence, expect_accept) in cases {
+        assert_confidence_matrix_case(strict, confidence, expect_accept);
+    }
 }
 
 // ── Oracle heartbeat health gate tests (Issue #264) ──────────────────────────

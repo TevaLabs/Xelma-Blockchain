@@ -334,6 +334,44 @@ pub fn get_admin(env: Env) -> Option<Address> {
     env.storage().persistent().get(&key)
 }
 
+/// Sets or clears the dedicated template-round Keeper (admin only).
+pub fn set_keeper(env: Env, keeper: Option<Address>) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("set_keep"), e);
+    })?;
+
+    let key = DataKeyCore::Keeper;
+    let event_keeper = keeper.clone();
+    match keeper {
+        Some(address) => {
+            env.storage().persistent().set(&key, &address);
+            _extend_persistent_ttl(&env, &key);
+        }
+        None => env.storage().persistent().remove(&key),
+    }
+
+    #[allow(deprecated)]
+    env.events().publish(
+        (symbol_short!("keeper"), symbol_short!("set")),
+        (event_keeper,),
+    );
+    Ok(())
+}
+
+/// Returns the dedicated template-round Keeper, if configured.
+pub fn get_keeper(env: Env) -> Option<Address> {
+    let key = DataKeyCore::Keeper;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key)
+}
+
 pub fn get_oracle(env: Env) -> Option<Address> {
     let key = DataKeyCore::Oracle;
     _extend_persistent_ttl(&env, &key);
