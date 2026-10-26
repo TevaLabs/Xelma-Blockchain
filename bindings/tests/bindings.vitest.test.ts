@@ -20,6 +20,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decodeRoundPhase, ROUND_PHASE_LABELS } from '../src/helpers';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -29,6 +30,7 @@ const hasWasm = WASM_PATH !== '' && existsSync(WASM_PATH);
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const BINDINGS_SRC = resolve(__dirname, '../src/index.ts');
 const PARITY_SCRIPT = resolve(__dirname, '../src/parity.js');
+const HELPERS_SRC = resolve(__dirname, '../src/helpers.ts');
 
 // All public methods the contract currently exports.
 // Keep this list in sync with contracts/src/contract.rs `impl VirtualTokenContract`.
@@ -253,5 +255,77 @@ describe('Method name compatibility', () => {
     const src = readFileSync(BINDINGS_SRC, 'utf8');
     // Contract uses snake_case — verify at least one snake_case method is present
     expect(src).toMatch(/get_active_round|create_round|place_bet/);
+  });
+});
+
+// ── RoundPhase decoding (helpers.ts) ─────────────────────────────────────────
+
+describe('RoundPhase decoding', () => {
+  it('helpers.ts exists', () => {
+    expect(existsSync(HELPERS_SRC)).toBe(true);
+  });
+
+  it('exports a user-facing phase label map', () => {
+    expect(ROUND_PHASE_LABELS).toBeTypeOf('object');
+    expect(Object.keys(ROUND_PHASE_LABELS).length).toBeGreaterThan(0);
+  });
+
+  it('maps every phase to a non-empty human-readable string', () => {
+    for (const [phase, label] of Object.entries(ROUND_PHASE_LABELS)) {
+      expect(phase).toBeTruthy();
+      expect(typeof label).toBe('string');
+      expect(label.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('decodes numeric phase 0 to a string label', () => {
+    const label = decodeRoundPhase(0);
+    expect(typeof label).toBe('string');
+    expect(label.length).toBeGreaterThan(0);
+  });
+
+  it('decodes every known numeric phase to a label', () => {
+    for (const key of Object.keys(ROUND_PHASE_LABELS)) {
+      const numeric = Number(key);
+      if (Number.isNaN(numeric)) continue;
+      expect(decodeRoundPhase(numeric)).toBe(ROUND_PHASE_LABELS[numeric]);
+    }
+  });
+
+  it('decodes string phase names to a label', () => {
+    const label = decodeRoundPhase('Open');
+    expect(typeof label).toBe('string');
+    expect(label.length).toBeGreaterThan(0);
+  });
+
+  it('returns a fallback label for unknown phases', () => {
+    const label = decodeRoundPhase(9999);
+    expect(typeof label).toBe('string');
+    expect(label.length).toBeGreaterThan(0);
+  });
+
+  it('is case-insensitive for string phase names', () => {
+    expect(decodeRoundPhase('open')).toBe(decodeRoundPhase('Open'));
+    expect(decodeRoundPhase('OPEN')).toBe(decodeRoundPhase('Open'));
+  });
+
+  it('never returns a raw numeric value', () => {
+    for (const phase of [0, 1, 2, 3, 4, 5]) {
+      expect(typeof decodeRoundPhase(phase)).toBe('string');
+    }
+  });
+});
+
+// ── Helpers source structural tests ──────────────────────────────────────────
+
+describe('Helpers source', () => {
+  it('helpers.ts exports decodeRoundPhase', () => {
+    const src = readFileSync(HELPERS_SRC, 'utf8');
+    expect(src).toMatch(/export\s+function\s+decodeRoundPhase/);
+  });
+
+  it('helpers.ts exports ROUND_PHASE_LABELS', () => {
+    const src = readFileSync(HELPERS_SRC, 'utf8');
+    expect(src).toContain('ROUND_PHASE_LABELS');
   });
 });
