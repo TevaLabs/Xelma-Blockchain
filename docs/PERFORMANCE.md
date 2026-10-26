@@ -20,23 +20,24 @@ and a markdown table row that can be copied into this document.
 
 ## Latest local benchmark table
 
-The exact numbers depend on the Soroban SDK version and host runtime. Regenerate the table before release and replace the rows below with the `--nocapture` output.
+Measured 2026-10-24 against upstream `main` commit `bfda3b807619979cb9a5511370c53600a566acd4`, via `cargo test --package xelma-contract cost_benchmarks -- --nocapture` (soroban-sdk 23.0.1, `cargo test` default host runtime). The exact numbers depend on the Soroban SDK version and host runtime; regenerate before release.
 
 | Function / path | CPU instructions | Memory bytes |
 |---|---:|---:|
-| `create_round` | _regenerate_ | _regenerate_ |
-| `place_bet` | _regenerate_ | _regenerate_ |
-| `resolve_round` | _regenerate_ | _regenerate_ |
-| `claim_winnings` | _regenerate_ | _regenerate_ |
-| `get_updown_positions_page` | _regenerate_ | _regenerate_ |
-| `get_precision_predictions_page` | _regenerate_ | _regenerate_ |
-| `get_precision_predictions_cursor` | _regenerate_ | _regenerate_ |
-| `get_updown_positions_cursor` | _regenerate_ | _regenerate_ |
-| `get_leaderboard_by_wins` | _regenerate_ | _regenerate_ |
-| `get_leaderboard_by_streak` | _regenerate_ | _regenerate_ |
-| `leaderboard_update_at_limit` | _regenerate_ | _regenerate_ |
-| `season_reset_at_limit` | _regenerate_ | _regenerate_ |
-| `leaderboard_full_page_read` | _regenerate_ | _regenerate_ |
+| `create_round` | `279578` | `35284` |
+| `place_bet` | `308710` | `49944` |
+| `precision_submit` | `318749` | `51006` |
+| `claim_winnings` | `218355` | `42618` |
+| `get_updown_positions_page` | `286285` | `29729` |
+| `get_precision_predictions_page` | `302514` | `32567` |
+| `resolve_round` | `2508327` | `508056` |
+| `resolve_round_medium_n25` | `306664340` | `30371736` |
+| `resolve_round_max_cap_n100` | `17975552255` | `1177240606` |
+| `resolve_precision_max_cap_n100` | `18208121255` | `1179087258` |
+
+**Note on `resolve_round_medium_n25`**: this run's measured CPU (306,664,340) exceeds this benchmark's own `RESOLVE_CPU_MAX` ceiling assertion in `cost_benchmarks.rs`, so `bench_cost_resolve_round_medium_set` fails on this host/SDK combination. The number above is the actual measured value from that failing run, not a passing baseline; treat it as a known regression to investigate, not a target to match.
+
+**Benchmarks that cannot currently be measured**: `bench_cost_leaderboard_update_at_limit`, `bench_cost_leaderboard_full_page_read_at_limit`, `bench_cost_season_reset_at_limit`, and their `verify_*_cost_is_bounded` counterparts all hit a hard `HostError: Error(Budget, ExceededLimit)` host-level trap (not a soft assertion failure) on this soroban-env-host (23.0.1) version, confirmed via `git stash` to be identical on a clean `main` checkout, so it is pre-existing and unrelated to any feature work. No `get_leaderboard_by_wins`, `get_leaderboard_by_streak`, `get_precision_predictions_cursor`, or `get_updown_positions_cursor` benchmark exists in `cost_benchmarks.rs` at all; those are aspirational rows from an earlier draft of this table, not real measurements.
 
 ## Regression policy
 
@@ -162,6 +163,8 @@ The executable results are produced by the following named tests in
 CI runs these tests with `--nocapture` and uploads the complete
 [`cost-benchmarks` artifact](../.github/workflows/ci.yml) for each run. This is
 the authoritative result because host-cost numbers vary with the Soroban SDK
-and runner architecture. The current source baseline cannot be measured
-locally until the unrelated upstream compile failures recorded in
-`SECURITY_REVIEW.md` are repaired; no fabricated CPU numbers are published.
+and runner architecture. Locally, the leaderboard and season-reset benchmarks
+specifically hit a hard host-level budget trap on this environment's
+soroban-env-host version, confirmed pre-existing (see the note in the table
+above); every other benchmark in this file runs and measures cleanly, and no
+fabricated CPU numbers are published for any row.

@@ -740,7 +740,11 @@ fn test_heartbeat_stale_within_grace_strict_blocks_resolve() {
         confidence: None,
         attestation: None,
     });
-    assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
+    // Strict mode uses the dedicated OracleNotLive code for every heartbeat
+    // block (Issue #678), consistent with test_heartbeat_gate_blocks_offline_status_in_strict_mode
+    // and resolve_round_multi's parity gate; only non-strict callers see the
+    // generic OracleHeartbeatUnhealthy.
+    assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
 }
 
 /// Degraded fresh but strict mode blocks settlement.
@@ -1332,6 +1336,80 @@ fn test_resolve_round_wrong_network_id_rejected() {
         attestation: None,
     });
     assert_eq!(result, Err(Ok(ContractError::OracleNetworkMismatch)));
+}
+
+/// Regression (Issue #677): a payload rejected for network mismatch must
+/// never consume the nonce. If the ordering were reversed (nonce write
+/// before the network check), a wrong-network payload carrying a nonce a
+/// legitimate oracle intends to use next would poison that nonce for the
+/// real submission, a self-inflicted denial of service. Confirms both that
+/// the reused nonce is NOT marked consumed, and that the same nonce still
+/// resolves successfully afterward with the correct network id.
+#[test]
+fn test_resolve_round_wrong_network_id_does_not_consume_nonce() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.create_round(&1_0000000, &None);
+    let round = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+        li.timestamp = 100;
+    });
+
+    let wrong_network = BytesN::from_array(&env, &[0xFFu8; 32]);
+    let rejected = client.try_resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: 100,
+        round_id: round.start_ledger,
+        nonce: 1u64,
+        network_id: wrong_network,
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(rejected, Err(Ok(ContractError::OracleNetworkMismatch)));
+
+    // The nonce must not have been consumed by the rejected attempt.
+    env.as_contract(&contract_id, || {
+        let consumed: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 1u64))
+            .unwrap_or(false);
+        assert!(
+            !consumed,
+            "a payload rejected for network mismatch must not consume its nonce"
+        );
+    });
+
+    // The same nonce, resubmitted with the correct network id, must still
+    // resolve the round successfully.
+    let resolved = client.try_resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: 100,
+        round_id: round.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert!(
+        resolved.is_ok(),
+        "the legitimate oracle must still be able to use the nonce the \
+         rejected attempt tried to spend, got {:?}",
+        resolved
+    );
+    assert_eq!(client.get_active_round(), None);
 }
 
 #[test]
