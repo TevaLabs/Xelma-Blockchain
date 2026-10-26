@@ -403,3 +403,96 @@ fn test_resolve_round_without_active_round() {
     });
     assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
 }
+
+#[test]
+fn test_protocol_fee_not_collected_on_one_sided_resolution() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.schedule_protocol_fee_bps(&Some(500u32));
+    env.ledger().with_mut(|li| li.sequence_number = 2_000);
+    client.apply_scheduled_changes(&crate::types::ConfigChangeKind::ProtocolFeeBps);
+
+    let start_price: u128 = 1_500_0000;
+    client.create_round(&start_price, &None);
+
+    // Place bets on only one side (Down) to create a one-sided pool
+    client.place_bet(&alice, &100_000_0000, &BetSide::Down);
+    client.place_bet(&bob, &50_000_0000, &BetSide::Down);
+
+    env.as_contract(&contract_id, || {
+        let mut positions = Map::<Address, UserPosition>::new(&env);
+        positions.set(
+            alice.clone(),
+            UserPosition {
+                amount: 100_000_0000,
+                side: BetSide::Down,
+            },
+        );
+        positions.set(
+            bob.clone(),
+            UserPosition {
+                amount: 50_000_0000,
+                side: BetSide::Down,
+            },
+        );
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::UpDownPositions, &positions);
+
+        let mut round: Round = env
+            .storage()
+            .persistent()
+            .get(&DataKeyCore::ActiveRound)
+            .unwrap();
+        round.pool_up = 0;
+        round.pool_down = 150_000_0000;
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::ActiveRound, &round);
+    });
+
+    env.ledger().with_mut(|li| li.sequence_number += 12);
+    client.resolve_round(&OraclePayload {
+        price: start_price,
+        timestamp: env.ledger().timestamp(),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
+        nonce: 7u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    // One-sided resolution with protocol fees enabled must NOT collect a fee
+    assert_eq!(
+        count_protocol_fee_events(&env),
+        0,
+        "one-sided resolution MUST NOT emit a fee event"
+    );
+    assert_eq!(
+        client.get_protocol_fee_treasury(),
+        0,
+        "one-sided resolution MUST NOT credit the treasury"
+    );
+    let payouts = sum_pending_payouts(&env, &client.address, &[alice.clone(), bob.clone()]);
+    assert_eq!(
+        payouts, 150_000_0000i128,
+        "all participants refunded their full stake on one-sided pool"
+    );
+}

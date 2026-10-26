@@ -342,3 +342,12 @@ fn test_rounding_and_value_conservation() {
     assert_eq!(alice_refund + bob_refund, total_pool);
     assert_eq!(client.get_protocol_fee_treasury(), 0);
 }
+
+#[test]
+fn test_get_one_sided_policy_when_no_active_round() {
+    let (env, client, _admin, _oracle) = setup_test_env();
+
+    // No round created - get_one_sided_policy should return Refund default
+    let policy = client.get_one_sided_policy();
+    assert_eq!(policy, Policy::Refund);
+}
