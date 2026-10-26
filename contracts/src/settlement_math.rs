@@ -332,7 +332,7 @@ pub fn find_precision_winners_with_policy(
         for &(idx, score) in &scores {
             let is_winner = match policy.confidence_band {
                 None => score == best,
-                Some(band) => score <= band || score <= best.saturating_add(band),
+                Some(band) => score <= best.saturating_add(band),
             };
             if is_winner {
                 winner_indices.push(idx);
