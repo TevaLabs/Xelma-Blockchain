@@ -40,6 +40,12 @@ resource budget** (`100,000,000` CPU instructions and `100 MiB` memory). This
 is a hard guardrail: a path that exceeds it would fail on-chain. The benchmark
 output records the actual per-path cost.
 
+`resolve_round` additionally has a dedicated storage benchmark in
+[`src/tests/storage_benchmarks.rs`](src/tests/storage_benchmarks.rs) that
+measures the storage read/write footprint of resolution (round entry, bets,
+and leaderboard updates). It is gated against the same Soroban per-transaction
+budget so the resolve path cannot silently drift past the on-chain ceiling.
+
 To tighten the guardrail toward true regression detection:
 
 1. Run the suite with `--nocapture` on a clean `main`.
@@ -67,9 +73,19 @@ Soroban transaction budget. CI publishes the untruncated measurements in its
 `cost-benchmarks` artifact; copy those values here only from a green run on the
 same SDK version.
 
+The `resolve_round` row is captured from `bench_cost_resolve_round` and its
+storage companion `bench_storage_resolve_round`; record both CPU and memory
+from a green run and keep the `RESOLVE_ROUND_*_MAX` constants in
+`cost_benchmarks.rs` / `storage_benchmarks.rs` within the documented tolerance.
+
 ## CI integration
 
 The CI `rust-test` job runs the full workspace test suite (which includes these
 benchmarks, so a breach fails the build) and additionally runs a dedicated
 `Benchmark report` step with `--nocapture` to surface the measured cost numbers
 in the workflow logs for drift review.
+
+The `storage_benchmarks` suite is run as part of the same `rust-test` job, so a
+`resolve_round` storage regression that breaches the budget fails CI alongside
+the CPU/memory cost benchmarks.
+
