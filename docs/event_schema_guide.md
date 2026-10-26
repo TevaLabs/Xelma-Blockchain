@@ -89,19 +89,25 @@ The optional protocol fee introduces a new top-level event namespace
 `("protocol", ...)` for treasury-related observability. Three event types
 emitted, all gated on admin-controlled timelock activation:
 
-### `("protocol", "fee_collected")` — competitive settlement fee accrued
+### `("protocol", "fee_coll")` — competitive settlement fee accrued
+
+> The second topic is the short symbol `fee_coll`, not `fee_collected`:
+> Soroban `Symbol`s are limited to 9 characters. Scan for `fee_coll`.
 
 Emitted exactly once per competitive settlement (UpDown indexed/legacy,
 Precision indexed/legacy) when `get_protocol_fee_bps` returns
 `Some(active_bps)`. Payload `(round_id: u64, fee_amount: i128,
-treasury_balance: i128, bps_active: u32)`.
+treasury_balance: i128, bps_active: u32, fee_model: u32)`.
 
 Conservation `Σ payouts + fee_amount == total_pot` is enforced in
 `_apply_protocol_fee_*`. UpDown conservatively deducts from the losing
 pool first, then spills over into the winning pool — so winners
 receive their remaining principal when the fee exceeds losing liquidity.
-Refund paths (the canonical `("round","summary")` with `status = 2 (FallbackRefund)`,
-refunds, admin cancellations) do NOT emit this event.
+Refund paths (UpDown unchanged-price, one-sided pool, min-participants
+fallback, admin cancellation, dispute-window void, Precision zero-reveal)
+do NOT emit this event and MUST NOT move the treasury; every participant
+receives their exact stake back. `resolution::fees` asserts this with a
+full event-stream scan.
 
 ### `("protocol", "fee_bps_set")` — timelock applied
 
@@ -120,23 +126,24 @@ to spend the credited amount.
 
 ### Indexer guidance
 
-A fee-aware indexer can rely on `fee_collected` events as the canonical
+A fee-aware indexer can rely on `fee_coll` events as the canonical
 record of fee accrual. Treasury balance computations should:
 
-1. Subscribe to `("protocol", fee_collected)` for per-round accruals.
+1. Subscribe to `("protocol", fee_coll)` for per-round accruals.
 2. Subscribe to `("protocol", fee_withdrawn)` for treasury drains.
 3. Optionally cross-reference `("config", applied)` events associated
    with `("protocol", fee_bps_set)` for rate changes.
 
 Conservations across event streams:
 
-* For each `fee_collected` event: Σ of `("claim","winnings")` for the
+* For each `fee_coll` event: Σ of `("claim","winnings")` for the
   same round's winners + `fee_amount` == `round.pool_up + round.pool_down`
   (UpDown) or `Σ prediction.amount` (Precision mode, including
   unrevealed-commitment stakes that forfeited to the pot).
-* When a Precision round resolves with **zero reveals**, stakes are refunded
-  instead of fee-split: `Σ refund amounts == Σ commitment amounts` and no
-  `fee_collected` event is emitted for that path.
-* Treasury balance monotonically increases across `fee_collected`
+* When a Round resolves on a refund path (including an UpDown round whose
+  price is unchanged and a Precision round with **zero reveals**), stakes are
+  refunded instead of fee-split: `Σ refund amounts == pot` and no `fee_coll`
+  event is emitted for that path.
+* Treasury balance monotonically increases across `fee_coll`
   events and monotonically decreases across `fee_withdrawn` events.
 

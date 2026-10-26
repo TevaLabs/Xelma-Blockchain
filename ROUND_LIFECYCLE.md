@@ -80,7 +80,7 @@ The oracle calls `resolve_round` after `end_ledger` is reached. On success:
 |---|---|---|
 | Betting | `ledger < bet_end_ledger` | `commit_prediction`, `place_precision_prediction` |
 | Reveal | `bet_end_ledger ≤ ledger < end_ledger` | `reveal_prediction` only |
-| Resolve | `ledger ≥ end_ledger` | `resolve_round` |
+| Resolvable | `ledger ≥ end_ledger` | `resolve_round` |
 
 **Unrevealed commitments:** If at least one prediction is revealed, any
 still-unrevealed commitment **forfeits to the pot**. If nobody reveals,

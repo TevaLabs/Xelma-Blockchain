@@ -645,7 +645,11 @@ export const ContractError = {
   /** The supplied token amount is invalid. */
   101: {message:"InvalidAmount"},
   /** The close-buffer has frozen betting before the betting window ends. */
-  102: {message:"BettingClosed"}
+  102: {message:"BettingClosed"},
+  /**
+   * The ledger sequence is not strictly greater than the previous heartbeat.
+   */
+  103: {message:"LedgerBehind"}
 }
 
 /**
@@ -688,7 +692,7 @@ export function formatContractError(code: number): string {
  * @returns Friendly message for UI or wallet integration.
  */
 export function ContractErrorDecoder(code: number): string {
-  const err = (ContractError as any)[code];
+  const err = ContractError[code];
   if (err && err.message) {
     return err.message;
   }
