@@ -1,4 +1,4 @@
-## WASM Size Budget
+# WASm Size Budget
 
 ### Current baseline
 Stored in `.wasm-size-baseline` at the repo root (plain integer, bytes).
@@ -15,7 +15,7 @@ The `wasm-size-gate` job in `.github/workflows/ci.yml`:
 
 ### Checking it locally
 Run `./scripts/check_wasm_size.sh` with no arguments from anywhere in the
-repo — it builds the release WASM the same way CI does and reports the same
+repo — it builds the release WASM the same way CJ does and reports the same
 budget check, so you can catch a size regression before pushing. Pass an
 existing `.wasm` path as an argument to skip the build and just measure a
 WASM you already built.
