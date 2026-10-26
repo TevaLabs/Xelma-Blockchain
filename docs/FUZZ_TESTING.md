@@ -61,10 +61,13 @@ SEED=1847291048291 cargo test --package xelma-contract --lib tests::fuzz_lifecyc
    When no round is active, attempting to place a bet fails cleanly without mutating user balances or contract state.
 5. **Claim Protection & Idempotency**:
    Calling `claim_winnings` for a user with 0 pending winnings yields `0` payout and leaves user balance unchanged.
+6. **Early Cashout Consistency**:
+   `cash_out_early` on an active round with a user position yields a payout consistent with the early cashout formula, decrements the active round pot accordingly, and leaves all balances non-negative. Calling `cash_out_early` when no round is active or the user has no position fails cleanly without mutating state.
 
 ---
 
 ## Extending the Harness
 
 - **Adding New Actions**: Add a variant to `LifecycleAction` in `contracts/src/tests/fuzz_lifecycle.rs`, update `action_generator()`, and handle execution in `fuzz_protocol_lifecycle_invariants()`.
+- **Early Cashout Action**: The `CashOutEarly` variant is generated in `action_generator()` and executed in `fuzz_protocol_lifecycle_invariants()`, exercising the early cashout path alongside place-bet, resolve, claim, and withdraw actions.
 - **Adding New Invariants**: Implement assertion logic inside the action execution loop in `fuzz_protocol_lifecycle_invariants()`.
