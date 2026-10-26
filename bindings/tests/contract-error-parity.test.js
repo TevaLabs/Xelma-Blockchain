@@ -2,6 +2,13 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { describe, it, expect } from "vitest";
+import {
+  checkContractErrorParity,
+  parseRustContractErrors,
+  parseBindingsContractErrors,
+  parseDocumentedContractErrors,
+  runParityCheck,
+} from "../src/parity.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,13 +44,13 @@ if (!tsMapMatch) {
 }
 
 const tsCodes = new Map();
-const tsEntryRegex = /^\s*(\d+)\s*:\s*\{message:"[^"]+"\}/gm;
+const tsEntryRegex = /^\s*(\d+)\s*:\s*\{message:"([^"]+)"\}/gm;
 let entry;
 while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
   tsCodes.set(parseInt(entry[1], 10), entry[2]);
 }
 
-const rustCodes = new Map(rustVariants.map(v => [v,code, v.name]));
+const rustCodes = new Map(rustVariants.map((v) => [v.code, v.name]));
 
 // --- Docs: parse the markdown registry table ---
 const docsCodes = new Map();
@@ -56,7 +63,7 @@ for (const line of docsCode.split("\n")) {
 
 function formatMismatches(label, mismatches) {
   if (mismatches.length === 0) return "";
-  return `${label}:\n${mismatches.map(m => `  - ${m}`).join("\n")}\n\nFix by updating the appropriate source and re-running this test.\n`;
+  return `${label}:\n${mismatches.map((m) => `  - ${m}`).join("\n")}\n\nFix by updating the appropriate source and re-running this test.\n`;
 }
 
 describe("Contract Error Parity", () => {
@@ -125,5 +132,100 @@ describe("Contract Error Parity", () => {
 
   it("contains formatContractError helper", () => {
     expect(bindingsCode.includes("export function formatContractError")).toBe(true);
+  });
+
+  it("passes parity.js ContractError parity check on synced sources", () => {
+    const result = checkContractErrorParity({
+      errorsContractCode: errorsCode,
+      bindingsCode,
+      errorDocsCode: docsCode,
+    });
+    expect(result.parseErrors).toEqual([]);
+    expect(result.errorsDrift).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(runParityCheck()).toBe(true);
+  });
+
+  it("parity.js fails when a Rust ContractError variant is missing from TS bindings", () => {
+    const driftedBindings = bindingsCode.replace(
+      /^\s*102:\s*\{message:"BettingClosed"\},?\s*$/m,
+      ""
+    );
+    const result = checkContractErrorParity({
+      errorsContractCode: errorsCode,
+      bindingsCode: driftedBindings,
+      errorDocsCode: docsCode,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errorsDrift).toContain(
+      "Error variant 'BettingClosed' (value 102) exists in contract but is missing from bindings error map."
+    );
+  });
+
+  it("parity.js fails when TS bindings contain an extra ContractError variant", () => {
+    const driftedBindings = bindingsCode.replace(
+      '102: {message:"BettingClosed"}',
+      '102: {message:"BettingClosed"},\n  999: {message:"DriftedPhantomError"}'
+    );
+    const result = checkContractErrorParity({
+      errorsContractCode: errorsCode,
+      bindingsCode: driftedBindings,
+      errorDocsCode: docsCode,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errorsDrift).toContain(
+      "Error variant 'DriftedPhantomError' (value 999) exists in bindings error map but is missing from contract."
+    );
+  });
+
+  it("parity.js fails when a ContractError numeric code drifts between Rust and TS", () => {
+    const driftedBindings = bindingsCode.replace(
+      '102: {message:"BettingClosed"}',
+      '103: {message:"BettingClosed"}'
+    );
+    const result = checkContractErrorParity({
+      errorsContractCode: errorsCode,
+      bindingsCode: driftedBindings,
+      errorDocsCode: docsCode,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errorsDrift).toContain(
+      "Error variant 'BettingClosed' has value 102 in contract but value 103 in bindings."
+    );
+  });
+
+  it("parity.js fails when docs/CONTRACT_ERRORS.md drifts from Rust", () => {
+    const driftedDocs = docsCode.replace("| 102 | `BettingClosed` |", "");
+    const result = checkContractErrorParity({
+      errorsContractCode: errorsCode,
+      bindingsCode,
+      errorDocsCode: driftedDocs,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errorsDrift).toContain(
+      "Error variant 'BettingClosed' (value 102) exists in contract but is missing from docs."
+    );
+  });
+
+  it("parity.js fails when Rust ContractError has duplicate numeric error codes", () => {
+    const driftedRust = errorsCode.replace("BettingClosed = 102,", "BettingClosed = 66,");
+    const parsed = parseRustContractErrors(driftedRust);
+    expect(parsed.duplicates.length).toBeGreaterThan(0);
+
+    const result = checkContractErrorParity({
+      errorsContractCode: driftedRust,
+      bindingsCode,
+      errorDocsCode: docsCode,
+    });
+    expect(result.ok).toBe(false);
+    expect(
+      result.errorsDrift.some((msg) => msg.includes("Duplicate Rust ContractError code 66"))
+    ).toBe(true);
+  });
+
+  it("parses non-empty ContractError registries across Rust, TS, and docs", () => {
+    expect(Object.keys(parseRustContractErrors(errorsCode).errorVariants).length).toBeGreaterThan(0);
+    expect(Object.keys(parseBindingsContractErrors(bindingsCode).bindingsErrors).length).toBeGreaterThan(0);
+    expect(Object.keys(parseDocumentedContractErrors(docsCode).documentedErrors).length).toBeGreaterThan(0);
   });
 });
