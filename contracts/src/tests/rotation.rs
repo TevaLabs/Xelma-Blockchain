@@ -60,7 +60,9 @@ fn test_propose_and_accept_before_expiry_succeeds() {
     assert_eq!(proposal.expires_at, 4600);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        // Earliest allowed moment: the 1h delay has elapsed and the
+        // proposal (expires_at = 4600) has not yet expired.
+        li.timestamp = 4600;
     });
 
     client.accept_oracle_rotation();
@@ -86,10 +88,10 @@ fn test_accept_after_expiry_fails() {
         li.timestamp = 500;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    client.propose_oracle_rotation(&new_oracle, &3600);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 5000;
     });
 
     let result = client.try_accept_oracle_rotation();
@@ -215,7 +217,9 @@ fn test_propose_and_accept_emits_events() {
     );
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        // Earliest allowed moment: the 1h delay has elapsed and the
+        // proposal (expires_at = 4600) has not yet expired.
+        li.timestamp = 4600;
     });
 
     client.accept_oracle_rotation();
@@ -239,10 +243,10 @@ fn test_accept_after_expiry_emits_expired_event() {
         li.timestamp = 500;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    client.propose_oracle_rotation(&new_oracle, &3600);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 5000;
     });
 
     let _ = client.try_accept_oracle_rotation();
@@ -464,4 +468,111 @@ fn test_expired_proposal_returns_expired_when_delay_passed() {
     // Should fail with NoPendingRotation (expiry check wins)
     let result = client.try_accept_oracle_rotation();
     assert_eq!(result, Err(Ok(ContractError::NoPendingRotation)));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// RotationDelayNotElapsed boundary and state tests (Issue #712)
+// ────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_accept_one_second_before_min_delay_fails() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let (_admin, oracle, new_oracle) = init(&env, &client);
+
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    client.propose_oracle_rotation(&new_oracle, &7200);
+
+    // 1 second short of the 3600s delay: still rejected.
+    env.ledger().with_mut(|li| li.timestamp = 1000 + 3599);
+    let result = client.try_accept_oracle_rotation();
+    assert_eq!(result, Err(Ok(ContractError::RotationDelayNotElapsed)));
+    assert_eq!(client.get_oracle().unwrap(), oracle);
+
+    // Exactly at the delay: accepted.
+    env.ledger().with_mut(|li| li.timestamp = 1000 + 3600);
+    client.accept_oracle_rotation();
+    assert_eq!(client.get_oracle().unwrap(), new_oracle);
+}
+
+#[test]
+fn test_early_accept_leaves_proposal_intact() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let (_admin, oracle, new_oracle) = init(&env, &client);
+
+    env.ledger().with_mut(|li| li.timestamp = 2000);
+    client.propose_oracle_rotation(&new_oracle, &7200);
+    let before = client.get_oracle_rotation_proposal().expect("proposal set");
+
+    for offset in [0u64, 1, 1800, 3599] {
+        env.ledger().with_mut(|li| li.timestamp = 2000 + offset);
+        let result = client.try_accept_oracle_rotation();
+        assert_eq!(result, Err(Ok(ContractError::RotationDelayNotElapsed)));
+    }
+
+    // Rejected attempts neither consume nor alter the proposal, and the
+    // active oracle never changes.
+    assert_eq!(client.get_oracle().unwrap(), oracle);
+    let after = client
+        .get_oracle_rotation_proposal()
+        .expect("still pending");
+    assert_eq!(after.new_oracle, before.new_oracle);
+    assert_eq!(after.proposed_at, before.proposed_at);
+    assert_eq!(after.expires_at, before.expires_at);
+}
+
+#[test]
+fn test_early_event_payload_reports_earliest_accept() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let (_admin, _oracle, new_oracle) = init(&env, &client);
+
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    client.propose_oracle_rotation(&new_oracle, &7200);
+
+    env.ledger().with_mut(|li| li.timestamp = 1500);
+    let _ = client.try_accept_oracle_rotation();
+
+    let events = env.events().all();
+    let payloads: std::vec::Vec<(Address, u64, u64)> = (0..events.len())
+        .filter_map(|i| {
+            let (_, topics, data) = events.get(i).unwrap();
+            let is_early = topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("early"));
+            is_early.then(|| data.try_into_val(&env).unwrap())
+        })
+        .collect();
+    assert_eq!(payloads, std::vec![(new_oracle, 1500u64, 1000u64 + 3600)]);
+}
+
+#[test]
+fn test_reproposal_restarts_the_delay() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let (_admin, oracle, first) = init(&env, &client);
+    let second = Address::generate(&env);
+
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    client.propose_oracle_rotation(&first, &7200);
+
+    // Replace the proposal 3000s in. The delay now counts from this proposal.
+    env.ledger().with_mut(|li| li.timestamp = 4000);
+    client.propose_oracle_rotation(&second, &7200);
+
+    // 1000 + 3601 would have satisfied the first proposal's delay, but not
+    // the replacement's.
+    env.ledger().with_mut(|li| li.timestamp = 4000 + 3599);
+    let result = client.try_accept_oracle_rotation();
+    assert_eq!(result, Err(Ok(ContractError::RotationDelayNotElapsed)));
+    assert_eq!(client.get_oracle().unwrap(), oracle);
+
+    env.ledger().with_mut(|li| li.timestamp = 4000 + 3600);
+    client.accept_oracle_rotation();
+    assert_eq!(client.get_oracle().unwrap(), second);
 }
