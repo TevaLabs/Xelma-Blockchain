@@ -388,6 +388,138 @@
       "expected_bps": 0
     }
   ],
+  "one_sided_settlement": [
+    {
+      "name": "one_sided_up_pool_refunds_all_positions",
+      "start_price": 10000000,
+      "final_price": 15000000,
+      "pool_up": 300,
+      "pool_down": 0,
+      "fee_bps": null,
+      "positions": [
+        {
+          "amount": 100,
+          "side_up": true
+        },
+        {
+          "amount": 200,
+          "side_up": true
+        }
+      ],
+      "expected": [
+        {
+          "payout": 100,
+          "is_winner": false,
+          "is_refund": true
+        },
+        {
+          "payout": 200,
+          "is_winner": false,
+          "is_refund": true
+        }
+      ]
+    },
+    {
+      "name": "one_sided_down_pool_refunds_all_positions",
+      "start_price": 10000000,
+      "final_price": 5000000,
+      "pool_up": 0,
+      "pool_down": 250,
+      "fee_bps": null,
+      "positions": [
+        {
+          "amount": 150,
+          "side_up": false
+        },
+        {
+          "amount": 100,
+          "side_up": false
+        }
+      ],
+      "expected": [
+        {
+          "payout": 150,
+          "is_winner": false,
+          "is_refund": true
+        },
+        {
+          "payout": 100,
+          "is_winner": false,
+          "is_refund": true
+        }
+      ]
+    },
+    {
+      "name": "one_sided_pool_with_fee_config_still_refunds_full_stake",
+      "start_price": 10000000,
+      "final_price": 15000000,
+      "pool_up": 300,
+      "pool_down": 0,
+      "fee_bps": 500,
+      "positions": [
+        {
+          "amount": 100,
+          "side_up": true
+        },
+        {
+          "amount": 200,
+          "side_up": true
+        }
+      ],
+      "expected": [
+        {
+          "payout": 100,
+          "is_winner": false,
+          "is_refund": true
+        },
+        {
+          "payout": 200,
+          "is_winner": false,
+          "is_refund": true
+        }
+      ]
+    },
+    {
+      "name": "one_sided_pool_price_unchanged_refunds_all",
+      "start_price": 10000000,
+      "final_price": 10000000,
+      "pool_up": 300,
+      "pool_down": 0,
+      "fee_bps": null,
+      "positions": [
+        {
+          "amount": 100,
+          "side_up": true
+        },
+        {
+          "amount": 200,
+          "side_up": true
+        }
+      ],
+      "expected": [
+        {
+          "payout": 100,
+          "is_winner": false,
+          "is_refund": true
+        },
+        {
+          "payout": 200,
+          "is_winner": false,
+          "is_refund": true
+        }
+      ]
+    },
+    {
+      "name": "one_sided_pool_empty_losing_side_no_positions",
+      "start_price": 10000000,
+      "final_price": 15000000,
+      "pool_up": 0,
+      "pool_down": 0,
+      "fee_bps": null,
+      "positions": [],
+      "expected": []
+    }
+  ],
   "precision_remainder_ordering": [
     {
       "name": "two_way_tie_indivisible_remainder_goes_to_first_winner",
