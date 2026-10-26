@@ -105,6 +105,39 @@ fn test_reclaim_fails_when_not_expired() {
     assert_eq!(result, Err(Ok(ContractError::PendingWinningsNotExpired)));
 }
 
+#[test]
+fn test_reclaim_fails_before_threshold_boundary() {
+    let (env, admin, contract_id, client) = setup();
+    let user = Address::generate(&env);
+
+    env.ledger().with_mut(|li| li.sequence_number = 100);
+    set_pending_at_current_ledger(&env, &contract_id, &user, 1000);
+    apply_pending_winnings_expiry(&env, &client, 200);
+
+    // Intermediate progression checks: age 50 and 150 < 200
+    env.ledger().with_mut(|li| li.sequence_number = 150);
+    let res50 = client.try_reclaim_expired_pending_winnings(&user);
+    assert_eq!(res50, Err(Ok(ContractError::PendingWinningsNotExpired)));
+
+    env.ledger().with_mut(|li| li.sequence_number = 250);
+    let res150 = client.try_reclaim_expired_pending_winnings(&user);
+    assert_eq!(res150, Err(Ok(ContractError::PendingWinningsNotExpired)));
+
+    // Immediately before threshold: age = 299 - 100 = 199 < 200
+    env.ledger().with_mut(|li| li.sequence_number = 299);
+    let res_boundary = client.try_reclaim_expired_pending_winnings(&user);
+    assert_eq!(res_boundary, Err(Ok(ContractError::PendingWinningsNotExpired)));
+
+    // Pending winnings remain untouched prior to reaching expiry threshold
+    assert_eq!(client.get_pending_winnings(&user), 1000);
+
+    // At exact threshold: age = 300 - 100 = 200 >= 200 -> eligible for reclaim
+    env.ledger().with_mut(|li| li.sequence_number = 300);
+    let reclaimed = client.reclaim_expired_pending_winnings(&user);
+    assert_eq!(reclaimed, 1000);
+    assert_eq!(client.get_pending_winnings(&user), 0);
+}
+
 // ─── Reclaim: success path ───────────────────────────────────────────────
 
 #[test]
