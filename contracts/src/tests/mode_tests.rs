@@ -155,9 +155,37 @@ fn test_place_bet_on_precision_mode_fails() {
     // Create Precision round
     client.create_round(&1_0000000, &Some(1));
 
+    // A valid Precision prediction first: precision stakes never touch the
+    // Up/Down pools, so the round's pools stay at zero.
+    client.place_precision_prediction(&user, &100_0000000, &2297);
+    let round = client.get_active_round().expect("round must be active");
+    assert_eq!(round.pool_up, 0);
+    assert_eq!(round.pool_down, 0);
+
+    let balance_before = client.balance(&user);
+    assert_eq!(balance_before, 900_0000000);
+
     // place_bet should fail on Precision mode
     let result = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
     assert_eq!(result, Err(Ok(ContractError::WrongModeForPrediction)));
+
+    // The mode guard fires before any write: pools, balance, and the
+    // Up/Down position store are all untouched (Issue #662).
+    let round = client.get_active_round().expect("round must be active");
+    assert_eq!(round.pool_up, 0, "pool_up must be unchanged after rejection");
+    assert_eq!(
+        round.pool_down, 0,
+        "pool_down must be unchanged after rejection"
+    );
+    assert!(
+        client.get_user_position(&user).is_none(),
+        "no Up/Down position may be written on a wrong-mode bet"
+    );
+    assert_eq!(
+        client.balance(&user),
+        balance_before,
+        "rejected wrong-mode bet must not move balance"
+    );
 }
 
 #[test]

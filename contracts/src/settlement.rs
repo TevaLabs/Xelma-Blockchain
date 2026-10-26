@@ -1878,6 +1878,36 @@ fn _calculate_precision_payouts(
     Ok(payouts)
 }
 
+/// Resolves a Precision round: finds the closest revealed guess(es), splits
+/// the pot, and records outcomes for losers and non-revealers.
+///
+/// # Forfeit accounting (invariant I8 — settlement conservation)
+///
+/// Every participant's stake enters `total_pot` regardless of how it was
+/// placed (direct prediction, revealed commitment, or unrevealed
+/// commitment). What differs is what happens to it at settlement:
+///
+/// - **Mixed reveal** (`winners` non-empty, i.e. ≥1 prediction revealed or
+///   placed directly): unrevealed commitments are **forfeited to the pot**
+///   (anti-griefing). Their stakes stay inside `total_pot` and are paid out
+///   through `payout_pool = total_pot - fee`; nothing is burned and nothing
+///   is credited back to the forfeiter. Each forfeiter receives a
+///   `("forfeit", "predict")` event plus a `Loss` outcome.
+/// - **All unrevealed** (`winners` empty): there is no winner to forfeit
+///   to, so every stake is refunded to pending winnings with `fee == 0`.
+///
+/// Both branches satisfy the I8 conservation identity for any fee
+/// configuration:
+///
+/// ```text
+/// Σ winner payouts + protocol fee == total pot   (mixed reveal)
+/// Σ refunds                      == total pot   (all unrevealed)
+/// ```
+///
+/// Evidence:
+/// `tests::conservation::precision_mixed_reveal_forfeit_fee_enabled_exact_conservation`,
+/// `tests::commit_reveal_e2e::test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot`,
+/// `tests::adversarial::grinding::test_adversarial_commit_and_grief_non_reveal`.
 pub fn _resolve_precision_mode(
     env: &Env,
     round_id: u64,
@@ -2032,6 +2062,13 @@ pub fn _resolve_precision_mode(
             }
         }
 
+        // Forfeit accounting (I8). Every participant's stake — revealed
+        // or not — was already added to `total_pot` above, and
+        // `payout_pool = total_pot - fee` redistributes it to the winners.
+        // Unrevealed stakes therefore stay in circulation as winner payouts:
+        // they are neither refunded to nor burned away from the forfeiter,
+        // so `Σ winner payouts + fee == total_pot` holds for any fee
+        // configuration (Issue #664).
         for i in 0..participants.len() {
             if let Some(user) = participants.get(i) {
                 let idx = i as usize;
