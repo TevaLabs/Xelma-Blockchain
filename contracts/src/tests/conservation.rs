@@ -782,6 +782,94 @@ fn early_cashout_with_settlement_fee_conservation() {
     );
 }
 
+/// Row 18b: Early cash-out (5% penalty) followed by a genuine two-sided
+/// settlement (not a one-sided refund) with the settlement fee active.
+/// This is the scenario Issue #673 names directly: the cashed-out stake must
+/// be excluded from the settlement-fee base (it already paid its own penalty
+/// to the treasury at cash-out time) so the same stroop is never fee'd twice.
+/// Conservation identity: cashout + winner_payout + loser's-contribution-to-fee
+/// + both treasury deltas == original total stakes, with the settlement fee
+/// base equal to the *remaining* pool only (600), not the original pot (800).
+#[test]
+fn early_cashout_with_settlement_fee_winning_resolution_no_double_count() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&charlie);
+
+    client.create_round(&1_000u128, &None);
+    // Alice (Up) will cash out early; Bob (Up) and Charlie (Down) remain to
+    // settle a genuine two-sided outcome.
+    client.place_bet(&alice, &200, &BetSide::Up);
+    client.place_bet(&bob, &200, &BetSide::Up);
+    client.place_bet(&charlie, &400, &BetSide::Down);
+
+    // Enable both early cash-out (5% penalty) and settlement fee (10%).
+    set_ec_bps_now(&env, &contract_id, 500);
+    set_fee_bps_now(&env, &contract_id, 1_000);
+
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+    let alice_pending_before = client.get_pending_winnings(&alice);
+    let treasury_before_cashout = client.get_protocol_fee_treasury();
+    client.cash_out_early(&alice);
+
+    let alice_cashout = client.get_pending_winnings(&alice) - alice_pending_before;
+    let ec_treasury_delta = client.get_protocol_fee_treasury() - treasury_before_cashout;
+
+    // 5% penalty on Alice's 200 stake = 10 forfeit, 190 cashout.
+    assert_eq!(alice_cashout, 190);
+    assert_eq!(ec_treasury_delta, 10);
+
+    // Remaining pool after Alice's cash-out removes her full stake: up=200
+    // (Bob only), down=400 (Charlie). Total remaining pool = 600.
+    let round = client.get_active_round().unwrap();
+    assert_eq!(round.pool_up, 200);
+    assert_eq!(round.pool_down, 400);
+
+    // Resolve, price down: Charlie (Down) wins, Bob (Up) loses.
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+    let bob_pending_before = client.get_pending_winnings(&bob);
+    let charlie_pending_before = client.get_pending_winnings(&charlie);
+    let treasury_before_resolve = client.get_protocol_fee_treasury();
+    resolve_at(&env, &client, &contract_id, 900u128); // price down
+
+    let bob_pay = client.get_pending_winnings(&bob) - bob_pending_before;
+    let charlie_pay = client.get_pending_winnings(&charlie) - charlie_pending_before;
+    let resolve_treasury_delta = client.get_protocol_fee_treasury() - treasury_before_resolve;
+
+    // Bob loses his entire remaining stake; he gets nothing back.
+    assert_eq!(bob_pay, 0);
+
+    // Settlement fee must be computed on the *remaining* 600 pool (Bob's 200
+    // + Charlie's 400), not on the original 800 pot. Alice's stake already
+    // paid its own penalty to the treasury at cash-out and must not be taxed
+    // a second time here. 10% of the remaining 600 pool == 60.
+    assert_eq!(
+        resolve_treasury_delta, 60,
+        "settlement fee must apply only to the remaining pool, excluding the \
+         stake Alice already forfeited at cash-out"
+    );
+
+    // Charlie receives the full remaining 600 pool minus the 60 settlement
+    // fee.
+    assert_eq!(charlie_pay, 540);
+
+    // Full round conservation: every stroop of the original 800 total ends
+    // up in exactly one of cashout / winner payout / the two treasury
+    // deltas, with no overlap and no leak.
+    assert_eq!(
+        alice_cashout + bob_pay + charlie_pay + ec_treasury_delta + resolve_treasury_delta,
+        800,
+        "full round conservation including early cash-out penalty and \
+         settlement fee on the remaining pool only"
+    );
+}
+
 /// Row 19 — Full refund on zero forfeit (stake too small relative to bps).
 #[test]
 fn early_cashout_zero_forfeit_full_refund() {

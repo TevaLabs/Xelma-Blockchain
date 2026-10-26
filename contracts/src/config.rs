@@ -333,7 +333,7 @@ pub fn cancel_config_change(env: Env, kind: ConfigChangeKind) -> Result<(), Cont
 
     #[allow(deprecated)]
     env.events().publish(
-        (symbol_short!("config"), symbol_short!("cancel")),
+        (symbol_short!("config"), symbol_short!("cancelled")),
         (kind, cancelled_at),
     );
 
@@ -1290,7 +1290,7 @@ pub fn _schedule_config_change(
 
     #[allow(deprecated)]
     env.events().publish(
-        (symbol_short!("config"), symbol_short!("sched")),
+        (symbol_short!("config"), symbol_short!("scheduled")),
         (kind, activation_ledger),
     );
 
