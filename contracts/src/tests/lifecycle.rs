@@ -103,6 +103,48 @@ fn test_create_round_while_active_fails() {
 }
 
 #[test]
+fn test_create_round_clears_stale_updown_keys() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&alice);
+
+    // Round 1: Up/Down, place a bet, then cancel so the round is gone but
+    // the position key would otherwise linger.
+    client.create_round(&1_0000000, &None);
+    let round1 = client.get_active_round().unwrap();
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.cancel_round(&0u32);
+    assert_eq!(client.get_active_round(), None);
+
+    // Advance so the next round gets a fresh start_ledger.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
+    // Round 2: creating a new round must not resurrect stale Up/Down keys
+    // from the previous round.
+    client.create_round(&1_1000000, &None);
+    let round2 = client.get_active_round().unwrap();
+    assert_ne!(round1.round_id, round2.round_id);
+
+    env.as_contract(&contract_id, || {
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&DataKeyScoped::Position(round2.round_id, alice.clone())));
+    });
+}
+
+#[test]
 fn test_create_round_without_init_fails() {
     let env = Env::default();
     let contract_id = env.register(VirtualTokenContract, ());
