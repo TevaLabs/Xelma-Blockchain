@@ -49,6 +49,7 @@ mod precision_payout_overflow;
 mod precision_scoring;
 mod property_invariants;
 mod reference_model;
+mod reference_model_parity;
 mod resolution;
 mod rotation;
 mod security;

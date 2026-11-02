@@ -17,6 +17,12 @@
 //! `PROTOCOL_SPEC.md` §"Precision mode" and
 //! `tests::resolution::precision::test_precision_remainder_goes_to_lexicographically_lowest_winner`
 //! for the end-to-end contract-level proof of the same rule.
+//!
+//! The `precision_closest_winner` section pins the reference-model parity
+//! rule for Precision mode: when multiple entries predict the same closest
+//! price to the final price, all of them are winners (ties are not broken by
+//! index), and the indivisible remainder still goes to the first winner in
+//! canonical order. See `tests::reference_model` for the differential harness.
 
 use crate::settlement_math::{
     compute_deviation_bps, compute_precision_fee, compute_precision_payouts, compute_updown_fee,
@@ -47,6 +53,7 @@ struct VectorFile {
     split_pot_among_winners: StdVec<SplitPotCase>,
     deviation_bps: StdVec<DeviationCase>,
     precision_remainder_ordering: StdVec<RemainderOrderingCase>,
+    precision_closest_winner: StdVec<ClosestWinnerCase>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -133,6 +140,17 @@ struct RemainderOrderingCase {
     note: Option<String>,
     final_price: u128,
     entries: StdVec<JsonPrecisionEntry>,
+    expected_payouts: StdVec<i128>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ClosestWinnerCase {
+    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+    final_price: u128,
+    entries: StdVec<JsonPrecisionEntry>,
+    expected_winner_indices: StdVec<usize>,
     expected_payouts: StdVec<i128>,
 }
 
@@ -326,6 +344,50 @@ fn golden_vectors_precision_remainder_ordering() {
     }
 }
 
+/// Proves reference-model parity for the "closest winner" rule in Precision
+/// mode: every entry whose predicted price is closest to the final price is a
+/// winner (ties are not broken by index), and the indivisible remainder of the
+/// split goes to the first winner in canonical (address-sorted) order. This
+/// mirrors the differential harness in `tests::reference_model` against the
+/// same seeds.
+#[test]
+fn golden_vectors_precision_closest_winner() {
+    for case in load_vectors().precision_closest_winner {
+        let entries = to_precision_entries(&case.entries);
+
+        let winners = find_precision_winners(&entries, case.final_price);
+        assert_eq!(
+            winners.winner_indices, case.expected_winner_indices,
+            "case '{}': winner_indices",
+            case.name
+        );
+
+        let results =
+            compute_precision_payouts(&entries, case.final_price, None).unwrap_or_else(|e| {
+                panic!(
+                    "case '{}': compute_precision_payouts errored: {:?}",
+                    case.name, e
+                )
+            });
+
+        let got_payouts: StdVec<i128> = results.iter().map(|r| r.payout).collect();
+        assert_eq!(
+            got_payouts, case.expected_payouts,
+            "case '{}': payouts",
+            case.name
+        );
+
+        // Conservation: every stroop staked is accounted for exactly once.
+        let total_staked: i128 = case.entries.iter().map(|e| e.amount).sum();
+        let total_paid: i128 = got_payouts.iter().sum();
+        assert_eq!(
+            total_paid, total_staked,
+            "case '{}': conservation (paid must equal staked, no fee configured)",
+            case.name
+        );
+    }
+}
+
 /// Not a check — overwrites `contracts/test_vectors/settlement_math.json`
 /// with every `expected_*`/`expected`/`expected_payouts` field recomputed
 /// from the *current* `settlement_math` implementation, keeping each case's
@@ -406,6 +468,14 @@ fn regenerate_vectors_file() {
 
     for c in &mut vectors.precision_remainder_ordering {
         let entries = to_precision_entries(&c.entries);
+        let results = compute_precision_payouts(&entries, c.final_price, None).unwrap();
+        c.expected_payouts = results.into_iter().map(|r| r.payout).collect();
+    }
+
+    for c in &mut vectors.precision_closest_winner {
+        let entries = to_precision_entries(&c.entries);
+        let winners = find_precision_winners(&entries, c.final_price);
+        c.expected_winner_indices = winners.winner_indices;
         let results = compute_precision_payouts(&entries, c.final_price, None).unwrap();
         c.expected_payouts = results.into_iter().map(|r| r.payout).collect();
     }
