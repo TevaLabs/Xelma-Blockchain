@@ -598,6 +598,127 @@ async function watchForNewRounds(contractId: string) {
 
 ---
 
+### Complete Public Entrypoint Index (ABI & TypeScript Bindings Parity)
+
+The table below lists all **112** public contract entrypoints exported by `VirtualTokenContract` (`contracts/src/contract.rs`) and verified in CI by `bindings/src/parity.js`:
+
+| # | Contract Entrypoint | TypeScript Bindings Method |
+|--:|---------------------|----------------------------|
+| 1 | `balance` | `client.balance(...)` |
+| 2 | `get_admin` | `client.get_admin(...)` |
+| 3 | `is_paused` | `client.is_paused(...)` |
+| 4 | `place_bet` | `client.place_bet(...)` |
+| 5 | `get_oracle` | `client.get_oracle(...)` |
+| 6 | `initialize` | `client.initialize(...)` |
+| 7 | `set_windows` | `client.set_windows(...)` |
+| 8 | `cancel_round` | `client.cancel_round(...)` |
+| 9 | `create_round` | `client.create_round(...)` |
+| 10 | `mint_initial` | `client.mint_initial(...)` |
+| 11 | `get_max_stake` | `client.get_max_stake(...)` |
+| 12 | `predict_price` | `client.predict_price(...)` |
+| 13 | `resolve_round` | `client.resolve_round(...)` |
+| 14 | `set_max_stake` | `client.set_max_stake(...)` |
+| 15 | `claim_winnings` | `client.claim_winnings(...)` |
+| 16 | `get_user_stats` | `client.get_user_stats(...)` |
+| 17 | `is_oracle_live` | `client.is_oracle_live(...)` |
+| 18 | `pause_contract` | `client.pause_contract(...)` |
+| 19 | `get_active_round` | `client.get_active_round(...)` |
+| 20 | `get_runtime_mode` | `client.get_runtime_mode(...)` |
+| 21 | `schedule_windows` | `client.schedule_windows(...)` |
+| 22 | `set_runtime_mode` | `client.set_runtime_mode(...)` |
+| 23 | `get_round_phase` | `client.get_round_phase(...)` |
+| 24 | `unpause_contract` | `client.unpause_contract(...)` |
+| 25 | `commit_prediction` | `client.commit_prediction(...)` |
+| 26 | `get_last_round_id` | `client.get_last_round_id(...)` |
+| 27 | `get_user_position` | `client.get_user_position(...)` |
+| 28 | `reveal_prediction` | `client.reveal_prediction(...)` |
+| 29 | `get_archived_round` | `client.get_archived_round(...)` |
+| 30 | `get_schema_version` | `client.get_schema_version(...)` |
+| 31 | `is_round_cancelled` | `client.is_round_cancelled(...)` |
+| 32 | `schedule_max_stake` | `client.schedule_max_stake(...)` |
+| 33 | `cancel_config_change` | `client.cancel_config_change(...)` |
+| 34 | `get_min_participants` | `client.get_min_participants(...)` |
+| 35 | `get_oracle_heartbeat` | `client.get_oracle_heartbeat(...)` |
+| 36 | `get_pending_winnings` | `client.get_pending_winnings(...)` |
+| 37 | `get_updown_positions` | `client.get_updown_positions(...)` |
+| 38 | `set_min_participants` | `client.set_min_participants(...)` |
+| 39 | `get_max_user_exposure` | `client.get_max_user_exposure(...)` |
+| 40 | `simulate_payout` | `client.simulate_payout(...)` |
+| 41 | `set_max_user_exposure` | `client.set_max_user_exposure(...)` |
+| 42 | `apply_scheduled_changes` | `client.apply_scheduled_changes(...)` |
+| 43 | `migrate_schema_v1_to_v2` | `client.migrate_schema_v1_to_v2(...)` |
+| 44 | `update_oracle_heartbeat` | `client.update_oracle_heartbeat(...)` |
+| 45 | `get_max_pending_winnings` | `client.get_max_pending_winnings(...)` |
+| 46 | `set_max_pending_winnings` | `client.set_max_pending_winnings(...)` |
+| 47 | `get_pending_config_change` | `client.get_pending_config_change(...)` |
+| 48 | `get_precision_predictions` | `client.get_precision_predictions(...)` |
+| 49 | `get_updown_positions_page` | `client.get_updown_positions_page(...)` |
+| 50 | `get_oracle_stale_threshold` | `client.get_oracle_stale_threshold(...)` |
+| 51 | `get_recent_archived_rounds` | `client.get_recent_archived_rounds(...)` |
+| 52 | `get_user_archive_history` | `client.get_user_archive_history(...)` |
+| 53 | `place_precision_prediction` | `client.place_precision_prediction(...)` |
+| 54 | `schedule_max_user_exposure` | `client.schedule_max_user_exposure(...)` |
+| 55 | `set_oracle_stale_threshold` | `client.set_oracle_stale_threshold(...)` |
+| 56 | `get_oracle_max_deviation_bps` | `client.get_oracle_max_deviation_bps(...)` |
+| 57 | `set_oracle_max_deviation_bps` | `client.set_oracle_max_deviation_bps(...)` |
+| 58 | `arm_oracle_deviation_override` | `client.arm_oracle_deviation_override(...)` |
+| 59 | `get_user_precision_prediction` | `client.get_user_precision_prediction(...)` |
+| 60 | `schedule_max_pending_winnings` | `client.schedule_max_pending_winnings(...)` |
+| 61 | `schedule_oracle_deviation_bps` | `client.schedule_oracle_deviation_bps(...)` |
+| 62 | `get_max_precision_participants` | `client.get_max_precision_participants(...)` |
+| 63 | `get_precision_predictions_page` | `client.get_precision_predictions_page(...)` |
+| 64 | `set_max_precision_participants` | `client.set_max_precision_participants(...)` |
+| 65 | `schedule_oracle_stale_threshold` | `client.schedule_oracle_stale_threshold(...)` |
+| 66 | `migrate_schema_v2_to_v3` | `client.migrate_schema_v2_to_v3(...)` |
+| 67 | `set_oracle_min_confidence_bps` | `client.set_oracle_min_confidence_bps(...)` |
+| 68 | `set_oracle_strict_mode` | `client.set_oracle_strict_mode(...)` |
+| 69 | `get_oracle_min_confidence_bps` | `client.get_oracle_min_confidence_bps(...)` |
+| 70 | `get_oracle_strict_mode` | `client.get_oracle_strict_mode(...)` |
+| 71 | `get_protocol_health` | `client.get_protocol_health(...)` |
+| 72 | `get_protocol_status` | `client.get_protocol_status(...)` |
+| 73 | `get_round_status` | `client.get_round_status(...)` |
+| 74 | `propose_oracle_rotation` | `client.propose_oracle_rotation(...)` |
+| 75 | `accept_oracle_rotation` | `client.accept_oracle_rotation(...)` |
+| 76 | `cancel_oracle_rotation` | `client.cancel_oracle_rotation(...)` |
+| 77 | `get_oracle_rotation_proposal` | `client.get_oracle_rotation_proposal(...)` |
+| 78 | `schedule_protocol_fee_bps` | `client.schedule_protocol_fee_bps(...)` |
+| 79 | `set_protocol_fee_bps` | `client.set_protocol_fee_bps(...)` |
+| 80 | `get_protocol_fee_bps` | `client.get_protocol_fee_bps(...)` |
+| 81 | `get_protocol_fee_treasury` | `client.get_protocol_fee_treasury(...)` |
+| 82 | `withdraw_protocol_fee` | `client.withdraw_protocol_fee(...)` |
+| 83 | `set_mint_limit` | `client.set_mint_limit(...)` |
+| 84 | `get_mint_limit` | `client.get_mint_limit(...)` |
+| 85 | `set_epoch_mint_budget` | `client.set_epoch_mint_budget(...)` |
+| 86 | `get_epoch_mint_budget` | `client.get_epoch_mint_budget(...)` |
+| 87 | `set_archive_retention` | `client.set_archive_retention(...)` |
+| 88 | `get_archive_retention` | `client.get_archive_retention(...)` |
+| 89 | `set_close_buffer_ledgers` | `client.set_close_buffer_ledgers(...)` |
+| 90 | `get_close_buffer_ledgers` | `client.get_close_buffer_ledgers(...)` |
+| 91 | `get_round_pool_stats` | `client.get_round_pool_stats(...)` |
+| 92 | `get_user_archived_participation` | `client.get_user_archived_participation(...)` |
+| 93 | `set_hb_strict_mode` | `client.set_hb_strict_mode(...)` |
+| 94 | `get_hb_strict_mode` | `client.get_hb_strict_mode(...)` |
+| 95 | `arm_hb_override` | `client.arm_hb_override(...)` |
+| 96 | `get_hb_override_armed` | `client.get_hb_override_armed(...)` |
+| 97 | `set_hb_grace_seconds` | `client.set_hb_grace_seconds(...)` |
+| 98 | `get_hb_grace_seconds` | `client.get_hb_grace_seconds(...)` |
+| 99 | `set_precision_payout_policy` | `client.set_precision_payout_policy(...)` |
+| 100 | `get_precision_payout_policy` | `client.get_precision_payout_policy(...)` |
+| 101 | `set_round_template` | `client.set_round_template(...)` |
+| 102 | `clear_round_template` | `client.clear_round_template(...)` |
+| 103 | `get_round_template` | `client.get_round_template(...)` |
+| 104 | `create_next_from_template` | `client.create_next_from_template(...)` |
+| 105 | `get_leaderboard_by_wins` | `client.get_leaderboard_by_wins(...)` |
+| 106 | `get_leaderboard_by_streak` | `client.get_leaderboard_by_streak(...)` |
+| 107 | `get_current_season_id` | `client.get_current_season_id(...)` |
+| 108 | `get_season_user_stats` | `client.get_season_user_stats(...)` |
+| 109 | `reset_leaderboard_season` | `client.reset_leaderboard_season(...)` |
+| 110 | `get_season_archive` | `client.get_season_archive(...)` |
+| 111 | `get_season_leaderboard_by_wins` | `client.get_season_leaderboard_by_wins(...)` |
+| 112 | `get_season_leaderboard_by_streak` | `client.get_season_leaderboard_by_streak(...)` |
+
+---
+
 ## 🎮 Use Cases
 
 ### 🎯 Entertainment
