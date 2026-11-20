@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: MIT
-//! Exhaustive mode x action tests for the central PolicyGate (Issue #261).
+//! Exhaustive mode x action tests for the central PolicyGate (Issues #261, #880).
+//!
+//! ## Runtime Pause Policy Matrix (`RuntimeMode` × `PolicyAction`)
+//!
+//! | RuntimeMode | `RoundMutation` (bet / predict / cash-out) | `Claim` (`claim_winnings` / `claim_many`) | `AdminConfig` (admin & parameter config) | `Settlement` (`resolve_round` / `cancel_round`) |
+//! |-------------|:------------------------------------------:|:-----------------------------------------:|:----------------------------------------:|:-----------------------------------------------:|
+//! | `0` (`Normal` / `Active`) | Allowed (`true`) | Allowed (`true`) | Allowed (`true`) | Allowed (`true`) |
+//! | `1` (`ClaimsOnly`) | **Blocked (`false`)** | Allowed (`true`) | Allowed (`true`) | Allowed (`true`) |
+//! | `2` (`FullyPaused`) | **Blocked (`false`)** | **Blocked (`false`)** | **Blocked (`false`)** | **Blocked (`false`)** |
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::types::PolicyAction;
@@ -99,4 +107,46 @@ fn test_policy_gate_transitions_round_trip() {
     assert_eq!(client.get_runtime_mode(), 2); // FullyPaused
     client.set_runtime_mode(&0u32);
     assert_eq!(client.get_runtime_mode(), 0); // Normal
+}
+
+#[test]
+fn test_policy_gate_exhaustive_mode_x_action_matrix() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup(&env);
+
+    // Table of (mode_u32, expected_round_mutation, expected_claim, expected_admin_config, expected_settlement)
+    let matrix: [(u32, bool, bool, bool, bool); 3] = [
+        (0u32, true, true, true, true),    // Normal / Active
+        (1u32, false, true, true, true),   // ClaimsOnly
+        (2u32, false, false, false, false), // FullyPaused
+    ];
+
+    for (mode, exp_round, exp_claim, exp_admin, exp_settle) in matrix {
+        client.set_runtime_mode(&mode);
+        assert_eq!(client.get_runtime_mode(), mode);
+        assert_eq!(
+            client.is_action_allowed(&PolicyAction::RoundMutation),
+            exp_round,
+            "mode {} x RoundMutation mismatch",
+            mode
+        );
+        assert_eq!(
+            client.is_action_allowed(&PolicyAction::Claim),
+            exp_claim,
+            "mode {} x Claim mismatch",
+            mode
+        );
+        assert_eq!(
+            client.is_action_allowed(&PolicyAction::AdminConfig),
+            exp_admin,
+            "mode {} x AdminConfig mismatch",
+            mode
+        );
+        assert_eq!(
+            client.is_action_allowed(&PolicyAction::Settlement),
+            exp_settle,
+            "mode {} x Settlement mismatch",
+            mode
+        );
+    }
 }
