@@ -1355,14 +1355,13 @@ fn _complete_settlement(
         .persistent()
         .remove(&DataKeyScoped::RoundParticipants(round_id));
 
-    env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     env.storage().persistent().remove(&DataKeyCore::Positions);
     env.storage()
         .persistent()
         .remove(&DataKeyCore::UpDownPositions);
-    // A merge left this guarded re-remove of the active round split across
-    // two fragments (the `if` keyword and its condition were separated from
-    // the body). Rejoined here so the file parses again.
+    // Only clear `ActiveRound` when it is this round. During a dispute window
+    // a newer round may already be active, and `finalize_round` must not
+    // delete it (that would strand its bets).
     if env
         .storage()
         .persistent()
