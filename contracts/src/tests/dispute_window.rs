@@ -49,6 +49,7 @@ fn setup(
         confidence: None,
         attestation: None,
     });
+    assert!(has_round_event(env, &contract_id, symbol_short!("pending")));
 
     (client, contract_id, alice, bob, round.round_id)
 }
@@ -76,6 +77,8 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
 
     let treasury_before = client.get_protocol_fee_treasury();
     client.void_round(&round_id);
+    // `events().all()` only holds the last invocation, so check right away.
+    assert!(has_round_event(&env, &contract_id, symbol_short!("voided")));
 
     let alice_refund = client.get_pending_winnings(&alice);
     let bob_refund = client.get_pending_winnings(&bob);
@@ -88,12 +91,6 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::Voided
     );
-    assert!(has_round_event(
-        &env,
-        &contract_id,
-        symbol_short!("pending")
-    ));
-    assert!(has_round_event(&env, &contract_id, symbol_short!("voided")));
 }
 
 #[test]
@@ -109,6 +106,11 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
 
     let treasury_before = client.get_protocol_fee_treasury();
     client.finalize_round(&round_id);
+    assert!(has_round_event(
+        &env,
+        &contract_id,
+        symbol_short!("finalized")
+    ));
 
     let alice_payout = client.get_pending_winnings(&alice);
     let bob_payout = client.get_pending_winnings(&bob);
@@ -120,9 +122,63 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::Resolved
     );
-    assert!(has_round_event(
-        &env,
-        &contract_id,
-        symbol_short!("finalized")
-    ));
+}
+
+#[test]
+fn finalize_does_not_disturb_newer_active_round() {
+    let env = Env::default();
+    let (client, _contract_id, alice, _bob, round_id) = setup(&env);
+
+    // A newer round opens and takes a bet while round 1 sits in its window.
+    client.create_round(&1_000u128, &None);
+    let newer = client.get_active_round().unwrap();
+    assert_ne!(newer.round_id, round_id);
+    client.place_bet(&alice, &10i128, &BetSide::Up);
+    let newer_pool_up = client.get_active_round().unwrap().pool_up;
+    assert_eq!(newer_pool_up, 10);
+
+    env.ledger().with_mut(|ledger| ledger.sequence_number += 5);
+    client.finalize_round(&round_id);
+
+    let active = client
+        .get_active_round()
+        .expect("newer round must survive finalize");
+    assert_eq!(active.round_id, newer.round_id);
+    assert_eq!(active.pool_up, 10);
+    assert_eq!(client.get_user_position(&alice).map(|p| p.amount), Some(10));
+}
+
+#[test]
+fn finalize_rejected_one_ledger_before_deadline_then_allowed_at_deadline() {
+    let env = Env::default();
+    let (client, _contract_id, alice, _bob, round_id) = setup(&env);
+
+    env.ledger().with_mut(|ledger| ledger.sequence_number += 4);
+    assert_eq!(
+        client.try_finalize_round(&round_id),
+        Err(Ok(ContractError::RoundNotEnded))
+    );
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+
+    env.ledger().with_mut(|ledger| ledger.sequence_number += 1);
+    client.finalize_round(&round_id);
+    assert_eq!(client.get_pending_winnings(&alice), 100);
+}
+
+#[test]
+fn finalize_twice_or_unknown_round_fails_without_double_payout() {
+    let env = Env::default();
+    let (client, _contract_id, alice, _bob, round_id) = setup(&env);
+    env.ledger().with_mut(|ledger| ledger.sequence_number += 5);
+    client.finalize_round(&round_id);
+
+    assert_eq!(
+        client.try_finalize_round(&round_id),
+        Err(Ok(ContractError::NoActiveRound))
+    );
+    assert_eq!(
+        client.try_finalize_round(&(round_id + 99)),
+        Err(Ok(ContractError::NoActiveRound))
+    );
+    assert_eq!(client.get_pending_winnings(&alice), 100);
 }
