@@ -312,6 +312,19 @@ Applies the configured deterministic settlement policy (`OneSidedPolicy::Refund`
 | 5        | `pool_up`        | `i128` | Total Up-side pool at settlement time (in stroops)                       |
 | 6        | `pool_down`      | `i128` | Total Down-side pool at settlement time (in stroops)                     |
 
+Accounting notes (pinned by golden vectors in `tests::one_sided_settlement`):
+
+- `Refund` and `Void` report the whole pot as `refund_amount` (`carry_amount = 0`).
+- `CarryForward` reports the whole pot as `carry_amount` (`refund_amount = 0`). The
+  accounting is event-level only: each participant's stake is still credited to
+  pending winnings, so no value is created or destroyed.
+- No protocol fee is taken on any one-sided policy: the treasury is unchanged and
+  the policy returns a fee of `0`.
+- An empty market reports `affected_side = 2` with every amount `0`.
+- One-sided `resolve_round` also emits a shorter legacy `("pool", "onesided")` event
+  with payload `(round_id, pool_up, pool_down)`. Indexers should select the
+  7-field payload documented above.
+
 ---
 
 ### `("round", "summary")`
