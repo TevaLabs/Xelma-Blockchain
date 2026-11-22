@@ -138,3 +138,109 @@ pub enum ContractError {
     /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
     PageSizeExceeded = 94,
 }
+
+impl ContractError {
+    /// Returns the unique stable numeric `u32` code for this `ContractError`.
+    #[inline]
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ContractError;
+    use std::collections::HashSet;
+
+    #[test]
+    fn every_contract_error_has_unique_stable_code() {
+        let table: &[(ContractError, u32)] = &[
+            (ContractError::AlreadyInitialized, 1),
+            (ContractError::AdminNotSet, 2),
+            (ContractError::OracleNotSet, 3),
+            (ContractError::InvalidBetAmount, 6),
+            (ContractError::NoActiveRound, 7),
+            (ContractError::RoundEnded, 8),
+            (ContractError::InsufficientBalance, 9),
+            (ContractError::AlreadyBet, 10),
+            (ContractError::Overflow, 11),
+            (ContractError::InvalidPrice, 12),
+            (ContractError::InvalidDuration, 13),
+            (ContractError::InvalidMode, 14),
+            (ContractError::WrongModeForPrediction, 15),
+            (ContractError::RoundNotEnded, 16),
+            (ContractError::StaleOracleData, 18),
+            (ContractError::InvalidOracleRound, 19),
+            (ContractError::RoundAlreadyActive, 20),
+            (ContractError::ContractPaused, 22),
+            (ContractError::WindowOutOfRange, 23),
+            (ContractError::FutureOracleData, 24),
+            (ContractError::PayoutOverflow, 25),
+            (ContractError::RoundNotCancellable, 27),
+            (ContractError::StakeExceedsMax, 28),
+            (ContractError::ExposureCapExceeded, 29),
+            (ContractError::PendingWinningsCapExceeded, 30),
+            (ContractError::InvalidStartPrice, 31),
+            (ContractError::OracleNonceReused, 33),
+            (ContractError::InvalidMinParticipants, 35),
+            (ContractError::InvalidPrecisionCap, 38),
+            (ContractError::PrecisionCapExceeded, 39),
+            (ContractError::OracleDeviationExceeded, 41),
+            (ContractError::UnsupportedSchemaVersion, 42),
+            (ContractError::MigrationActiveRound, 44),
+            (ContractError::CommitmentNotFound, 45),
+            (ContractError::AlreadyRevealed, 46),
+            (ContractError::InvalidRevealWindow, 47),
+            (ContractError::HashMismatch, 48),
+            (ContractError::OracleNetworkMismatch, 49),
+            (ContractError::InvalidProtocolFeeBps, 51),
+            (ContractError::MintLimitExceeded, 53),
+            (ContractError::NoPendingRotation, 54),
+            (ContractError::RotationDelayNotElapsed, 55),
+            (ContractError::InvalidArchiveRetention, 62),
+            (ContractError::InvalidCommitment, 63),
+            (ContractError::InvalidSalt, 64),
+            (ContractError::NoRoundTemplate, 65),
+            (ContractError::OracleTimestampOutsideWindow, 66),
+            (ContractError::PendingWinningsNotExpired, 86),
+            (ContractError::EpochBudgetExceeded, 67),
+            (ContractError::OracleNotLive, 68),
+            (ContractError::InvalidPayoutPolicy, 69),
+            (ContractError::BelowMinBet, 70),
+            (ContractError::InsufficientOracleQuorum, 71),
+            (ContractError::TooFewObservations, 72),
+            (ContractError::OracleOutlierRejected, 73),
+            (ContractError::DuplicateOracleSource, 74),
+            (ContractError::InvalidObservationOrder, 75),
+            (ContractError::UnsupportedDataKeyForTtlTouch, 76),
+            (ContractError::PendingWinningsNotFound, 77),
+            (ContractError::ExpiryNotConfigured, 78),
+            (ContractError::AccessDenied, 79),
+            (ContractError::ProposalNotFound, 80),
+            (ContractError::ProposalExpired, 81),
+            (ContractError::GovInvalidState, 82),
+            (ContractError::GovUnauthorized, 83),
+            (ContractError::IllegalPhaseTransition, 84),
+            (ContractError::OracleHeartbeatUnhealthy, 85),
+            (ContractError::ClaimBatchTooLarge, 87),
+            (ContractError::DuplicateClaimAddress, 88),
+            (ContractError::EarlyCashoutDisabled, 95),
+            (ContractError::PositionNotFound, 96),
+            (ContractError::InvalidPhaseForCashout, 97),
+            (ContractError::WrongModeForCashout, 98),
+            (ContractError::InsuranceInvalidSplit, 99),
+            (ContractError::InsuranceInsufficientFund, 100),
+            (ContractError::InvalidAmount, 101),
+            (ContractError::BettingClosed, 102),
+            (ContractError::DisputeWindowExpired, 91),
+            (ContractError::ClaimLocked, 92),
+            (ContractError::RoundStartLedgerReused, 93),
+            (ContractError::PageSizeExceeded, 94),
+        ];
+        let mut seen = HashSet::with_capacity(table.len());
+        for &(err, expected_code) in table {
+            assert_eq!(err.code(), expected_code);
+            assert!(seen.insert(expected_code), "duplicate ContractError code: {}", expected_code);
+        }
+    }
+}
