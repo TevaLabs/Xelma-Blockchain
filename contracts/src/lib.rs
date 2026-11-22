@@ -16,7 +16,7 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
-mod access_control;
+pub mod access_control;
 mod admin;
 mod betting;
 pub mod collateral;
@@ -25,7 +25,7 @@ mod config;
 mod contract;
 mod errors;
 mod fee_incidence;
-mod governance;
+pub mod governance;
 mod insurance;
 mod leaderboard;
 mod math_common;
@@ -42,6 +42,8 @@ mod tests;
 pub use contract::VirtualTokenContract;
 pub use errors::ContractError;
 pub use types::{
+    AccessState, Amendment, AmendmentStatus, ConstitutionMetadata, GovAction, GovProposal,
+    GovProposalStatus, PolicyAction, RuntimeMode,
     ArchivedRoundSummary, BetSide, ConfigChangeKind, ConfigChangePayload, DataKeyCore,
     DataKeyScoped, InsuranceEvent, LeaderboardEntry, OracleRotationProposal, PendingConfigChange,
     PrecisionCommitment, PrecisionPrediction, ProtocolHealthStatus, Round, RoundArchiveStatus,
