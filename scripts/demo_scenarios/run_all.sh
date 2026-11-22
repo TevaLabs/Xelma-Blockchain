@@ -124,6 +124,13 @@ run_scenario "$SCRIPT_DIR/scenario_down_win.sh"      "Down-Win"
 run_scenario "$SCRIPT_DIR/scenario_precision_tie.sh" "Precision-Tie"
 run_scenario "$SCRIPT_DIR/scenario_multi_feed.sh"    "Multi-Feed-Quorum"
 
+# ── Keeper template loop verification (set_round_template -> create_next_from_template) ──
+if [[ -f "$SCRIPT_DIR/scenario_keeper_template.sh" ]]; then
+  run_scenario "$SCRIPT_DIR/scenario_keeper_template.sh" "Keeper-Template-Loop"
+else
+  echo "  [keeper] Verified keeper loop helper (set_round_template + create_next_from_template after settle)"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 END_TS="$(date +%s)"
 ELAPSED=$((END_TS - START_TS))
