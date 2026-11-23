@@ -72,6 +72,32 @@ sent back for detail before they are picked up.
 
 Before opening a PR, consult [`docs/CONTRIBUTOR_TASK_MATRIX.md`](./docs/CONTRIBUTOR_TASK_MATRIX.md) for task-type-specific test and evidence requirements.
 
+### Regenerating TypeScript Bindings
+
+When contract functions, storage types, or `ContractError` variants are modified, the TypeScript bindings must be regenerated from the compiled WASM:
+
+1. Build the release contract WASM:
+   ```bash
+   cargo rustc --manifest-path contracts/Cargo.toml --crate-type=cdylib --target=wasm32v1-none --release --locked
+   ```
+   *(or `stellar contract build --package xelma-contract`)*
+
+2. Regenerate TypeScript bindings:
+   ```bash
+   cd bindings
+   npm run regen
+   ```
+   *This executes `stellar contract bindings typescript` pointing to `target/wasm32v1-none/release/xelma_contract.wasm`.*
+
+3. Validate bindings parity and build:
+   ```bash
+   npm run build
+   npm run test:errors
+   npm run test:parity
+   ```
+
+4. **Commit guidelines**: Commit `bindings/src/index.ts` and documentation updates. Never commit `bindings/dist/` or other build artifacts.
+
 ## Optional pre-commit hooks
 
 This repository ships an optional pre-commit hook configuration to catch trivial
