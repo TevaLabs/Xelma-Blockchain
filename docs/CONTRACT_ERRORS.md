@@ -10,7 +10,7 @@ When adding, removing, renaming, or renumbering an error:
 1. Update `contracts/src/errors.rs`.
 2. Update `bindings/src/index.ts`.
 3. Update the table below.
-4. Run `npm --prefix bindings run test:parity`.
+4. Run `npm --prefix bindings run test:parity` and `npm --prefix bindings run test:errors`.
 
 | Code | Variant |
 |---:|---|

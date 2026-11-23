@@ -58,10 +58,7 @@ pub enum ContractError {
     NoRoundTemplate = 65,
     /// Oracle payload timestamp is outside the round-relative economic window
     OracleTimestampOutsideWindow = 66,
-    /// Pending winnings entry exists but has not yet reached the configured
-    /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 86,
-    /// Epoch mint budget has been fully consumed
+    /// Epoch budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
     OracleNotLive = 68,
@@ -103,10 +100,27 @@ pub enum ContractError {
     IllegalPhaseTransition = 84,
     /// Oracle heartbeat failed the configured freshness or health policy.
     OracleHeartbeatUnhealthy = 85,
+    /// Pending winnings entry exists but has not yet reached the configured
+    /// expiry threshold — caller must wait before reclaiming.
+    PendingWinningsNotExpired = 86,
     /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
     ClaimBatchTooLarge = 87,
     /// claim_many batch contains the same address more than once (Issue #277)
     DuplicateClaimAddress = 88,
+    /// The dispute window for `void_round` has expired, or dispute windows
+    /// are not configured (`dispute_ledgers == 0`).
+    DisputeWindowExpired = 91,
+    /// `finalize_round` was called before the dispute window elapsed.
+    ClaimLocked = 92,
+    /// A round cannot be created because the current ledger sequence has
+    /// already backed another round's `start_ledger`.
+    ///
+    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
+    /// sequence would make a payload signed for the earlier round valid for
+    /// the later one. Retry once the ledger has advanced.
+    RoundStartLedgerReused = 93,
+    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
+    PageSizeExceeded = 94,
     /// Early cash-out feature is disabled or not configured
     EarlyCashoutDisabled = 95,
     /// User does not have an active position to cash out
@@ -123,18 +137,4 @@ pub enum ContractError {
     InvalidAmount = 101,
     /// The close-buffer has frozen betting before the round's betting window ends.
     BettingClosed = 102,
-    /// The dispute window for `void_round` has expired, or dispute windows
-    /// are not configured (`dispute_ledgers == 0`).
-    DisputeWindowExpired = 91,
-    /// `finalize_round` was called before the dispute window elapsed.
-    ClaimLocked = 92,
-    /// A round cannot be created because the current ledger sequence has
-    /// already backed another round's `start_ledger`.
-    ///
-    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
-    /// sequence would make a payload signed for the earlier round valid for
-    /// the later one. Retry once the ledger has advanced.
-    RoundStartLedgerReused = 93,
-    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
-    PageSizeExceeded = 94,
 }

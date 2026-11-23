@@ -563,6 +563,9 @@ export const ContractError = {
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
   63: {message:"InvalidCommitment"},
+  /**
+   * Invalid salt provided for reveal
+   */
   64: {message:"InvalidSalt"},
   /**
    * No round template is configured
