@@ -223,6 +223,8 @@ combination escalates to `MULTIPLE_ISSUES`.
 
 The contract defines three operational runtime modes (`Normal`, `ClaimsOnly`, `FullyPaused`), enforced centrally via `_policy_gate`:
 
+> For the exhaustive, machine-verified action-by-action mapping across all contract entrypoints, see [`docs/PAUSE_POLICY_MATRIX.md`](./PAUSE_POLICY_MATRIX.md).
+
 | Entrypoint Category | `Normal` (0) | `ClaimsOnly` (1) | `FullyPaused` (2) | Examples / Methods                                                                                    |
 |---------------------|:------------:|:----------------:|:-----------------:|-------------------------------------------------------------------------------------------------------|
 | **RoundMutation**   | ✅ Allowed   | ❌ Blocked       | ❌ Blocked        | `place_bet`, `place_precision_prediction`, `predict_price`, `commit_prediction`, `reveal_prediction`, `mint_initial`, `cash_out_early` |
