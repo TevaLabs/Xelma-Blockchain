@@ -996,6 +996,14 @@ pub fn _validate_oracle_max_deviation_bps(bps: Option<u32>) -> Result<(), Contra
     Ok(())
 }
 
+/// Validates a protocol-fee rate in basis points.
+///
+/// `None` disables the fee. `Some(bps)` must satisfy
+/// `1 <= bps <= MAX_PROTOCOL_FEE_BPS` (1_000 = 10%). `Some(0)` and anything
+/// above the cap, e.g. `MAX_PROTOCOL_FEE_BPS + 1` or `10_001`, are rejected
+/// with [`ContractError::InvalidProtocolFeeBps`] (Issue #807). Shared by
+/// `schedule_protocol_fee_bps`, the timelocked apply path and governance
+/// `SetProtocolFeeBps`.
 pub fn _validate_protocol_fee_bps(bps: Option<u32>) -> Result<(), ContractError> {
     if let Some(v) = bps {
         if v == 0 || v > MAX_PROTOCOL_FEE_BPS {
@@ -1516,4 +1524,32 @@ pub fn _apply_config_payload(
     }
     _emit_config_updated(env, kind.clone(), old_value, payload.clone());
     Ok(())
+}
+
+#[cfg(test)]
+mod protocol_fee_bps_validation {
+    use super::{ContractError, _validate_protocol_fee_bps, MAX_PROTOCOL_FEE_BPS};
+
+    #[test]
+    fn accepts_none_and_the_closed_range_up_to_the_cap() {
+        for bps in [
+            None,
+            Some(1),
+            Some(MAX_PROTOCOL_FEE_BPS - 1),
+            Some(MAX_PROTOCOL_FEE_BPS),
+        ] {
+            assert_eq!(_validate_protocol_fee_bps(bps), Ok(()), "{bps:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_zero_max_plus_one_and_above() {
+        for bps in [0, MAX_PROTOCOL_FEE_BPS + 1, 10_000, 10_001, u32::MAX] {
+            assert_eq!(
+                _validate_protocol_fee_bps(Some(bps)),
+                Err(ContractError::InvalidProtocolFeeBps),
+                "bps={bps}"
+            );
+        }
+    }
 }
