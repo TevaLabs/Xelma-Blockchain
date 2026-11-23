@@ -140,6 +140,37 @@ Evidence:
 - Code: `set_windows`, `place_bet`, `place_precision_prediction`, `resolve_round`.
 - Tests: `windows.rs`.
 
+### Dispute window (optional staged settlement)
+
+The dispute window is configured in ledger sequences with the admin-only,
+immediate `set_dispute_ledgers` entrypoint. Its value is bounded from 0 to
+120,960 ledgers, and the default is 0.
+
+When the value is greater than 0, `resolve_round` records the oracle result as
+pending instead of distributing it immediately. The deadline is the ledger
+sequence that accepted the oracle result plus the configured number of ledgers;
+changing the setting later does not change an already-pending deadline.
+
+During the open window (current ledger sequence is strictly less than the
+deadline), anyone may call `void_round`. This voids the result, refunds each
+participant's exact stake into pending winnings, charges no settlement fee,
+and archives the round as `Voided`. At the deadline, voiding is no longer
+allowed.
+
+At the deadline or later, anyone may call `finalize_round` to apply the normal
+settlement to the staged oracle result, including the configured fee. Calling
+it before the deadline fails with `RoundNotEnded`.
+
+A value of 0 (the default) skips staging: `resolve_round` performs normal
+settlement immediately. There is then no pending result for
+`void_round` or `finalize_round` to act on.
+
+Evidence:
+- Code: `config::set_dispute_ledgers`, `config::get_dispute_ledgers`,
+  `resolve_round`, `void_round`, and `finalize_round`.
+- Tests: `dispute_window.rs::void_during_window_refunds_exact_stakes_and_conserves_pot`
+  and `dispute_window.rs::finalize_after_window_settles_and_late_void_is_blocked`.
+
 ### I5. One Position Per User Per Round
 
 A user may hold at most one Up/Down position or one Precision prediction in the
