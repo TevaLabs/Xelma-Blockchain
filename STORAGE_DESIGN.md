@@ -216,6 +216,14 @@ overrides the round pool totals to inject a simulated losing pool.
 | `test_user_archived_participation_returns_none_after_prune` | Missing-id semantics: user outcome query returns `None` for pruned rounds. |
 | `test_prune_cleans_cancelled_round_marker` | `CancelledRound` marker is cleaned up during prune. |
 | `test_prune_multiple_rounds_cleans_associated_data` | Multiple prunes clean all associated data in FIFO order. |
+| `test_no_prune_event_while_within_retention` | No `("archive", "pruned")` while the archive is within retention. |
+| `test_prune_event_payload_is_round_id_and_limit` | Prune payload is `(round_id, retention_limit)` for the evicted round. |
+| `test_lowered_retention_backlog_emits_one_event_per_round_fifo` | After lowering retention, the next write emits one event per backlog round, oldest first. |
+| `test_prune_events_match_deleted_storage_exactly` | Over many writes, events name exactly the rounds removed from storage, once each, in FIFO order. |
+| `test_prune_event_follows_round_summary_of_triggering_round` | The prune event follows the triggering round's `("round", "summary")`. |
+| `test_cancelled_round_prune_emits_event` | Pruning a cancelled round emits the event and removes its marker. |
+| `test_retention_event_payload_is_new_limit` | `("archive", "retention")` payload is `(limit,)`. |
+| `test_rejected_retention_change_emits_no_archive_event` | A rejected `set_archive_retention` emits no `archive` event. |
 
 ### Storage benchmarks (`contracts/src/tests/storage_benchmarks.rs`)
 
