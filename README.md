@@ -574,7 +574,9 @@ async function watchForNewRounds(contractId: string) {
 - `set_windows(bet_ledgers, run_ledgers)` - Configure round timing windows
 - `set_round_template(start_price, mode)` - Store the blueprint used by `create_next_from_template`
 - `clear_round_template()` - Remove the configured round template
-- `create_next_from_template()` - Create the next round from the stored template (fails if a round is already active or no template is set)
+- `set_keeper(keeper)` - Set the optional keeper allowed to call `create_next_from_template` (`None` restores admin-only access)
+- `clear_keeper()` - Remove the configured keeper
+- `create_next_from_template()` - Create the next round from the stored template (keeper-only when configured, otherwise admin-only; fails if a round is already active or no template is set)
 - `reset_leaderboard_season()` - Archive the active leaderboard season's rankings and advance to the next season
 
 ### Oracle Functions:
@@ -590,6 +592,7 @@ async function watchForNewRounds(contractId: string) {
 - `get_precision_predictions()` - View all predictions in current Precision round
 - `get_updown_positions()` - View all positions in current Up/Down round
 - `get_round_template()` - View the configured round template, if any
+- `get_keeper()` - View the configured keeper, if any
 - `get_leaderboard_by_wins(offset, limit)` / `get_leaderboard_by_streak(offset, limit)` - Paginated lifetime (all-time) leaderboards, independent of seasons
 - `get_current_season_id()` - Id of the currently-active leaderboard season (default 1)
 - `get_season_user_stats(season_id, user)` - A user's win/loss/streak stats scoped to one season (active or archived)

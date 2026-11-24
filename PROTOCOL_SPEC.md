@@ -83,7 +83,8 @@ Prices are stored as `u128` values scaled to 4 decimal places.
 
 | Role | Trust level | Authority | Assumptions |
 |---|---|---|---|
-| Admin | Trusted operator | Initialize roles, create rounds, configure windows and risk controls, pause/unpause, cancel active rounds. | Admin key custody is secure; admin does not maliciously configure unusable windows or cancel rounds unfairly. |
+| Admin | Trusted operator | Initialize roles, create rounds, configure windows and risk controls, pause/unpause, cancel active rounds, configure the optional keeper. | Admin key custody is secure; admin does not maliciously configure unusable windows or cancel rounds unfairly. |
+| Keeper | Optional automation key | Call `create_next_from_template` when configured; otherwise the admin is the caller. | Keeper key custody is secure; changing or clearing the keeper is an admin action. |
 | Oracle | Trusted data signer | Resolve rounds, submit liveness heartbeat. | Oracle reports accurate prices for the intended round and submits fresh payloads. |
 | Users | Untrusted | Mint once, bet/predict, claim winnings, read state. | Users may attempt invalid auth, duplicate bets, timing abuse, overflow inputs, and replay-like calls. |
 | Indexers/frontends | Off-chain consumers | Read events and contract state. | Consumers treat `docs/EVENT_SCHEMA.md` as canonical and handle additive events safely. |
@@ -112,6 +113,7 @@ State-changing entrypoints require the relevant signer:
 | Entrypoint class | Required signer |
 |---|---|
 | Admin operations | `Admin` |
+| `create_next_from_template` | `Keeper` when configured, otherwise `Admin` |
 | Oracle resolution and heartbeat | `Oracle` |
 | User mint, bet, prediction, claim | `User` |
 

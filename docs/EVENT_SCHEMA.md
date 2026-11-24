@@ -701,6 +701,21 @@ from the underlying `create_round` call.
 
 ---
 
+## `("keeper", "set")` — Optional keeper configured
+
+Emitted when the admin sets, rotates, or clears the optional keeper for
+`create_next_from_template`. `None` restores admin-only access.
+
+| Field    | Type              | Description                                      |
+|----------|-------------------|--------------------------------------------------|
+| `keeper` | `Option<Address>` | New keeper address, or `None` when cleared.       |
+
+**Topics**: `("keeper", "set")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `set_keeper`, `clear_keeper`.
+
+---
+
 ## `("season", "reset")` — Leaderboard season archived and advanced
 
 Emitted when the admin resets the active leaderboard season. The ending

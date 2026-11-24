@@ -334,6 +334,46 @@ pub fn get_admin(env: Env) -> Option<Address> {
     env.storage().persistent().get(&key)
 }
 
+/// Sets or clears the dedicated template-round keeper (admin only).
+pub fn set_keeper(env: Env, keeper: Option<Address>) -> Result<(), ContractError> {
+    _require_supported_schema(&env)?;
+    let admin: Address = env
+        .storage()
+        .persistent()
+        .get(&DataKeyCore::Admin)
+        .ok_or(ContractError::AdminNotSet)?;
+    admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("set_keep"), e);
+    })?;
+
+    let key = DataKeyCore::Keeper;
+    match keeper {
+        Some(ref address) => {
+            env.storage().persistent().set(&key, address);
+            _extend_persistent_ttl(&env, &key);
+        }
+        None => env.storage().persistent().remove(&key),
+    }
+
+    #[allow(deprecated)]
+    env.events()
+        .publish((symbol_short!("keeper"), symbol_short!("set")), (keeper,));
+    Ok(())
+}
+
+/// Clears the configured keeper, restoring admin-only creation (admin only).
+pub fn clear_keeper(env: Env) -> Result<(), ContractError> {
+    set_keeper(env, None)
+}
+
+/// Returns the configured template-round keeper, if any.
+pub fn get_keeper(env: Env) -> Option<Address> {
+    let key = DataKeyCore::Keeper;
+    _extend_persistent_ttl(&env, &key);
+    env.storage().persistent().get(&key)
+}
+
 pub fn get_oracle(env: Env) -> Option<Address> {
     let key = DataKeyCore::Oracle;
     _extend_persistent_ttl(&env, &key);
@@ -942,9 +982,10 @@ pub(crate) fn _current_mode(env: &Env) -> RuntimeMode {
 ///   `set_protocol_fee_bps`, `withdraw_protocol_fee`, `set_min_participants`,
 ///   `set_max_precision_participants`, `set_mint_limit`,
 ///   `set_archive_retention`, `set_close_buffer_ledgers`,
-///   `set_round_template`, `clear_round_template`,
-///   `reset_leaderboard_season`, `create_round`, `create_next_from_template`
-///   (admin-gated, not `RoundMutation` — must stay callable in `ClaimsOnly`
+///   `set_round_template`, `clear_round_template`, `set_keeper`,
+///   `clear_keeper`, `reset_leaderboard_season`, `create_round`,
+///   `create_next_from_template` (keeper-gated when configured, otherwise
+///   admin-gated, not `RoundMutation` — must stay callable in `ClaimsOnly`
 ///   since it is the entrypoint that transitions the protocol back to
 ///   `Active`; it is blocked only by `FullyPaused`).
 ///
@@ -1027,6 +1068,7 @@ pub fn _is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
             | DataKeyCore::MigratedToV3
             | DataKeyCore::ArchiveRetention
             | DataKeyCore::RoundTemplate
+            | DataKeyCore::Keeper
             | DataKeyCore::Ext(DataKeyExt::LeaderboardWins)
             | DataKeyCore::Ext(DataKeyExt::LeaderboardStreak)
             | DataKeyCore::Ext(DataKeyExt::SeasonId)

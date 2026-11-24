@@ -1280,7 +1280,10 @@ export interface Client {
   set_round_template: ({start_price, mode}: {start_price: u128, mode: Option<u32>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
   clear_round_template: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
   get_round_template: (options?: MethodOptions) => Promise<AssembledTransaction<Option<RoundTemplate>>>
-  create_next_from_template: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  set_keeper: ({keeper}: {keeper: Option<string>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  clear_keeper: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  get_keeper: (options?: MethodOptions) => Promise<AssembledTransaction<Option<string>>>
+  create_next_from_template: (options?: MethodOptions) => Promise<AssembledTransaction<Result<u64>>>
   get_leaderboard_by_wins: ({offset, limit}: {offset: u32, limit: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Array<LeaderboardEntry>>>
   get_leaderboard_by_streak: ({offset, limit}: {offset: u32, limit: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Array<LeaderboardEntry>>>
   get_current_season_id: (options?: MethodOptions) => Promise<AssembledTransaction<u32>>
@@ -1494,7 +1497,10 @@ export class Client extends ContractClient {
         set_round_template: this.txFromJSON<Result<void>>,
         clear_round_template: this.txFromJSON<Result<void>>,
         get_round_template: this.txFromJSON<Option<RoundTemplate>>,
-        create_next_from_template: this.txFromJSON<Result<void>>,
+        set_keeper: this.txFromJSON<Result<void>>,
+        clear_keeper: this.txFromJSON<Result<void>>,
+        get_keeper: this.txFromJSON<Option<string>>,
+        create_next_from_template: this.txFromJSON<Result<u64>>,
         get_leaderboard_by_wins: this.txFromJSON<Array<LeaderboardEntry>>,
         get_leaderboard_by_streak: this.txFromJSON<Array<LeaderboardEntry>>,
         get_current_season_id: this.txFromJSON<u32>,
