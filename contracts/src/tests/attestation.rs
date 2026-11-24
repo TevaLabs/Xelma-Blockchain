@@ -216,3 +216,74 @@ fn test_set_attestation_key_requires_admin_auth() {
     let result = client.try_set_attestation_key(&Some(pubkey));
     assert!(result.is_err());
 }
+
+#[test]
+fn test_attestation_required_explicit_none_field_rejected() {
+    // Explicit attestation: None in the payload is treated identically to a
+    // missing field — the contract returns WindowOutOfRange (the error emitted
+    // when the attestation gate rejects an unsigned payload).
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup(&env);
+    let (pubkey, _signing_key) = generate_keypair(&env);
+
+    client.set_attestation_key(&Some(pubkey));
+    client.create_round(&1_000_0000, &None);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    // Build a payload and explicitly clear the attestation field.
+    let mut payload = base_payload(&env, &contract_id, 0, 1, 1_000_0000);
+    payload.attestation = None;
+
+    let result = client.try_resolve_round(&payload);
+    assert_eq!(
+        result,
+        Err(Ok(ContractError::WindowOutOfRange)),
+        "explicit None attestation must be rejected when a key is configured"
+    );
+}
+
+#[test]
+fn test_attestation_nonce_reuse_rejected_with_valid_signature() {
+    // Even a valid attestation signature must not bypass the oracle-nonce
+    // uniqueness check: settling the same (round_id, nonce) pair twice must
+    // fail with OracleNonceReused regardless of signature validity.
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup(&env);
+    let (pubkey, signing_key) = generate_keypair(&env);
+
+    client.set_attestation_key(&Some(pubkey));
+    client.create_round(&1_000_0000, &None);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+    });
+
+    let mut payload = base_payload(&env, &contract_id, 0, 1, 1_000_0000);
+    let sig = sign_payload(&env, &signing_key, &payload);
+    payload.attestation = Some(sig);
+
+    // First resolution succeeds.
+    client.resolve_round(&payload);
+    assert_eq!(client.get_active_round(), None);
+
+    // Open a new round and attempt to replay the same nonce.
+    client.create_round(&1_000_0000, &None);
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 24;
+    });
+
+    // Re-sign with the same nonce (nonce=1 reused).
+    let mut replay_payload = base_payload(&env, &contract_id, 12, 1, 1_000_0000);
+    let replay_sig = sign_payload(&env, &signing_key, &replay_payload);
+    replay_payload.attestation = Some(replay_sig);
+
+    let result = client.try_resolve_round(&replay_payload);
+    assert_eq!(
+        result,
+        Err(Ok(ContractError::OracleNonceReused)),
+        "nonce replay must be rejected even when the attestation signature is valid"
+    );
+}
