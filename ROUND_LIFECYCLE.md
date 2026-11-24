@@ -76,11 +76,13 @@ The oracle calls `resolve_round` after `end_ledger` is reached. On success:
 
 ### Precision commit-reveal windows
 
-| Phase | Ledger range | Allowed actions |
+The on-chain contract exposes phase progression via `get_round_phase`, returning the canonical `RoundPhase` enum variant:
+
+| Phase (`RoundPhase`) | Ledger range | Allowed actions |
 |---|---|---|
-| Betting | `ledger < bet_end_ledger` | `commit_prediction`, `place_precision_prediction` |
-| Reveal | `bet_end_ledger ≤ ledger < end_ledger` | `reveal_prediction` only |
-| Resolve | `ledger ≥ end_ledger` | `resolve_round` |
+| `Betting` | `ledger < bet_end_ledger` | `commit_prediction`, `place_precision_prediction` |
+| `Running` | `bet_end_ledger ≤ ledger < end_ledger` | `reveal_prediction` only (reveal window) |
+| `Resolvable` | `ledger ≥ end_ledger` | `resolve_round` |
 
 **Unrevealed commitments:** If at least one prediction is revealed, any
 still-unrevealed commitment **forfeits to the pot**. If nobody reveals,
