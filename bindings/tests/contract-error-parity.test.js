@@ -43,7 +43,7 @@ while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
   tsCodes.set(parseInt(entry[1], 10), entry[2]);
 }
 
-const rustCodes = new Map(rustVariants.map(v => [v,code, v.name]));
+const rustCodes = new Map(rustVariants.map(v => [v.code, v.name]));
 
 // --- Docs: parse the markdown registry table ---
 const docsCodes = new Map();

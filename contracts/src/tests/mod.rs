@@ -25,6 +25,7 @@ mod event_coverage;
 mod event_order_golden;
 mod fee_model;
 mod fee_model_matrix;
+mod fuzz_lifecycle;
 mod governance;
 mod guard_tests;
 // mod initialization; // upstream bug
