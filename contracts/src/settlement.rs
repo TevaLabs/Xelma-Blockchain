@@ -2896,3 +2896,86 @@ pub fn _update_stats_loss(env: &Env, user: Address) -> Result<(), ContractError>
     crate::leaderboard::_update_season_stats_loss(env, user)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod oracle_network_mismatch_tests {
+    use crate::contract::VirtualTokenContractClient;
+    use crate::errors::ContractError;
+    use crate::types::OraclePayload;
+    use crate::VirtualTokenContract;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Address, BytesN, Env,
+    };
+
+    #[test]
+    fn rejects_network_id_mismatch_before_nonce_write() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+
+        client.initialize(&admin, &oracle);
+        env.ledger().with_mut(|li| {
+            li.timestamp = 940;
+            li.sequence_number = 1;
+        });
+        client.update_oracle_heartbeat(&0u32);
+        client.create_round(&1_0000000, &None);
+        let round_id = client.get_active_round().unwrap().round_id as u32;
+
+        env.ledger().with_mut(|li| {
+            li.timestamp = 1000;
+            li.sequence_number = 13;
+        });
+
+        let wrong_network_id = BytesN::from_array(&env, &[0xABu8; 32]);
+        assert_ne!(wrong_network_id, env.ledger().network_id());
+
+        let bad_network_payload = OraclePayload {
+            price: 1_5000000,
+            timestamp: 1000,
+            round_id,
+            nonce: 77u64,
+            network_id: wrong_network_id,
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        };
+        assert_eq!(
+            client.try_resolve_round(&bad_network_payload),
+            Err(Ok(ContractError::OracleNetworkMismatch))
+        );
+
+        let bad_contract_payload = OraclePayload {
+            price: 1_5000000,
+            timestamp: 1000,
+            round_id,
+            nonce: 77u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: Address::generate(&env),
+            confidence: None,
+            attestation: None,
+        };
+        assert_eq!(
+            client.try_resolve_round(&bad_contract_payload),
+            Err(Ok(ContractError::OracleNetworkMismatch))
+        );
+
+        // Nonce 77 must NOT have been written by either rejected call.
+        let valid_payload = OraclePayload {
+            price: 1_5000000,
+            timestamp: 1000,
+            round_id,
+            nonce: 77u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        };
+        assert_eq!(client.try_resolve_round(&valid_payload), Ok(Ok(())));
+    }
+}
