@@ -2896,3 +2896,99 @@ pub fn _update_stats_loss(env: &Env, user: Address) -> Result<(), ContractError>
     crate::leaderboard::_update_season_stats_loss(env, user)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod multi_feed_quorum_tests {
+    use crate::errors::ContractError;
+    use crate::types::{BetSide, MultiFeedPayload, OracleQuorumConfig};
+    use crate::contract::VirtualTokenContractClient;
+    use crate::VirtualTokenContract;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        vec, Address, Env,
+    };
+
+    #[test]
+    fn rejects_insufficient_quorum_without_partial_settlement_and_preserves_nonce() {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        env.mock_all_auths();
+
+        client.initialize(&admin, &oracle);
+        client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
+            min_observations: 3,
+            quorum_threshold: 3,
+            outlier_threshold_bps: 500, // 5%
+        }));
+
+        client.mint_initial(&alice);
+        client.mint_initial(&bob);
+
+        env.ledger().with_mut(|li| {
+            li.timestamp = 940;
+            li.sequence_number = 1;
+        });
+        client.update_oracle_heartbeat(&0u32);
+        client.create_round(&1_0000000, &None);
+
+        client.place_bet(&alice, &100, &BetSide::Up);
+        client.place_bet(&bob, &100, &BetSide::Down);
+
+        let alice_bal_before = client.balance(&alice);
+        let bob_bal_before = client.balance(&bob);
+        let alice_pending_before = client.get_pending_winnings(&alice);
+        let bob_pending_before = client.get_pending_winnings(&bob);
+
+        // Advance past end_ledger (1 + 12 = 13) with timestamp inside the round window.
+        env.ledger().with_mut(|li| {
+            li.timestamp = 1000;
+            li.sequence_number = 13;
+        });
+
+        let round_id = client.get_active_round().unwrap().round_id as u32;
+
+        // 3 observations, but 2 are outliers (>5% from median 1_0000000) -> only 1 survivor < quorum 3.
+        let bad_payload = MultiFeedPayload {
+            prices: vec![&env, 5000000u128, 1_0000000u128, 2_0000000u128],
+            sources: vec![&env, 1u32, 2u32, 3u32],
+            round_id,
+            nonce: 42u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            timestamp: 1000,
+        };
+
+        assert_eq!(
+            client.try_resolve_round_multi(&bad_payload),
+            Err(Ok(ContractError::InsufficientOracleQuorum))
+        );
+
+        // No partial settlement: round is still active and balances/pending winnings are untouched.
+        assert!(client.get_active_round().is_some());
+        assert_eq!(client.balance(&alice), alice_bal_before);
+        assert_eq!(client.balance(&bob), bob_bal_before);
+        assert_eq!(client.get_pending_winnings(&alice), alice_pending_before);
+        assert_eq!(client.get_pending_winnings(&bob), bob_pending_before);
+
+        // Nonce was not consumed: a subsequent valid payload with the same nonce resolves cleanly.
+        let good_payload = MultiFeedPayload {
+            prices: vec![&env, 1_0100000u128, 1_0200000u128, 1_0300000u128],
+            sources: vec![&env, 1u32, 2u32, 3u32],
+            round_id,
+            nonce: 42u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            timestamp: 1000,
+        };
+
+        assert_eq!(client.try_resolve_round_multi(&good_payload), Ok(Ok(())));
+        assert!(client.get_active_round().is_none());
+        assert!(client.get_pending_winnings(&alice) > alice_pending_before);
+    }
+}
