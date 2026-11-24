@@ -105,6 +105,23 @@ fn test_reclaim_fails_when_not_expired() {
     assert_eq!(result, Err(Ok(ContractError::PendingWinningsNotExpired)));
 }
 
+#[test]
+fn test_reclaim_one_ledger_before_expiry_preserves_pending_balance() {
+    let (env, _admin, contract_id, client) = setup();
+    let user = Address::generate(&env);
+
+    env.ledger().with_mut(|li| li.sequence_number = 100);
+    set_pending_at_current_ledger(&env, &contract_id, &user, 750);
+    apply_pending_winnings_expiry(&env, &client, 200);
+    env.ledger().with_mut(|li| li.sequence_number = 299);
+
+    assert_eq!(
+        client.try_reclaim_expired_pending_winnings(&user),
+        Err(Ok(ContractError::PendingWinningsNotExpired))
+    );
+    assert_eq!(client.get_pending_winnings(&user), 750);
+}
+
 // ─── Reclaim: success path ───────────────────────────────────────────────
 
 #[test]

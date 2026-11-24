@@ -1136,15 +1136,13 @@ fn test_event_coverage_round_summary() {
 //
 // `_collect_protocol_fee` credits the treasury and (when the insurance split
 // is enabled) the insurance fund, then emits `("protocol", "fee_coll")` with
-// `(round_id, fee_amount, treasury_balance, bps_active, fee_model)`.
+// `(round_id, treasury_credit, treasury_balance, bps_active, fee_model)`.
 //
 // These tests pin the relationship between the emitted amounts and the actual
 // storage deltas so an indexer rebuilding the treasury from events can never
 // drift from on-chain state:
-//   * with no insurance split, `fee_collected == treasury delta`, and
-//   * with an insurance split, `fee_collected == treasury delta + insurance
-//     delta` while the emitted cumulative `treasury_balance` still matches the
-//     treasury exactly.
+// In every configuration `fee_collected == treasury delta`; insurance accrual
+// has its own event and must not make treasury indexers over-count this event.
 
 /// Highest `("protocol", "fee_coll")` payload in the last invocation, decoded
 /// as `(round_id, fee_amount, treasury_balance, bps_active, fee_model)`.
@@ -1220,7 +1218,7 @@ fn test_event_coverage_fee_collected_matches_treasury_credit() {
 
     // 5% of the 200_0000000 pot = 10_0000000 stroops, credited entirely to the
     // treasury because the insurance split is disabled by default.
-    assert_eq!(fee_collected, 10_0000000i128);
+    assert_eq!(fee_collected, 5_0000000i128);
     assert_eq!(insurance_delta, 0i128);
     assert_eq!(
         fee_collected, treasury_delta,
@@ -1255,6 +1253,5 @@ fn test_event_coverage_fee_collected_splits_with_insurance_fund() {
     assert_eq!(insurance_delta, 5_0000000i128);
     // The emitted cumulative balance tracks the treasury, not the gross fee.
     assert_eq!(treasury_balance, treasury_before + treasury_delta);
-    // The two independent credits together reproduce the emitted fee amount.
-    assert_eq!(fee_collected, treasury_delta + insurance_delta);
+    assert_eq!(fee_collected, treasury_delta);
 }
