@@ -1689,69 +1689,79 @@ fn test_confidence_above_threshold_accepted() {
 }
 
 #[test]
-fn test_missing_confidence_accepted_when_not_strict() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
+fn test_missing_confidence_strict_vs_permissive() {
+    // Issue #818: consolidated coverage from:
+    // - test_missing_confidence_accepted_when_not_strict: live heartbeat +
+    //   min confidence 8000 bps + strict OFF + `confidence: None` must resolve.
+    // - test_missing_confidence_rejected_in_strict_mode: same setup with
+    //   strict ON must fail with exactly `Err(Ok(ContractError::InvalidPrice))`.
+    // Every original assertion survives below; mode-labeled messages name the
+    // failing case. Successful resolves additionally verify the round clears.
+    let cases = [
+        ("permissive (strict=false)", false, false),
+        ("strict (strict=true)", true, true),
+    ];
 
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.set_oracle_min_confidence_bps(&Some(8000u32));
-    // strict mode NOT enabled
-    client.create_round(&1_0000000, &None);
+    for (label, strict_mode, expect_reject) in cases {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
 
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
+        client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
+        client.set_oracle_min_confidence_bps(&Some(8000u32));
+        if strict_mode {
+            client.set_oracle_strict_mode(&true);
+        } else {
+            assert!(
+                !client.get_oracle_strict_mode(),
+                "{label}: confidence strict mode must default to OFF"
+            );
+        }
+        client.create_round(&1_0000000, &None);
 
-    // Legacy payload without confidence accepted when strict mode is off
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-}
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 12;
+            li.timestamp = 100;
+        });
 
-#[test]
-fn test_missing_confidence_rejected_in_strict_mode() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
+        // Legacy payload without confidence: accepted only when strict is off.
+        let result = client.try_resolve_round(&OraclePayload {
+            price: 1_2000000,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        });
 
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.set_oracle_min_confidence_bps(&Some(8000u32));
-    client.set_oracle_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
+        if expect_reject {
+            assert_eq!(
+                result,
+                Err(Ok(ContractError::InvalidPrice)),
+                "{label}: missing confidence must be rejected"
+            );
+            assert!(
+                client.get_active_round().is_some(),
+                "{label}: rejected resolve must leave the active round"
+            );
+        } else {
+            assert!(
+                result.is_ok(),
+                "{label}: missing confidence must be accepted"
+            );
+            assert_eq!(
+                client.get_active_round(),
+                None,
+                "{label}: successful resolve must clear the active round"
+            );
+        }
+    }
 }
 
 // ── Oracle heartbeat health gate tests (Issue #264) ──────────────────────────
