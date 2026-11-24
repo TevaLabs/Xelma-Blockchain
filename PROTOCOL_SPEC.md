@@ -266,9 +266,14 @@ Admin cancellation and insufficient-participant fallback paths must refund
 participant stakes to pending winnings, remove active round state, and allow
 future rounds to be created.
 
+Degenerate one-sided market settlements under both `OneSidedPolicy::Refund`
+and `OneSidedPolicy::CarryForward` (via its canonical refund fallback) strictly
+conserve full participant principal (100% of user stakes credited to pending
+winnings) and collect zero protocol fees (`fee == 0`).
+
 Evidence:
-- Code: `cancel_round`, `_refund_under_threshold`.
-- Tests: `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs`.
+- Code: `cancel_round`, `_refund_under_threshold`, `_apply_one_sided_policy`.
+- Tests: `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs`, `invariant_harness.rs`, `one_sided_settlement.rs`.
 
 ### I12. Storage Cleanup and Migration Compatibility
 
@@ -387,7 +392,7 @@ Evidence:
 | I8-A | Mixed-reveal forfeit-to-pot accounting: unrevealed stakes stay in `total_pot` and are redistributed to winners; never refunded or burned | `_resolve_precision_mode` mixed branch | `conservation.rs` (row 10, fee-on exact conservation), `commit_reveal_e2e.rs` (forfeit event + supply conservation), `adversarial/grinding.rs` (commit-and-grief) | Covered |
 | I9 | Checked arithmetic | `checked_*`, `payout_add`, `payout_mul` | `overflow_tests.rs`, `edge_cases.rs` | Covered with noted precision-error caveat in `SECURITY_REVIEW.md` |
 | I10 | Oracle payload binding | `resolve_round`, `create_round` | `security.rs`, `adversarial/oracle.rs` | Covered |
-| I11 | Cancellation/fallback refunds | `cancel_round`, `_refund_under_threshold` | `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs`, `cancel_refund_matrix.rs` (UpDown + Precision, including unrevealed commitments, zero-fee, `Cancelled` archive status) | Covered |
+| I11 | Cancellation/fallback refunds | `cancel_round`, `_refund_under_threshold`, `_apply_one_sided_policy` | `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs`, `cancel_refund_matrix.rs`, `invariant_harness.rs`, `one_sided_settlement.rs` (UpDown + Precision, zero-fee conservation) | Covered |
 | I12 | Storage cleanup/migration | indexed cleanup and legacy fallbacks | `storage_benchmarks.rs` | Covered |
 | I13 | Event semantics | event publishing calls | `lifecycle.rs`, `mode_tests.rs`, `resolution.rs`, `security.rs` | Covered; canonical schema in `docs/EVENT_SCHEMA.md` |
 | I14 | Early cash-out | `cash_out_early`, `set_early_cashout_bps` | `conservation.rs` | Covered |
