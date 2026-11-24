@@ -480,3 +480,222 @@ fn test_chaos_recovery_migrate_active_round_pause_cancel() {
     client.create_round(&1_0000000, &None);
     assert!(client.get_active_round().is_some());
 }
+
+/// Emergency drill during active dispute (Issue #836):
+/// Configures dispute window, creates round, places bets, and resolves round into staged dispute.
+/// Triggers emergency pause and verifies:
+/// 1. Contract successfully transitions to FullyPaused mode.
+/// 2. Voiding and finalizing the disputed round are strictly blocked with `ContractPaused`.
+/// 3. In ClaimsOnly mode, voiding the disputed round is permitted and refunds stakes to pending winnings.
+/// 4. Pending winnings can be claimed during ClaimsOnly mode and balance is fully restored.
+/// 5. Protocol recovers to Normal mode without any stuck funds.
+#[test]
+fn test_emergency_drill_pause_during_active_dispute() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // ── 1. Configure dispute window and fund users ────────────────────────
+    client.set_dispute_ledgers(&10u32);
+    assert_eq!(client.get_dispute_ledgers(), 10u32);
+
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    let initial_total = 2 * 1000_0000000i128;
+
+    // ── 2. Create round, place bets, and resolve into dispute state ───────
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &60_0000000, &BetSide::Up);
+    client.place_bet(&bob, &40_0000000, &BetSide::Down);
+    let total_staked = 100_0000000i128;
+
+    let round = client.get_active_round().unwrap();
+    let round_id = round.round_id;
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+        li.timestamp = round.end_ledger as u64 * 5;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 1_5000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 301,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    // Staged in dispute: round removed from active, payouts deferred (pending winnings = 0)
+    assert_eq!(client.get_active_round(), None);
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+
+    // ── 3. Trigger emergency drill pause (FullyPaused mode 2) ─────────────
+    client.pause_contract();
+    assert!(client.is_paused());
+    assert_eq!(client.get_runtime_mode(), 2u32);
+    assert_eq!(client.get_protocol_status(), ProtocolStatus::Paused);
+
+    // Both voiding and finalizing the pending dispute are blocked by pause
+    assert_eq!(
+        client.try_void_round(&round_id),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert_eq!(
+        client.try_finalize_round(&round_id),
+        Err(Ok(ContractError::ContractPaused))
+    );
+
+    // User operations and trading are also blocked by pause
+    assert_eq!(
+        client.try_claim_winnings(&alice),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert_eq!(
+        client.try_place_bet(&alice, &10_0000000, &BetSide::Up),
+        Err(Ok(ContractError::ContractPaused))
+    );
+
+    // ── 4. Transition to ClaimsOnly (mode 1) during incident ──────────────
+    client.set_runtime_mode(&1u32);
+    assert_eq!(client.get_runtime_mode(), 1u32);
+    assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);
+    assert!(!client.is_paused());
+
+    // New bets remain blocked in ClaimsOnly mode
+    assert_eq!(
+        client.try_place_bet(&alice, &10_0000000, &BetSide::Up),
+        Err(Ok(ContractError::ContractPaused))
+    );
+
+    // Dispute voiding is permitted in ClaimsOnly mode while the window is open
+    client.void_round(&round_id);
+    assert_eq!(client.get_pending_winnings(&alice), 60_0000000);
+    assert_eq!(client.get_pending_winnings(&bob), 40_0000000);
+    assert_eq!(
+        client.get_pending_winnings(&alice) + client.get_pending_winnings(&bob),
+        total_staked
+    );
+
+    // In ClaimsOnly, claims are permitted and refund the full stakes
+    client.claim_winnings(&alice);
+    client.claim_winnings(&bob);
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+    assert_eq!(
+        client.balance(&alice) + client.balance(&bob),
+        initial_total
+    );
+
+    // ── 5. Recovery to Normal mode ────────────────────────────────────────
+    client.set_runtime_mode(&0u32);
+    assert_eq!(client.get_runtime_mode(), 0u32);
+    assert!(!client.is_paused());
+
+    // Fresh round creation and trading are restored
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+        li.timestamp += 5;
+    });
+    client.create_round(&1_0000000, &None);
+    assert!(client.get_active_round().is_some());
+}
+
+/// Verifies that standard emergency drill behaviour is unaffected when no dispute is active.
+/// Confirms that without a configured dispute window (`dispute_ledgers == 0`), settlement
+/// completes immediately, payouts stage directly to pending winnings, and the emergency
+/// drill lifecycle (Normal -> ClaimsOnly -> Full Pause -> Recovery) proceeds without any
+/// dispute-related side-effects.
+#[test]
+fn test_emergency_drill_normal_behaviour_unaffected_without_dispute() {
+    let env = Env::default();
+    let (client, contract_id, _admin, _oracle) = setup_contract(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // ── 1. Confirm default dispute window is 0 (no dispute staging) ───────
+    assert_eq!(client.get_dispute_ledgers(), 0u32);
+
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    // ── 2. Create round, place bets, and advance ledger ───────────────────
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &100_0000000, &BetSide::Down);
+
+    let round = client.get_active_round().unwrap();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.end_ledger;
+        li.timestamp = round.end_ledger as u64 * 5;
+    });
+
+    // ── 3. Resolve round: settles immediately to pending winnings ─────────
+    client.resolve_round(&OraclePayload {
+        price: 1_5000000, // Price went up -> alice wins
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 302,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    assert_eq!(client.get_active_round(), None);
+    // Immediate settlement without dispute window: alice has pending winnings immediately
+    let alice_pending = client.get_pending_winnings(&alice);
+    assert!(alice_pending > 0);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
+
+    // ── 4. ClaimsOnly mode during emergency drill ─────────────────────────
+    client.set_runtime_mode(&1u32);
+    assert_eq!(client.get_runtime_mode(), 1u32);
+    assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);
+    assert!(!client.is_paused());
+
+    // Trading blocked
+    assert_eq!(
+        client.try_place_bet(&alice, &10_0000000, &BetSide::Up),
+        Err(Ok(ContractError::ContractPaused))
+    );
+
+    // Claims permitted
+    let claimed = client.claim_winnings(&alice);
+    assert_eq!(claimed, alice_pending);
+    assert_eq!(client.get_pending_winnings(&alice), 0);
+
+    // ── 5. Full pause escalation during emergency drill ───────────────────
+    client.pause_contract();
+    assert!(client.is_paused());
+    assert_eq!(client.get_runtime_mode(), 2u32);
+    assert_eq!(client.get_protocol_status(), ProtocolStatus::Paused);
+
+    // All mutating operations blocked
+    assert_eq!(
+        client.try_create_round(&2_0000000, &None),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert_eq!(
+        client.try_claim_winnings(&bob),
+        Err(Ok(ContractError::ContractPaused))
+    );
+
+    // ── 6. Recovery to Normal mode ────────────────────────────────────────
+    client.unpause_contract();
+    assert!(!client.is_paused());
+    assert_eq!(client.get_runtime_mode(), 0u32);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+        li.timestamp += 5;
+    });
+    client.create_round(&2_0000000, &None);
+    assert!(client.get_active_round().is_some());
+    let bet_res = client.try_place_bet(&alice, &10_0000000, &BetSide::Up);
+    assert!(bet_res.is_ok());
+}
