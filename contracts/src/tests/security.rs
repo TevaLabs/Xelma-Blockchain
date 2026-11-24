@@ -1689,69 +1689,79 @@ fn test_confidence_above_threshold_accepted() {
 }
 
 #[test]
-fn test_missing_confidence_accepted_when_not_strict() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
+fn test_missing_confidence_strict_vs_permissive() {
+    // Issue #818: consolidated coverage from:
+    // - test_missing_confidence_accepted_when_not_strict: live heartbeat +
+    //   min confidence 8000 bps + strict OFF + `confidence: None` must resolve.
+    // - test_missing_confidence_rejected_in_strict_mode: same setup with
+    //   strict ON must fail with exactly `Err(Ok(ContractError::InvalidPrice))`.
+    // Every original assertion survives below; mode-labeled messages name the
+    // failing case. Successful resolves additionally verify the round clears.
+    let cases = [
+        ("permissive (strict=false)", false, false),
+        ("strict (strict=true)", true, true),
+    ];
 
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.set_oracle_min_confidence_bps(&Some(8000u32));
-    // strict mode NOT enabled
-    client.create_round(&1_0000000, &None);
+    for (label, strict_mode, expect_reject) in cases {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
 
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
+        client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
+        client.set_oracle_min_confidence_bps(&Some(8000u32));
+        if strict_mode {
+            client.set_oracle_strict_mode(&true);
+        } else {
+            assert!(
+                !client.get_oracle_strict_mode(),
+                "{label}: confidence strict mode must default to OFF"
+            );
+        }
+        client.create_round(&1_0000000, &None);
 
-    // Legacy payload without confidence accepted when strict mode is off
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-}
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 12;
+            li.timestamp = 100;
+        });
 
-#[test]
-fn test_missing_confidence_rejected_in_strict_mode() {
-    let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
+        // Legacy payload without confidence: accepted only when strict is off.
+        let result = client.try_resolve_round(&OraclePayload {
+            price: 1_2000000,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        });
 
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.set_oracle_min_confidence_bps(&Some(8000u32));
-    client.set_oracle_strict_mode(&true);
-    client.create_round(&1_0000000, &None);
-
-    env.ledger().with_mut(|li| {
-        li.sequence_number = 12;
-        li.timestamp = 100;
-    });
-
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
-    assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
+        if expect_reject {
+            assert_eq!(
+                result,
+                Err(Ok(ContractError::InvalidPrice)),
+                "{label}: missing confidence must be rejected"
+            );
+            assert!(
+                client.get_active_round().is_some(),
+                "{label}: rejected resolve must leave the active round"
+            );
+        } else {
+            assert!(
+                result.is_ok(),
+                "{label}: missing confidence must be accepted"
+            );
+            assert_eq!(
+                client.get_active_round(),
+                None,
+                "{label}: successful resolve must clear the active round"
+            );
+        }
+    }
 }
 
 // ── Oracle heartbeat health gate tests (Issue #264) ──────────────────────────
@@ -1772,6 +1782,281 @@ fn _setup_heartbeat_gate_test(
         li.sequence_number = 12; // past end_ledger
         li.timestamp = heartbeat_timestamp + 100; // within threshold
     });
+}
+
+#[test]
+fn test_heartbeat_strict_mode_blocks_resolve_when_offline_and_contrast_cases() {
+    // Issue #814: Oracle heartbeat strict mode blocks resolution when offline.
+    // Real definition of offline:
+    // 1. Explicit offline status (status = 2)
+    // 2. Missing heartbeat (no record stored)
+    // 3. Stale heartbeat (ledger timestamp past record.timestamp + threshold + grace)
+    //
+    // PROTOCOL_SPEC notes:
+    // PROTOCOL_SPEC defines oracle roles and liveness heartbeat requirements.
+    // The heartbeat health gate at settlement is governed by `HbGateConfig.strict_mode`
+    // (introduced in Issue #264):
+    // - Strict mode ON: offline/stale/missing heartbeat rejects resolve with `OracleNotLive`.
+    // - Permissive mode (default, strict mode OFF): settlement proceeds without gating on heartbeat.
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Case 1: Strict mode ON + Explicit Offline Status (status = 2) -> OracleNotLive
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+
+        client.initialize(&admin, &oracle);
+        client.set_hb_strict_mode(&true);
+        client.create_round(&1_0000000, &None);
+
+        env.ledger().with_mut(|li| {
+            li.timestamp = 100;
+        });
+        client.update_oracle_heartbeat(&2u32); // status 2 = offline
+
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 12;
+            li.timestamp = 200; // within 3600s threshold, but status is offline
+        });
+
+        let result = client.try_resolve_round(&OraclePayload {
+            price: 1_2000000,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        });
+        assert_eq!(
+            result,
+            Err(Ok(ContractError::OracleNotLive)),
+            "strict mode must reject explicit offline status (2) with OracleNotLive"
+        );
+        assert!(client.get_active_round().is_some());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Case 2: Strict mode ON + Missing Heartbeat -> OracleNotLive
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+
+        client.initialize(&admin, &oracle);
+        client.set_hb_strict_mode(&true);
+        client.create_round(&1_0000000, &None);
+
+        // No heartbeat recorded at all
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 12;
+            li.timestamp = 200;
+        });
+
+        let result = client.try_resolve_round(&OraclePayload {
+            price: 1_2000000,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        });
+        assert_eq!(
+            result,
+            Err(Ok(ContractError::OracleNotLive)),
+            "strict mode must reject missing heartbeat with OracleNotLive"
+        );
+        assert!(client.get_active_round().is_some());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Case 3: Contrast - Oracle Live + Strict Mode ON -> Resolve Succeeds
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+
+        client.initialize(&admin, &oracle);
+        client.set_hb_strict_mode(&true);
+        client.create_round(&1_0000000, &None);
+
+        env.ledger().with_mut(|li| {
+            li.timestamp = 1000;
+        });
+        client.update_oracle_heartbeat(&0u32); // status 0 = active / live
+
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 12;
+            li.timestamp = 1500; // fresh, within threshold
+        });
+
+        let result = client.try_resolve_round(&OraclePayload {
+            price: 1_2000000,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        });
+        assert!(
+            result.is_ok(),
+            "live oracle with strict mode ON must resolve successfully"
+        );
+        assert_eq!(client.get_active_round(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Case 4: Contrast - Oracle Offline + Permissive (strict mode OFF) -> Resolve Succeeds
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+
+        client.initialize(&admin, &oracle);
+        // strict mode is OFF by default (permissive mode)
+        assert!(!client.get_hb_strict_mode());
+        client.create_round(&1_0000000, &None);
+
+        // Heartbeat is explicitly offline (status = 2)
+        env.ledger().with_mut(|li| {
+            li.timestamp = 100;
+        });
+        client.update_oracle_heartbeat(&2u32);
+
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 12;
+            li.timestamp = 5000; // both offline status and stale
+        });
+
+        // In permissive mode, settlement is NOT blocked by offline heartbeat
+        let result = client.try_resolve_round(&OraclePayload {
+            price: 1_2000000,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        });
+        assert!(
+            result.is_ok(),
+            "permissive mode (strict OFF) must allow resolve even when oracle is offline"
+        );
+        assert_eq!(client.get_active_round(), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Case 5: Staleness Boundary Test (Threshold = 3600s, Grace = 0s)
+    // ─────────────────────────────────────────────────────────────────────────
+    // Subcase 5A: Exactly at threshold: current_time == hb_ts + threshold -> Succeeds
+    {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+
+        client.initialize(&admin, &oracle);
+        client.set_hb_strict_mode(&true);
+        client.create_round(&1_0000000, &None);
+
+        let hb_ts = 1000u64;
+        let threshold = 3600u64; // DEFAULT_ORACLE_STALE_THRESHOLD
+        env.ledger().with_mut(|li| {
+            li.timestamp = hb_ts;
+        });
+        client.update_oracle_heartbeat(&0u32);
+
+        // Exactly at deadline: current_time = 1000 + 3600 = 4600
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 12;
+            li.timestamp = hb_ts + threshold;
+        });
+
+        let result = client.try_resolve_round(&OraclePayload {
+            price: 1_2000000,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        });
+        assert!(
+            result.is_ok(),
+            "settlement exactly at staleness deadline (current_time == timestamp + threshold) must succeed"
+        );
+        assert_eq!(client.get_active_round(), None);
+    }
+
+    // Subcase 5B: Exactly 1 second past threshold: current_time == hb_ts + threshold + 1 -> OracleNotLive
+    {
+        let env = Env::default();
+        let contract_id = env.register(VirtualTokenContract, ());
+        let client = VirtualTokenContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        env.mock_all_auths();
+
+        client.initialize(&admin, &oracle);
+        client.set_hb_strict_mode(&true);
+        client.create_round(&1_0000000, &None);
+
+        let hb_ts = 1000u64;
+        let threshold = 3600u64;
+        env.ledger().with_mut(|li| {
+            li.timestamp = hb_ts;
+        });
+        client.update_oracle_heartbeat(&0u32);
+
+        // Exactly 1 second past deadline: current_time = 1000 + 3600 + 1 = 4601
+        env.ledger().with_mut(|li| {
+            li.sequence_number = 12;
+            li.timestamp = hb_ts + threshold + 1;
+        });
+
+        let result = client.try_resolve_round(&OraclePayload {
+            price: 1_2000000,
+            timestamp: env.ledger().timestamp(),
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        });
+        assert_eq!(
+            result,
+            Err(Ok(ContractError::OracleNotLive)),
+            "settlement 1 second past staleness deadline must fail with OracleNotLive"
+        );
+        assert!(client.get_active_round().is_some());
+    }
 }
 
 #[test]

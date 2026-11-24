@@ -29,7 +29,8 @@ winners, the indivisible remainder from splitting the pot always goes to
 whichever tied winner has the lexicographically-lowest address — regardless
 of stake size or who bet first. See
 `contracts/test_vectors/settlement_math.json`'s `precision_remainder_ordering`
-section for pure-math golden vectors (2/3/5-way ties, including one with an
+section and `contracts/src/settlement_math.rs::tests::test_five_way_tie_indivisible_pot_remainder`
+for pure-math golden vectors (2/3/5-way ties, including one with an
 unrevealed non-winner) and
 `tests::resolution::precision::test_precision_remainder_goes_to_lexicographically_lowest_winner`
 (plus its 3-way sibling) for the end-to-end contract-level proof with real

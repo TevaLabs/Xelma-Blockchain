@@ -1181,6 +1181,143 @@ mod tests {
     }
 
     #[test]
+    fn test_five_way_tie_indivisible_pot_remainder() {
+        // Issue #796: Golden-vector test for 5-way tie with indivisible pot remainder.
+        //
+        // --- Arithmetic Vector 1: Standard 5-way tie with indivisible pot ---
+        // Concrete parameters:
+        //   Total pot = 107
+        //   Winners count = 5
+        // Hand calculation:
+        //   per_winner = 107 / 5 = 21
+        //   remainder  = 107 % 5 = 2
+        // Deterministic remainder rule:
+        //   The first winner in resolution order (index 0) receives (per_winner + remainder).
+        //   All subsequent winners (indices 1..5) receive per_winner.
+        // Expected shares:
+        //   Winner 0: 21 + 2 = 23
+        //   Winner 1: 21
+        //   Winner 2: 21
+        //   Winner 3: 21
+        //   Winner 4: 21
+        // Conservation check:
+        //   Sum of payouts = 23 + 21 + 21 + 21 + 21 = 107 == Total pot (0 tokens lost/created).
+        let pot = 107i128;
+        let winner_count = 5usize;
+        let payouts = split_pot_among_winners(pot, winner_count).unwrap();
+
+        // (a) Assert every share individually
+        assert_eq!(payouts.len(), 5);
+        assert_eq!(
+            payouts[0], 23,
+            "first winner must receive per_winner + remainder"
+        );
+        assert_eq!(payouts[1], 21, "winner 1 receives base share");
+        assert_eq!(payouts[2], 21, "winner 2 receives base share");
+        assert_eq!(payouts[3], 21, "winner 3 receives base share");
+        assert_eq!(payouts[4], 21, "winner 4 receives base share");
+
+        // (b) Assert remainder recipient: index 0 receives per_winner + remainder
+        let expected_per_winner = pot / (winner_count as i128);
+        let expected_remainder = pot % (winner_count as i128);
+        assert_eq!(payouts[0], expected_per_winner + expected_remainder);
+        for &share in &payouts[1..] {
+            assert_eq!(share, expected_per_winner);
+        }
+
+        // (c) Assert total paid out == pot exactly (conservation)
+        let total_paid: i128 = payouts.iter().sum();
+        assert_eq!(total_paid, pot, "total paid out must equal pot exactly");
+
+        // End-to-end precision math check via compute_precision_payouts
+        let entries = vec![
+            PrecisionEntry {
+                index: 0,
+                predicted_price: 5000,
+                amount: 21,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 1,
+                predicted_price: 5000,
+                amount: 21,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 2,
+                predicted_price: 5000,
+                amount: 21,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 3,
+                predicted_price: 5000,
+                amount: 22,
+                revealed: true,
+            },
+            PrecisionEntry {
+                index: 4,
+                predicted_price: 5000,
+                amount: 22,
+                revealed: true,
+            },
+        ];
+        let full_payouts = compute_precision_payouts(&entries, 5000, None).unwrap();
+        assert_eq!(full_payouts[0].payout, 23);
+        assert_eq!(full_payouts[1].payout, 21);
+        assert_eq!(full_payouts[2].payout, 21);
+        assert_eq!(full_payouts[3].payout, 21);
+        assert_eq!(full_payouts[4].payout, 21);
+        for p in &full_payouts {
+            assert!(p.is_winner);
+        }
+        let full_total: i128 = full_payouts.iter().map(|p| p.payout).sum();
+        assert_eq!(full_total, pot);
+
+        // --- Vector 2: Nasty Boundary 2A (pot = 5k + 4, max remainder = 4) ---
+        // Concrete parameters:
+        //   Total pot = 104 (5 * 20 + 4)
+        // Hand calculation:
+        //   per_winner = 104 / 5 = 20
+        //   remainder  = 104 % 5 = 4
+        // Expected shares:
+        //   Winner 0: 20 + 4 = 24
+        //   Winners 1..4: 20
+        // Conservation check:
+        //   24 + 20 * 4 = 104 == pot
+        let pot_5k_plus_4 = 104i128;
+        let payouts_5k_plus_4 = split_pot_among_winners(pot_5k_plus_4, 5).unwrap();
+        assert_eq!(payouts_5k_plus_4[0], 24);
+        assert_eq!(payouts_5k_plus_4[1], 20);
+        assert_eq!(payouts_5k_plus_4[2], 20);
+        assert_eq!(payouts_5k_plus_4[3], 20);
+        assert_eq!(payouts_5k_plus_4[4], 20);
+        let total_5k_plus_4: i128 = payouts_5k_plus_4.iter().sum();
+        assert_eq!(total_5k_plus_4, pot_5k_plus_4);
+
+        // --- Vector 2: Nasty Boundary 2B (pot smaller than winner count: pot < 5) ---
+        // Concrete parameters:
+        //   Total pot = 3
+        // Hand calculation:
+        //   per_winner = 3 / 5 = 0
+        //   remainder  = 3 % 5 = 3
+        // Expected shares:
+        //   Winner 0: 0 + 3 = 3
+        //   Winners 1..4: 0
+        // Conservation check:
+        //   3 + 0 + 0 + 0 + 0 = 3 == pot
+        let small_pot = 3i128;
+        let payouts_small = split_pot_among_winners(small_pot, 5).unwrap();
+        assert_eq!(payouts_small[0], 3);
+        assert_eq!(payouts_small[1], 0);
+        assert_eq!(payouts_small[2], 0);
+        assert_eq!(payouts_small[3], 0);
+        assert_eq!(payouts_small[4], 0);
+        let total_small: i128 = payouts_small.iter().sum();
+        assert_eq!(total_small, small_pot);
+    }
+
+    #[test]
     fn test_split_pot_single_winner() {
         let payouts = split_pot_among_winners(500, 1).unwrap();
         assert_eq!(payouts, vec![500]);
