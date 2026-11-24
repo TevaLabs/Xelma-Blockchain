@@ -113,29 +113,49 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
 
 ### Allowlisted Key Classes
 
+The allowlist is the exhaustive classification in
+`contracts/src/storage.rs::ttl_touch_policy` (Issue #862). It matches every
+`DataKeyCore` / `DataKeyExt` variant with no wildcard arm, so a new key does
+not compile until it is classified. `ttl_tests.rs` checks that this table
+lists exactly the allowlisted keys.
+
 | Class               | Keys                                                                 |
 |---------------------|----------------------------------------------------------------------|
-| Core config         | `Admin`, `Oracle`, `SchemaVersion`, `Paused`                        |
+| Core config         | `Admin`, `Oracle`, `SchemaVersion`, `NextSchemaVersion`, `Paused`, `MigratedToV3` |
 | Windows             | `BetWindowLedgers`, `RunWindowLedgers`, `CloseBufferLedgers`        |
-| Risk limits         | `MaxStake`, `MaxUserRoundExposure`, `MaxPendingWinnings`            |
+| Risk limits         | `MaxStake`, `MaxUserRoundExposure`, `MaxPendingWinnings`, `MinBet`  |
 | Matchmaking         | `MinParticipants`, `MaxPrecisionParticipants`                       |
-| Oracle safety       | `OracleHeartbeat`, `OracleStaleThreshold`, `OracleMaxDeviationBps`,
-|                     | `OracleDeviationOverrideArmed`, `OracleMinConfidenceBps`,
-|                     | `OracleStrictMode`                                                   |
-| Protocol fee        | `ProtocolFeeBps`, `ProtocolFeeTreasury`                              |
-| Migration           | `MigratedToV3`                                                       |
-| Archive / Keeper    | `ArchiveRetention`, `RoundTemplate`                                  |
-| Leaderboard         | `LeaderboardWins`, `LeaderboardStreak`, `SeasonId`,
-|                     | `SeasonLeaderboardWins`, `SeasonLeaderboardStreak`                   |
-| Round counter       | `LastRoundId`                                                         |
+| Oracle safety       | `OracleHeartbeat`, `OracleStaleThreshold`, `OracleMaxDeviationBps`, `OracleDeviationOverrideArmed`, `OracleMinConfidenceBps`, `OracleStrictMode`, `OracleQuorum` |
 | Rotation            | `OracleRotationProposal`                                             |
-| Mint                | `MintLimitConfig`                                                    |
+| Fees and payouts    | `ProtocolFeeBps`, `ProtocolFeeTreasury`, `FeeModel`, `EarlyCashoutBps`, `PrecisionPayoutPolicy` |
+| Archive / Keeper    | `ArchiveRetention`, `RecentArchivedRoundIds`, `RoundTemplate`        |
+| Round counter       | `LastRoundId`                                                         |
+| Access / governance | `AccessControlEnabled`, `GovApprover`, `GovProposalTtlLedgers`, `NextGovProposalId` |
+| Leaderboard (`Ext`) | `LeaderboardWins`, `LeaderboardStreak`, `SeasonId`, `SeasonLeaderboardWins`, `SeasonLeaderboardStreak` |
+| Constitution (`Ext`)| `ConstitutionMetadata`, `NextAmendmentId`                            |
+| Instance tier       | `MintLimitConfig`                                                    |
 
-Per-user keys (`Balance`, `PendingWinnings`, `UserStats`) and round-scoped
-keys (`ActiveRound`, `Position`, `PrecisionPosition`, `RoundParticipants`,
-`ArchivedRound`, etc.) are **excluded** because they are either ephemeral
-(deleted after settlement/cancel) or managed through the standard on-access
-TTL extension path.
+`MintLimitConfig` is accepted for backward compatibility, but its value lives
+in **instance** storage. There is never a persistent entry for it, so it is
+always counted as `skipped`. Instance storage lives as long as the contract
+instance.
+
+### Excluded Keys
+
+Supplying any of these fails the whole call with `UnsupportedDataKeyForTtlTouch`:
+
+| Reason                     | Keys |
+|----------------------------|------|
+| Round-scoped (on-access)   | ActiveRound |
+| Legacy migration keys      | Positions, UpDownPositions, PrecisionPositions |
+| Not stored under the variant (Symbol-keyed) | EpochMintBudget, DisputeLedgers |
+| Indexed (per season / user / id) | Ext(SeasonUserStats), Ext(SeasonArchive), Ext(Amendment) |
+
+Per-user and round-scoped `DataKeyScoped` keys (`Balance`, `PendingWinnings`,
+`UserStats`, `Position`, `PrecisionPosition`, `RoundParticipants`,
+`ArchivedRound`, etc.) are not `DataKeyCore` variants and cannot be passed to
+this entrypoint. They are either deleted after settlement or cancellation, or
+extended on access.
 
 ### Cadence Recommendations
 
