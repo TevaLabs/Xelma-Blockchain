@@ -30,6 +30,7 @@ mod insurance;
 mod leaderboard;
 mod math_common;
 pub mod oracle_committee;
+mod oracle_optimistic;
 mod queries;
 mod settlement;
 mod settlement_math;
