@@ -195,10 +195,42 @@ fn test_batch_touch_ttl_rejects_non_allowlisted_key() {
     client.initialize(&admin, &oracle);
 
     // ActiveRound is NOT in the allowlist (it is ephemeral round state).
+    // Extending its TTL via a maintenance path would mask stuck-round
+    // conditions and violate state-machine invariants — see
+    // `_is_ttl_touch_allowed` in admin.rs for the full rationale.
     let keys: Vec<DataKeyCore> = Vec::from_array(&env, [DataKeyCore::ActiveRound]);
 
     let result = client.try_batch_touch_ttl(&keys);
     assert!(result.is_err(), "non-allowlisted key should be rejected");
+}
+
+#[test]
+fn test_batch_touch_ttl_rejects_mixed_batch_containing_active_round() {
+    // A batch that mixes allowlisted keys with ActiveRound must be rejected
+    // in full — no partial TTL extensions should be applied.
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    // Mix one valid allowlisted key with the rejected ActiveRound key.
+    let keys: Vec<DataKeyCore> = Vec::from_array(
+        &env,
+        [
+            DataKeyCore::Admin,       // allowlisted
+            DataKeyCore::ActiveRound, // NOT allowlisted — must abort the batch
+        ],
+    );
+
+    let result = client.try_batch_touch_ttl(&keys);
+    assert!(
+        result.is_err(),
+        "batch containing ActiveRound must be fully rejected, not partially applied"
+    );
 }
 
 #[test]
