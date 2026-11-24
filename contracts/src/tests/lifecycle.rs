@@ -1252,3 +1252,235 @@ fn test_create_next_from_template_after_clear_fails() {
     assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
     assert_eq!(client.get_active_round(), None);
 }
+
+// ─── Issue #802: Precision create_round starts with empty commit/prediction map ─
+
+fn make_lifecycle_commitment(
+    env: &Env,
+    price: u128,
+    salt: &soroban_sdk::BytesN<32>,
+) -> soroban_sdk::BytesN<32> {
+    use soroban_sdk::xdr::ToXdr;
+    let mut preimage = soroban_sdk::Bytes::new(env);
+    preimage.append(&price.to_xdr(env));
+    preimage.append(&salt.clone().to_xdr(env));
+    env.crypto().sha256(&preimage).into()
+}
+
+fn lifecycle_test_salt(env: &Env, tag: u8) -> soroban_sdk::BytesN<32> {
+    let mut bytes = [0x5Au8; 32];
+    bytes[0] = tag;
+    soroban_sdk::BytesN::from_array(env, &bytes)
+}
+
+fn assert_precision_round_getters_empty(client: &VirtualTokenContractClient, users: &[&Address]) {
+    assert_eq!(client.get_precision_predictions().len(), 0);
+    assert_eq!(
+        client.get_precision_predictions_page(&0u32, &10u32).len(),
+        0
+    );
+
+    for user in users {
+        assert_eq!(client.get_user_precision_prediction(user), None);
+    }
+
+    let stats = client
+        .get_round_pool_stats()
+        .expect("active Precision round must report pool stats");
+    assert_eq!(stats.mode, RoundMode::Precision);
+    assert_eq!(stats.precision_total_stake, 0);
+    assert_eq!(stats.precision_participant_count, 0);
+    assert_eq!(stats.precision_prediction_count, 0);
+    assert_eq!(stats.precision_commitment_count, 0);
+    assert_eq!(stats.precision_revealed_count, 0);
+
+    let snapshot = client.get_market_snapshot();
+    let snap_stats = snapshot
+        .pool_stats
+        .get(0)
+        .expect("market snapshot must include active round pool stats");
+    assert_eq!(snap_stats.precision_commitment_count, 0);
+    assert_eq!(snap_stats.precision_prediction_count, 0);
+    assert_eq!(snap_stats.precision_participant_count, 0);
+    assert_eq!(snap_stats.precision_total_stake, 0);
+}
+
+/// A freshly created Precision round must expose empty commitment and
+/// prediction getters and reject reveals with `CommitmentNotFound`.
+#[test]
+fn test_precision_create_round_starts_with_empty_commit_and_prediction_getters() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&alice);
+
+    client.create_round(&1_0000000u128, &Some(1u32));
+    let round = client.get_active_round().expect("Precision round active");
+    assert_eq!(round.mode, RoundMode::Precision);
+
+    assert_precision_round_getters_empty(&client, &[&alice]);
+
+    // Advancing to the reveal window with no commitments must fail with CommitmentNotFound.
+    env.ledger()
+        .with_mut(|li| li.sequence_number = round.bet_end_ledger);
+    let salt = lifecycle_test_salt(&env, 0xA1);
+    let res = client.try_reveal_prediction(&alice, &1_0500000u128, &salt);
+    assert_eq!(res, Err(Ok(ContractError::CommitmentNotFound)));
+}
+
+/// Across consecutive Precision rounds (resolve -> create_round -> cancel ->
+/// create_round), neither revealed commitments, unrevealed commitments, nor
+/// direct predictions from earlier rounds may leak into the new round's
+/// getters or block participants from committing again.
+#[test]
+fn test_precision_create_round_after_resolve_and_cancel_has_no_stale_commits() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.mint_initial(&charlie);
+
+    // ── Round 1: mix of revealed commit, unrevealed commit, and direct prediction
+    client.create_round(&1_0000000u128, &Some(1u32));
+    let round1 = client.get_active_round().unwrap();
+
+    let alice_price = 1_0500000u128;
+    let alice_salt = lifecycle_test_salt(&env, 0x11);
+    let alice_hash = make_lifecycle_commitment(&env, alice_price, &alice_salt);
+    client.commit_prediction(&alice, &alice_hash, &50_0000000i128);
+
+    let bob_price = 1_0600000u128;
+    let bob_salt = lifecycle_test_salt(&env, 0x22);
+    let bob_hash = make_lifecycle_commitment(&env, bob_price, &bob_salt);
+    client.commit_prediction(&bob, &bob_hash, &40_0000000i128);
+
+    client.place_precision_prediction(&charlie, &30_0000000i128, &1_0700000u128);
+
+    // Alice reveals; Bob intentionally leaves his commitment unrevealed.
+    env.ledger()
+        .with_mut(|li| li.sequence_number = round1.bet_end_ledger);
+    client.reveal_prediction(&alice, &alice_price, &alice_salt);
+
+    // Resolve Round 1.
+    env.ledger()
+        .with_mut(|li| li.sequence_number = round1.end_ledger);
+    client.resolve_round(&OraclePayload {
+        price: 1_0500000u128,
+        timestamp: env.ledger().timestamp(),
+        round_id: round1.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(client.get_active_round(), None);
+
+    // ── Round 2: created after resolve — all Precision getters must be empty
+    env.ledger().with_mut(|li| li.sequence_number += 1);
+    client.create_round(&1_1000000u128, &Some(1u32));
+    let round2 = client.get_active_round().unwrap();
+    assert_eq!(round2.round_id, round1.round_id + 1);
+
+    assert_precision_round_getters_empty(&client, &[&alice, &bob, &charlie]);
+
+    // Prior participants can commit fresh predictions (no stale AlreadyBet).
+    client.commit_prediction(&alice, &alice_hash, &20_0000000i128);
+    client.commit_prediction(&bob, &bob_hash, &20_0000000i128);
+    let stats2 = client.get_round_pool_stats().unwrap();
+    assert_eq!(stats2.precision_commitment_count, 2);
+    assert_eq!(stats2.precision_participant_count, 2);
+
+    // Cancel Round 2 with active unrevealed commitments.
+    client.cancel_round(&1u32);
+    assert_eq!(client.get_active_round(), None);
+
+    // ── Round 3: created after cancel — all Precision getters must be empty again
+    env.ledger().with_mut(|li| li.sequence_number += 1);
+    client.create_round(&1_2000000u128, &Some(1u32));
+    let round3 = client.get_active_round().unwrap();
+    assert_eq!(round3.round_id, round2.round_id + 1);
+
+    assert_precision_round_getters_empty(&client, &[&alice, &bob, &charlie]);
+
+    // Attempting to reveal Round 2's commitments in Round 3 must fail with CommitmentNotFound.
+    env.ledger()
+        .with_mut(|li| li.sequence_number = round3.bet_end_ledger);
+    assert_eq!(
+        client.try_reveal_prediction(&alice, &alice_price, &alice_salt),
+        Err(Ok(ContractError::CommitmentNotFound))
+    );
+    assert_eq!(
+        client.try_reveal_prediction(&bob, &bob_price, &bob_salt),
+        Err(Ok(ContractError::CommitmentNotFound))
+    );
+}
+
+/// Defense-in-depth (Issue #802): if a stale legacy `DataKeyCore::PrecisionPositions`
+/// entry exists in persistent storage prior to creating a Precision round,
+/// `create_round` purges it so all Precision getters start empty.
+#[test]
+fn test_precision_create_round_purges_stale_legacy_precision_positions_key() {
+    use crate::types::PrecisionPrediction;
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let stale_user = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+
+    // Inject a stale legacy PrecisionPositions map before creating the round.
+    env.as_contract(&contract_id, || {
+        let mut stale_map: soroban_sdk::Map<Address, PrecisionPrediction> =
+            soroban_sdk::Map::new(&env);
+        stale_map.set(
+            stale_user.clone(),
+            PrecisionPrediction {
+                user: stale_user.clone(),
+                predicted_price: 9_9990000u128,
+                amount: 50_0000000i128,
+            },
+        );
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::PrecisionPositions, &stale_map);
+    });
+
+    client.create_round(&1_0000000u128, &Some(1u32));
+
+    let has_stale_legacy = env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .has(&DataKeyCore::PrecisionPositions)
+    });
+    assert!(
+        !has_stale_legacy,
+        "create_round must purge stale legacy PrecisionPositions"
+    );
+    assert_precision_round_getters_empty(&client, &[&stale_user]);
+}
