@@ -188,3 +188,25 @@ fn test_protocol_health_mint_initial_fails_while_paused() {
     let result = client.try_mint_initial(&user);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_create_next_from_template_blocked_when_paused() {
+    let env = Env::default();
+    let (client, _cid, _admin, _oracle) = setup_contract(&env);
+
+    client.set_round_template(&1_0000000, &None);
+
+    client.pause_contract();
+    assert!(client.is_paused());
+
+    let result = client.try_create_next_from_template();
+    assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+
+    client.unpause_contract();
+    assert!(!client.is_paused());
+
+    let unpaused_result = client.try_create_next_from_template();
+    assert_eq!(unpaused_result, Ok(Ok(1)));
+    assert!(client.get_active_round().is_some());
+}
+
