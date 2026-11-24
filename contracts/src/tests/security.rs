@@ -315,6 +315,90 @@ fn test_resolve_round_unique_nonce_resolves() {
     });
 }
 
+/// Replaying the same oracle payload and nonce against an active round must fail
+/// with `ContractError::OracleNonceReused` on the second resolve.
+#[test]
+fn test_resolve_round_nonce_replay_second_resolve_fails() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 900;
+    });
+
+    client.create_round(&1_0000000, &None);
+    let round = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 12;
+        li.timestamp = 950;
+    });
+
+    let payload = OraclePayload {
+        price: 1_5000000,
+        timestamp: 950,
+        round_id: round.start_ledger,
+        nonce: 42u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    };
+
+    // First resolve succeeds and marks nonce as consumed
+    client.resolve_round(&payload);
+
+    // Verify nonce was marked consumed in storage
+    env.as_contract(&contract_id, || {
+        let consumed: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKeyScoped::ConsumedOracleNonce(round.round_id, 42u64))
+            .unwrap_or(false);
+        assert!(consumed, "first resolve must record consumed nonce");
+    });
+
+    // Restore active round with the same round ID to simulate a replay attack
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::ActiveRound, &round);
+    });
+
+    // Second resolve with the same nonce must fail with OracleNonceReused
+    let second_resolve = client.try_resolve_round(&payload);
+    assert_eq!(
+        second_resolve,
+        Err(Ok(ContractError::OracleNonceReused)),
+        "second resolve with reused nonce must fail with OracleNonceReused"
+    );
+
+    // Verify that a fresh, unconsumed nonce is accepted
+    let fresh_payload = OraclePayload {
+        price: 1_6000000,
+        timestamp: 950,
+        round_id: round.start_ledger,
+        nonce: 43u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    };
+    let fresh_resolve = client.try_resolve_round(&fresh_payload);
+    assert!(
+        fresh_resolve.is_ok(),
+        "resolve with fresh nonce should succeed"
+    );
+}
+
 // ─── Oracle heartbeat and liveness tests ─────────────────────────────────────
 
 #[test]
