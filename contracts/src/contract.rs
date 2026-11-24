@@ -1369,6 +1369,21 @@ impl VirtualTokenContract {
     ) -> Vec<SeasonLeaderboardEntry> {
         leaderboard::get_season_leaderboard_by_streak(env, season_id, offset, limit)
     }
+
+    pub fn configure_optimistic_oracle(env: Env, challenge_window_ledgers: u32, oracle_bond: i128, challenger_bond: i128) -> Result<(), ContractError> {
+        let admin: Address = env.storage().persistent().get(&DataKeyCore::Admin).ok_or(ContractError::AdminNotSet)?;
+        admin.require_auth();
+        crate::oracle_optimistic::configure(&env, crate::oracle_optimistic::OptimisticOracleConfig { challenge_window_ledgers, oracle_bond, challenger_bond })
+    }
+    pub fn propose_optimistic_price(env: Env, round_id: u64, price: i128) -> Result<(), ContractError> {
+        let oracle: Address = env.storage().persistent().get(&DataKeyCore::Oracle).ok_or(ContractError::OracleNotSet)?;
+        crate::oracle_optimistic::propose(&env, round_id, oracle, price)
+    }
+    pub fn challenge_optimistic_price(env: Env, round_id: u64, counter_price: i128, challenger: Address) -> Result<(), ContractError> { crate::oracle_optimistic::challenge(&env, round_id, challenger, counter_price) }
+    pub fn finalize_optimistic_price(env: Env, round_id: u64) -> Result<i128, ContractError> { crate::oracle_optimistic::finalize(&env, round_id) }
+    pub fn escalate_optimistic_price(env: Env, round_id: u64, caller: Address) -> Result<(), ContractError> { crate::oracle_optimistic::escalate(&env, round_id, caller) }
+    pub fn resolve_optimistic_dispute(env: Env, round_id: u64, governance: Address, challenger_wins: bool) -> Result<i128, ContractError> { crate::oracle_optimistic::resolve(&env, round_id, governance, challenger_wins) }
+    pub fn get_optimistic_proposal(env: Env, round_id: u64) -> Option<crate::oracle_optimistic::OptimisticPriceProposal> { crate::oracle_optimistic::get(&env, round_id) }
 }
 
 impl VirtualTokenContract {
