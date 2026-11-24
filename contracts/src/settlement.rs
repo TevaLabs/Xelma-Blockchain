@@ -1355,14 +1355,10 @@ fn _complete_settlement(
         .persistent()
         .remove(&DataKeyScoped::RoundParticipants(round_id));
 
-    env.storage().persistent().remove(&DataKeyCore::ActiveRound);
-    env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage()
-        .persistent()
-        .remove(&DataKeyCore::UpDownPositions);
-    // A merge left this guarded re-remove of the active round split across
-    // two fragments (the `if` keyword and its condition were separated from
-    // the body). Rejoined here so the file parses again.
+    // Only clear `ActiveRound` if it still belongs to the round being settled.
+    // With a dispute window, finalization happens several ledgers after the
+    // result was staged, so an unrelated round may legitimately be active by
+    // then and must not be wiped out by the delayed settlement.
     if env
         .storage()
         .persistent()
@@ -1372,6 +1368,10 @@ fn _complete_settlement(
     {
         env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     }
+    env.storage().persistent().remove(&DataKeyCore::Positions);
+    env.storage()
+        .persistent()
+        .remove(&DataKeyCore::UpDownPositions);
 
     let mode_value: u32 = match round.mode {
         RoundMode::UpDown => 0,

@@ -67,6 +67,14 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
     let env = Env::default();
     let (client, contract_id, alice, bob, round_id) = setup(&env);
 
+    // Events are scoped to the most recent contract invocation, so the staged
+    // result event must be observed before any other client call.
+    assert!(has_round_event(
+        &env,
+        &contract_id,
+        symbol_short!("pending")
+    ));
+
     assert_eq!(client.get_pending_winnings(&alice), 0);
     assert_eq!(client.get_pending_winnings(&bob), 0);
     assert_eq!(
@@ -76,6 +84,7 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
 
     let treasury_before = client.get_protocol_fee_treasury();
     client.void_round(&round_id);
+    assert!(has_round_event(&env, &contract_id, symbol_short!("voided")));
 
     let alice_refund = client.get_pending_winnings(&alice);
     let bob_refund = client.get_pending_winnings(&bob);
@@ -88,12 +97,6 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::Voided
     );
-    assert!(has_round_event(
-        &env,
-        &contract_id,
-        symbol_short!("pending")
-    ));
-    assert!(has_round_event(&env, &contract_id, symbol_short!("voided")));
 }
 
 #[test]
@@ -109,6 +112,11 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
 
     let treasury_before = client.get_protocol_fee_treasury();
     client.finalize_round(&round_id);
+    assert!(has_round_event(
+        &env,
+        &contract_id,
+        symbol_short!("finalized")
+    ));
 
     let alice_payout = client.get_pending_winnings(&alice);
     let bob_payout = client.get_pending_winnings(&bob);
@@ -120,9 +128,28 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
         client.get_archived_round(&round_id).unwrap().status,
         RoundArchiveStatus::Resolved
     );
-    assert!(has_round_event(
-        &env,
-        &contract_id,
-        symbol_short!("finalized")
-    ));
+}
+
+#[test]
+fn finalize_preserves_round_created_during_dispute_window() {
+    let env = Env::default();
+    let (client, _contract_id, _alice, _bob, round_id) = setup(&env);
+
+    // A staged result frees the ActiveRound slot immediately, so a new round
+    // may be opened while the old result is still inside its dispute window.
+    client.create_round(&2_000u128, &None);
+    let next_round = client.get_active_round().unwrap();
+    assert_ne!(next_round.round_id, round_id);
+
+    env.ledger().with_mut(|ledger| ledger.sequence_number += 5);
+    client.finalize_round(&round_id);
+
+    // Finalizing the old round must not clear the round that is now active.
+    let still_active = client.get_active_round().unwrap();
+    assert_eq!(still_active.round_id, next_round.round_id);
+    assert_eq!(still_active.start_ledger, next_round.start_ledger);
+    assert_eq!(
+        client.get_archived_round(&round_id).unwrap().status,
+        RoundArchiveStatus::Resolved
+    );
 }
