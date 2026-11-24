@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Event coverage and completeness verification tests (Issue #117).
 
-use super::config_helpers::apply_windows;
+use super::config_helpers::{apply_protocol_fee_bps, apply_windows};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
 use crate::types::{BetSide, ConfigChangeKind, ConfigChangePayload, OraclePayload};
@@ -1130,4 +1130,131 @@ fn test_event_coverage_round_summary() {
     assert_eq!(canon.9, 50_0000000i128); // total_pot
     assert_eq!(canon.10, 0i128); // fee_amount
     assert_eq!(canon.12, None); // confidence
+}
+
+// ─── Fee event / treasury consistency (Issue #672) ──────────────────────────
+//
+// `_collect_protocol_fee` credits the treasury and (when the insurance split
+// is enabled) the insurance fund, then emits `("protocol", "fee_coll")` with
+// `(round_id, fee_amount, treasury_balance, bps_active, fee_model)`.
+//
+// These tests pin the relationship between the emitted amounts and the actual
+// storage deltas so an indexer rebuilding the treasury from events can never
+// drift from on-chain state:
+//   * with no insurance split, `fee_collected == treasury delta`, and
+//   * with an insurance split, `fee_collected == treasury delta + insurance
+//     delta` while the emitted cumulative `treasury_balance` still matches the
+//     treasury exactly.
+
+/// Highest `("protocol", "fee_coll")` payload in the last invocation, decoded
+/// as `(round_id, fee_amount, treasury_balance, bps_active, fee_model)`.
+fn last_protocol_fee_event(env: &Env) -> (u64, i128, i128, u32, u32) {
+    let events = env.events().all();
+    let mut found = None;
+    for (_contract, topics, data) in events.iter() {
+        if topics.len() != 2 {
+            continue;
+        }
+        if topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("protocol"))
+            && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("fee_coll"))
+        {
+            found = Some(data.try_into_val(env).unwrap());
+        }
+    }
+    found.expect("protocol fee_coll event should exist")
+}
+
+/// Places a balanced two-sided Up/Down round (100_0000000 each side), enables
+/// a 5% protocol fee, and returns the active round.
+fn prepare_fee_round(
+    env: &Env,
+    client: &VirtualTokenContractClient,
+) -> crate::types::Round {
+    let alice = Address::generate(env);
+    let bob = Address::generate(env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_0000000u128, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &100_0000000, &BetSide::Down);
+
+    // Timelocked protocol fee change, activated immediately by the helper.
+    apply_protocol_fee_bps(env, client, Some(500));
+    client.get_active_round().expect("round should be active")
+}
+
+/// Resolves `round` at a higher price so the fee path runs.
+fn resolve_fee_round(
+    env: &Env,
+    contract_id: &Address,
+    client: &VirtualTokenContractClient,
+    round: &crate::types::Round,
+) {
+    env.ledger()
+        .with_mut(|li| li.sequence_number = round.end_ledger);
+    client.resolve_round(&OraclePayload {
+        price: 1_2000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+}
+
+#[test]
+fn test_event_coverage_fee_collected_matches_treasury_credit() {
+    let (env, contract_id, _, _, client) = setup();
+    let round = prepare_fee_round(&env, &client);
+
+    let treasury_before = client.get_protocol_fee_treasury();
+    let insurance_before = client.get_insurance_fund_balance();
+    resolve_fee_round(&env, &contract_id, &client, &round);
+
+    let (round_id, fee_collected, treasury_balance, bps, model) = last_protocol_fee_event(&env);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+    let insurance_delta = client.get_insurance_fund_balance() - insurance_before;
+
+    // 5% of the 200_0000000 pot = 10_0000000 stroops, credited entirely to the
+    // treasury because the insurance split is disabled by default.
+    assert_eq!(fee_collected, 10_0000000i128);
+    assert_eq!(insurance_delta, 0i128);
+    assert_eq!(
+        fee_collected, treasury_delta,
+        "fee_collected must equal the treasury credit"
+    );
+    assert_eq!(
+        treasury_balance, treasury_before + treasury_delta,
+        "emitted cumulative treasury must equal the on-chain treasury"
+    );
+    assert_eq!(bps, 500u32);
+    assert_eq!(model, 0u32); // FeeOnPot
+    assert_eq!(round_id, round.round_id);
+}
+
+#[test]
+fn test_event_coverage_fee_collected_splits_with_insurance_fund() {
+    let (env, contract_id, _, _, client) = setup();
+    let round = prepare_fee_round(&env, &client);
+    // Half of every collected fee is routed to the insurance fund.
+    client.set_insurance_split_bps(&5_000u32);
+
+    let treasury_before = client.get_protocol_fee_treasury();
+    let insurance_before = client.get_insurance_fund_balance();
+    resolve_fee_round(&env, &contract_id, &client, &round);
+
+    let (_, fee_collected, treasury_balance, _, _) = last_protocol_fee_event(&env);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+    let insurance_delta = client.get_insurance_fund_balance() - insurance_before;
+
+    assert_eq!(fee_collected, 10_0000000i128);
+    assert_eq!(treasury_delta, 5_0000000i128);
+    assert_eq!(insurance_delta, 5_0000000i128);
+    // The emitted cumulative balance tracks the treasury, not the gross fee.
+    assert_eq!(treasury_balance, treasury_before + treasury_delta);
+    // The two independent credits together reproduce the emitted fee amount.
+    assert_eq!(fee_collected, treasury_delta + insurance_delta);
 }
