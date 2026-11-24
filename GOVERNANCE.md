@@ -9,7 +9,7 @@
 ## Decision Policy
 
 - Routine changes: majority approval by active maintainers in the affected area.
-- Security-sensitive or breaking changes: require explicit sign-off from a core maintainer.
+- Security-sensitive or breaking changes: require explicit sign-off from a core maintainer. On-chain parameter updates must be scheduled through the configuration timelock (`CONFIG_TIMELOCK_LEDGERS = 1440` ledgers, ~2 hours at ~5 seconds per ledger) before activation via `apply_scheduled_changes`.
 - In urgent incidents, a core maintainer may temporarily pause normal process to ship a patch.
 
 ## Review SLAs
@@ -28,4 +28,4 @@ If a review stalls, open a comment tagging relevant owners from `CODEOWNERS` and
 
 ## Release Authority
 
-Only maintainers listed for contract and workflow paths may approve release-impacting changes.
+Only maintainers listed for contract and workflow paths may approve release-impacting changes. Critical on-chain parameter updates are subject to the mandatory configuration timelock (`CONFIG_TIMELOCK_LEDGERS = 1440` ledgers, ~2 hours at ~5 seconds per ledger) before they can be applied.
