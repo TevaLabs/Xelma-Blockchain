@@ -80,6 +80,12 @@ declare -A PHASE_LABEL=(
   [3]="resolvable"
 )
 
+declare -A POLICY_LABEL=(
+  [0]="normal"
+  [1]="claims_only"
+  [2]="fully_paused"
+)
+
 # ── Help ──────────────────────────────────────────────────────────────────────
 usage() {
   cat <<EOF
@@ -130,10 +136,12 @@ emit_json() {
   local has_active_round="$4" active_round_phase="$5"
   local schema_version="$6" ledger_sequence="$7" ledger_timestamp="$8"
   local status_code="$9" severity="${10}" contract_id="${11}" source="${12}"
+  local dispute_window_ledgers="${13:-0}" policy_code="${14:-0}"
 
   local oracle_status_str="${ORACLE_STATUS_LABEL[$oracle_status]:-unknown}"
   local phase_str="${PHASE_LABEL[$active_round_phase]:-unknown}"
   local label="${STATUS_LABEL[$status_code]:-UNKNOWN}"
+  local policy_str="${POLICY_LABEL[$policy_code]:-unknown}"
 
   jq -nc \
     --arg contract_id "$contract_id" \
@@ -152,11 +160,16 @@ emit_json() {
     --argjson status_code "$status_code" \
     --arg status_label "$label" \
     --arg severity "$severity" \
+    --argjson dispute_window_ledgers "$dispute_window_ledgers" \
+    --argjson policy_code "$policy_code" \
+    --arg policy_label "$policy_str" \
     '{
       contract_id: $contract_id,
       network: $network,
       source: $source,
       paused: $paused,
+      policy: { code: $policy_code, label: $policy_label },
+      dispute: { window_ledgers: $dispute_window_ledgers },
       oracle: { live: $oracle_live, status_code: $oracle_status, status_label: $oracle_status_label },
       round: { active: $has_active_round, phase_code: $active_round_phase, phase_label: $round_phase_label },
       schema_version: $schema_version,
@@ -171,10 +184,12 @@ emit_text() {
   local has_active_round="$4" active_round_phase="$5"
   local schema_version="$6" ledger_sequence="$7" ledger_timestamp="$8"
   local status_code="$9" severity="${10}" contract_id="${11}"
+  local dispute_window_ledgers="${12:-0}" policy_code="${13:-0}"
 
   local label="${STATUS_LABEL[$status_code]:-UNKNOWN}"
   local oracle_str="${ORACLE_STATUS_LABEL[$oracle_status]:-unknown}"
   local phase_str="${PHASE_LABEL[$active_round_phase]:-unknown}"
+  local policy_str="${POLICY_LABEL[$policy_code]:-unknown}"
 
   case "$severity" in
     OK)   local colour="$GREEN";;
@@ -201,6 +216,8 @@ emit_text() {
     printf "${BOLD}║${NC}  Paused:        NO%-34s ${BOLD}║${NC}\n" ""
   fi
 
+  printf "${BOLD}║${NC}  Policy:        %-35s ${BOLD}║${NC}\n" "$policy_str (code=$policy_code)"
+
   if [[ "$oracle_live" == "true" ]]; then
     printf "${BOLD}║${NC}  Oracle:        ${GREEN}LIVE${NC} (status=%s)%-23s ${BOLD}║${NC}\n" "$oracle_str" ""
   else
@@ -213,6 +230,7 @@ emit_text() {
     printf "${BOLD}║${NC}  Active Round:  NO%-34s ${BOLD}║${NC}\n" ""
   fi
 
+  printf "${BOLD}║${NC}  Dispute Win.:  %-35s ${BOLD}║${NC}\n" "${dispute_window_ledgers} ledgers"
   printf "${BOLD}║${NC}  Schema v:      %-35s ${BOLD}║${NC}\n" "$schema_version"
   echo -e "${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
   echo ""
@@ -318,6 +336,36 @@ LEDGER_SEQUENCE=$(echo "$HEALTH_JSON" | jq -r '.ledger_sequence')
 LEDGER_TIMESTAMP=$(echo "$HEALTH_JSON" | jq -r '.ledger_timestamp')
 STATUS_CODE=$(echo "$HEALTH_JSON" | jq -r '.status_code')
 
+# ── Query dispute window and policy (runtime mode) ────────────────────────────
+# These are supplemental fields not in ProtocolHealthStatus; query separately.
+# Default to safe sentinel values if the contract call fails (e.g. older schema).
+DISPUTE_WINDOW_LEDGERS=0
+POLICY_CODE=0
+
+RAW_DISPUTE=""
+if RAW_DISPUTE=$(stellar contract invoke \
+    --id "$CONTRACT_ID" \
+    --source "$SOURCE_ID" \
+    --network "$NETWORK" \
+    --send=no \
+    -- \
+    get_dispute_window_ledgers 2>/dev/null); then
+  _dw=$(echo "$RAW_DISPUTE" | jq -r 'select(. != null) | tonumber' 2>/dev/null || true)
+  [[ -n "$_dw" ]] && DISPUTE_WINDOW_LEDGERS="$_dw"
+fi
+
+RAW_MODE=""
+if RAW_MODE=$(stellar contract invoke \
+    --id "$CONTRACT_ID" \
+    --source "$SOURCE_ID" \
+    --network "$NETWORK" \
+    --send=no \
+    -- \
+    get_runtime_mode 2>/dev/null); then
+  _mode=$(echo "$RAW_MODE" | jq -r 'select(. != null) | tonumber' 2>/dev/null || true)
+  [[ -n "$_mode" ]] && POLICY_CODE="$_mode"
+fi
+
 # ── Severity mapping ──────────────────────────────────────────────────────────
 SEVERITY="${STATUS_SEVERITY[$STATUS_CODE]:-UNKNOWN}"
 
@@ -327,13 +375,15 @@ if [[ "$JSON_OUT" -eq 1 ]]; then
     "$PAUSED" "$ORACLE_LIVE" "$ORACLE_STATUS" \
     "$HAS_ACTIVE_ROUND" "$ACTIVE_ROUND_PHASE" \
     "$SCHEMA_VERSION" "$LEDGER_SEQUENCE" "$LEDGER_TIMESTAMP" \
-    "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID" "$SOURCE_ID"
+    "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID" "$SOURCE_ID" \
+    "$DISPUTE_WINDOW_LEDGERS" "$POLICY_CODE"
 else
   emit_text \
     "$PAUSED" "$ORACLE_LIVE" "$ORACLE_STATUS" \
     "$HAS_ACTIVE_ROUND" "$ACTIVE_ROUND_PHASE" \
     "$SCHEMA_VERSION" "$LEDGER_SEQUENCE" "$LEDGER_TIMESTAMP" \
-    "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID"
+    "$STATUS_CODE" "$SEVERITY" "$CONTRACT_ID" \
+    "$DISPUTE_WINDOW_LEDGERS" "$POLICY_CODE"
 fi
 
 # ── Exit ──────────────────────────────────────────────────────────────────────
