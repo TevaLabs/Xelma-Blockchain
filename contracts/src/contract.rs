@@ -1008,7 +1008,22 @@ impl VirtualTokenContract {
         config::get_round_template(env)
     }
 
-    /// Creates the next round from the configured template (admin only).
+    /// Sets or clears (`None`) the optional keeper for `create_next_from_template` (admin only).
+    pub fn set_keeper(env: Env, keeper: Option<Address>) -> Result<(), ContractError> {
+        admin::set_keeper(env, keeper)
+    }
+
+    /// Clears the configured keeper, restoring admin-only creation (admin only).
+    pub fn clear_keeper(env: Env) -> Result<(), ContractError> {
+        admin::clear_keeper(env)
+    }
+
+    /// Returns the configured keeper, if any.
+    pub fn get_keeper(env: Env) -> Option<Address> {
+        admin::get_keeper(env)
+    }
+
+    /// Creates the next round from the configured template (keeper, or admin when no keeper is set).
     /// Fails with `RoundAlreadyActive` if a round is already active and
     /// with `NoRoundTemplate` if no template has been configured.
     pub fn create_next_from_template(env: Env) -> Result<u64, ContractError> {

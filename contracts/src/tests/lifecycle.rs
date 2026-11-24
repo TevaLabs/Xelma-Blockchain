@@ -1084,7 +1084,7 @@ fn test_create_next_from_template_requires_template() {
     client.update_oracle_heartbeat(&0u32);
 
     let result = client.try_create_next_from_template();
-    assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
+    assert_eq!(result, Err(Ok(ContractError::NoRoundTemplate)));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -1249,6 +1249,122 @@ fn test_create_next_from_template_after_clear_fails() {
     client.clear_round_template();
 
     let result = client.try_create_next_from_template();
-    assert_eq!(result, Err(Ok(ContractError::CommitmentNotFound)));
+    assert_eq!(result, Err(Ok(ContractError::NoRoundTemplate)));
     assert_eq!(client.get_active_round(), None);
+}
+
+#[test]
+fn test_create_next_from_template_with_configured_keeper() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let keeper = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.set_round_template(&2_0000000u128, &None);
+    client.set_keeper(&Some(keeper.clone()));
+    assert_eq!(client.get_keeper(), Some(keeper.clone()));
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &keeper,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "create_next_from_template",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    let round_id = client.create_next_from_template();
+    assert_eq!(round_id, 1);
+    assert_eq!(
+        client
+            .get_active_round()
+            .expect("keeper-created round must be active")
+            .price_start,
+        2_0000000u128
+    );
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "create_next_from_template",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_create_next_from_template().is_err());
+}
+
+#[test]
+fn test_keeper_falls_back_to_admin_and_can_be_cleared() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let keeper = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.set_round_template(&1_0000000u128, &None);
+    client.set_keeper(&Some(keeper.clone()));
+    client.clear_keeper();
+    assert_eq!(client.get_keeper(), None);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &attacker,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "create_next_from_template",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_create_next_from_template().is_err());
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "create_next_from_template",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert_eq!(client.create_next_from_template(), 1);
+}
+
+#[test]
+fn test_set_keeper_requires_admin_auth() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &attacker,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_keeper",
+            args: (Some(attacker.clone()),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_set_keeper(&Some(attacker.clone())).is_err());
+    assert_eq!(client.get_keeper(), None);
 }

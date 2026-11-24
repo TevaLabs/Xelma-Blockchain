@@ -124,7 +124,7 @@ pub fn batch_touch_ttl(env: Env, keys: Vec<DataKeyCore>) -> Result<u32, Contract
 |                     | `OracleStrictMode`                                                   |
 | Protocol fee        | `ProtocolFeeBps`, `ProtocolFeeTreasury`                              |
 | Migration           | `MigratedToV3`                                                       |
-| Archive / Keeper    | `ArchiveRetention`, `RoundTemplate`                                  |
+| Archive / Keeper    | `ArchiveRetention`, `RoundTemplate`, `Keeper`                         |
 | Leaderboard         | `LeaderboardWins`, `LeaderboardStreak`, `SeasonId`,
 |                     | `SeasonLeaderboardWins`, `SeasonLeaderboardStreak`                   |
 | Round counter       | `LastRoundId`                                                         |
