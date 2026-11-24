@@ -497,3 +497,348 @@ pub fn assert_refund_fee_conservation(
          refunds={sum_refunds} pot={total_pot}"
     );
 }
+
+// ─── Precision (closest-guess) reference settlement (Issue #803) ─────────────
+//
+// An independent, straight-line reimplementation of the contract's Precision
+// settlement (`settlement::_resolve_precision_mode`) used by the differential
+// parity harness below. It is deliberately written from the *documented*
+// contract behaviour rather than by copying the contract's incremental
+// winner-tracking loop, so a divergence between the two is a real signal:
+//
+// 1. Participants are processed in ascending `Address` order (the contract
+//    calls `sort_addresses` before scanning).
+// 2. Every stake — revealed prediction, direct prediction or unrevealed
+//    commitment — enters `total_pot`.
+// 3. The winners are every *revealed* entry whose absolute distance
+//    `|predicted_price - final_price|` equals the minimum distance among
+//    revealed entries (closest guess wins, exact ties share).
+// 4. If at least one winner exists the protocol fee is taken per the fee
+//    model (FeeOnPot: `pot * bps / 10_000`; FeeOnWinnings:
+//    `(pot - Σ winner stakes) * bps / 10_000`, zero when non-positive) and
+//    `distributable = pot - fee` is split per payout policy (Equal or
+//    StakeWeighted, floor division). The integer remainder goes to the first
+//    winner in address order, so `Σ payouts + fee == pot` exactly.
+//    Non-winners (revealed losers and unrevealed forfeiters) get 0.
+// 5. If nobody revealed there is no winner: every stake is refunded in full
+//    and no fee is charged.
+
+/// Precision payout policy: equal split among winners (mirrors `PrecisionPayoutPolicy::Equal`).
+pub const PRECISION_POLICY_EQUAL: u32 = 0;
+/// Precision payout policy: split proportional to winner stakes
+/// (mirrors `PrecisionPayoutPolicy::StakeWeighted`).
+pub const PRECISION_POLICY_STAKE_WEIGHTED: u32 = 1;
+
+/// One participant in a reference Precision round.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefPrecisionEntry {
+    pub user: Address,
+    pub amount: i128,
+    /// `Some(price)` for a direct or revealed prediction, `None` for a
+    /// commitment that was never revealed.
+    pub predicted_price: Option<u128>,
+}
+
+/// Outcome classification produced by the reference (mirrors `UserOutcomeType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefPrecisionOutcome {
+    Win,
+    Loss,
+    Refund,
+}
+
+/// Per-participant result of a reference Precision settlement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefPrecisionUserResult {
+    pub user: Address,
+    pub stake: i128,
+    pub payout: i128,
+    /// Predicted price recorded in the outcome (0 for unrevealed / refunds).
+    pub predicted_price: u128,
+    pub outcome: RefPrecisionOutcome,
+}
+
+/// Full reference Precision settlement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefPrecisionSettlement {
+    pub total_pot: i128,
+    pub fee: i128,
+    /// Minimum absolute distance among revealed entries (`None` if nobody revealed).
+    pub min_diff: Option<u128>,
+    /// Winners in address order (the first one receives the remainder).
+    pub winners: Vec<Address>,
+    /// Per-participant results in address order.
+    pub results: Vec<RefPrecisionUserResult>,
+}
+
+impl RefPrecisionSettlement {
+    /// Σ payouts over all participants.
+    pub fn sum_payouts(&self) -> i128 {
+        self.results.iter().map(|r| r.payout).sum()
+    }
+}
+
+/// Reference closest-guess Precision settlement. See the section comment
+/// above for the contract behaviour this encodes.
+pub fn ref_precision_resolve(
+    entries: &[RefPrecisionEntry],
+    final_price: u128,
+    fee_bps: Option<u32>,
+    fee_model: u32,
+    payout_policy: u32,
+) -> RefPrecisionSettlement {
+    let mut sorted: Vec<RefPrecisionEntry> = entries.to_vec();
+    sorted.sort_by(|a, b| a.user.cmp(&b.user));
+
+    let total_pot: i128 = sorted.iter().map(|e| e.amount).sum();
+    let min_diff: Option<u128> = sorted
+        .iter()
+        .filter_map(|e| e.predicted_price.map(|p| p.abs_diff(final_price)))
+        .min();
+
+    let is_winner = |e: &RefPrecisionEntry| -> bool {
+        match (e.predicted_price, min_diff) {
+            (Some(p), Some(m)) => p.abs_diff(final_price) == m,
+            _ => false,
+        }
+    };
+
+    // Nobody revealed → full refund, no fee.
+    if min_diff.is_none() {
+        let results = sorted
+            .iter()
+            .map(|e| RefPrecisionUserResult {
+                user: e.user.clone(),
+                stake: e.amount,
+                payout: e.amount,
+                predicted_price: 0,
+                outcome: RefPrecisionOutcome::Refund,
+            })
+            .collect();
+        return RefPrecisionSettlement {
+            total_pot,
+            fee: 0,
+            min_diff: None,
+            winners: Vec::new(),
+            results,
+        };
+    }
+
+    let winners: Vec<&RefPrecisionEntry> = sorted.iter().filter(|e| is_winner(e)).collect();
+    let winner_stakes: i128 = winners.iter().map(|e| e.amount).sum();
+
+    let fee = match fee_model {
+        FEE_MODEL_ON_WINNINGS => compute_fee_with_model(total_pot - winner_stakes, fee_bps),
+        _ => compute_fee(total_pot, fee_bps).max(0),
+    };
+    let distributable = total_pot - fee;
+
+    let mut winner_payouts: Vec<i128> = match payout_policy {
+        PRECISION_POLICY_STAKE_WEIGHTED if winner_stakes > 0 => winners
+            .iter()
+            .map(|e| e.amount * distributable / winner_stakes)
+            .collect(),
+        PRECISION_POLICY_STAKE_WEIGHTED => winners.iter().map(|_| 0).collect(),
+        _ => {
+            let each = distributable / winners.len() as i128;
+            winners.iter().map(|_| each).collect()
+        }
+    };
+    let remainder = distributable - winner_payouts.iter().sum::<i128>();
+    winner_payouts[0] += remainder;
+
+    let mut next_winner = 0usize;
+    let results = sorted
+        .iter()
+        .map(|e| {
+            if is_winner(e) {
+                let payout = winner_payouts[next_winner];
+                next_winner += 1;
+                RefPrecisionUserResult {
+                    user: e.user.clone(),
+                    stake: e.amount,
+                    payout,
+                    predicted_price: e.predicted_price.unwrap_or(0),
+                    outcome: RefPrecisionOutcome::Win,
+                }
+            } else {
+                RefPrecisionUserResult {
+                    user: e.user.clone(),
+                    stake: e.amount,
+                    payout: 0,
+                    predicted_price: e.predicted_price.unwrap_or(0),
+                    outcome: RefPrecisionOutcome::Loss,
+                }
+            }
+        })
+        .collect();
+
+    RefPrecisionSettlement {
+        total_pot,
+        fee,
+        min_diff,
+        winners: winners.iter().map(|e| e.user.clone()).collect(),
+        results,
+    }
+}
+
+impl ReferenceModel {
+    /// Applies a reference Precision settlement: payouts/refunds accrue to
+    /// pending winnings and the fee accrues to the protocol treasury.
+    pub fn apply_precision_settlement(&mut self, settlement: &RefPrecisionSettlement) {
+        for r in &settlement.results {
+            if r.payout > 0 {
+                *self.pending_winnings.entry(r.user.clone()).or_default() += r.payout;
+            }
+        }
+        self.protocol_fee_treasury += settlement.fee;
+        self.total_pool = 0;
+        self.outcomes.push(!settlement.winners.is_empty());
+    }
+}
+
+// ─── Unit tests for the Precision reference itself ───────────────────────────
+
+#[cfg(test)]
+mod precision_reference_unit {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Env;
+
+    fn sorted_users(env: &Env, n: usize) -> Vec<Address> {
+        let mut v: Vec<Address> = (0..n).map(|_| Address::generate(env)).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn closest_guess_single_winner_takes_pot_minus_fee() {
+        let env = Env::default();
+        let u = sorted_users(&env, 3);
+        let entries = [
+            RefPrecisionEntry {
+                user: u[0].clone(),
+                amount: 50,
+                predicted_price: Some(1_010),
+            },
+            RefPrecisionEntry {
+                user: u[1].clone(),
+                amount: 30,
+                predicted_price: Some(1_002),
+            },
+            RefPrecisionEntry {
+                user: u[2].clone(),
+                amount: 20,
+                predicted_price: Some(990),
+            },
+        ];
+        let s = ref_precision_resolve(&entries, 1_000, Some(1_000), FEE_MODEL_ON_POT, 0);
+        assert_eq!(s.min_diff, Some(2));
+        assert_eq!(s.winners, std::vec![u[1].clone()]);
+        assert_eq!(s.fee, 10);
+        assert_eq!(s.results[1].payout, 90);
+        assert_eq!(s.sum_payouts() + s.fee, s.total_pot);
+    }
+
+    #[test]
+    fn symmetric_tie_splits_and_remainder_goes_to_first_address() {
+        let env = Env::default();
+        let u = sorted_users(&env, 3);
+        let entries = [
+            // Insert in reverse order to prove the reference sorts.
+            RefPrecisionEntry {
+                user: u[2].clone(),
+                amount: 50,
+                predicted_price: Some(1_200),
+            },
+            RefPrecisionEntry {
+                user: u[1].clone(),
+                amount: 50,
+                predicted_price: Some(995),
+            },
+            RefPrecisionEntry {
+                user: u[0].clone(),
+                amount: 50,
+                predicted_price: Some(1_005),
+            },
+        ];
+        let s = ref_precision_resolve(&entries, 1_000, Some(1_000), FEE_MODEL_ON_POT, 0);
+        assert_eq!(s.winners, std::vec![u[0].clone(), u[1].clone()]);
+        assert_eq!(s.fee, 15);
+        assert_eq!(s.results[0].payout, 68); // 67 + remainder 1
+        assert_eq!(s.results[1].payout, 67);
+        assert_eq!(s.results[2].outcome, RefPrecisionOutcome::Loss);
+        assert_eq!(s.sum_payouts() + s.fee, 150);
+    }
+
+    #[test]
+    fn unrevealed_entries_never_win_and_forfeit_to_pot() {
+        let env = Env::default();
+        let u = sorted_users(&env, 2);
+        let entries = [
+            RefPrecisionEntry {
+                user: u[0].clone(),
+                amount: 60,
+                predicted_price: None,
+            },
+            RefPrecisionEntry {
+                user: u[1].clone(),
+                amount: 40,
+                predicted_price: Some(5_000),
+            },
+        ];
+        let s = ref_precision_resolve(&entries, 1_000, Some(500), FEE_MODEL_ON_POT, 0);
+        assert_eq!(s.winners, std::vec![u[1].clone()]);
+        assert_eq!(s.results[0].outcome, RefPrecisionOutcome::Loss);
+        assert_eq!(s.results[1].payout, 95);
+        assert_eq!(s.fee, 5);
+    }
+
+    #[test]
+    fn all_unrevealed_refunds_without_fee() {
+        let env = Env::default();
+        let u = sorted_users(&env, 2);
+        let entries = [
+            RefPrecisionEntry {
+                user: u[0].clone(),
+                amount: 60,
+                predicted_price: None,
+            },
+            RefPrecisionEntry {
+                user: u[1].clone(),
+                amount: 40,
+                predicted_price: None,
+            },
+        ];
+        let s = ref_precision_resolve(&entries, 1_000, Some(1_000), FEE_MODEL_ON_POT, 1);
+        assert_eq!(s.fee, 0);
+        assert!(s.winners.is_empty());
+        assert!(s
+            .results
+            .iter()
+            .all(|r| r.outcome == RefPrecisionOutcome::Refund));
+        assert_eq!(s.sum_payouts(), 100);
+    }
+
+    #[test]
+    fn fee_on_winnings_with_all_participants_winning_charges_nothing() {
+        let env = Env::default();
+        let u = sorted_users(&env, 2);
+        let entries = [
+            RefPrecisionEntry {
+                user: u[0].clone(),
+                amount: 7,
+                predicted_price: Some(1_001),
+            },
+            RefPrecisionEntry {
+                user: u[1].clone(),
+                amount: 3,
+                predicted_price: Some(999),
+            },
+        ];
+        let s = ref_precision_resolve(&entries, 1_000, Some(1_000), FEE_MODEL_ON_WINNINGS, 1);
+        assert_eq!(s.fee, 0);
+        assert_eq!(s.results[0].payout, 7);
+        assert_eq!(s.results[1].payout, 3);
+    }
+}
