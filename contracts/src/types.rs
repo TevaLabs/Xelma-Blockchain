@@ -186,6 +186,8 @@ pub enum DataKeyScoped {
     PrecisionCommitment(u64, Address),
     /// Ordered participant list for a round: round_id → Vec<Address>
     RoundParticipants(u64),
+    /// Deferred oracle outcome awaiting the end of its dispute window.
+    PendingOutcome(u64),
     /// Marker for a cancelled round: round_id → true
     CancelledRound(u64),
     /// Per-round consumed oracle nonce: (round_id, nonce) → true.
@@ -497,6 +499,17 @@ pub struct Round {
     pub pool_up: i128,        // Total vXLM bet on UP
     pub pool_down: i128,      // Total vXLM bet on DOWN
     pub mode: RoundMode,      // Round mode: UpDown (0) or Precision (1)
+}
+
+/// Validated oracle result staged until its dispute window closes.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingOutcome {
+    pub round: Round,
+    pub final_price: u128,
+    pub confidence: Option<u32>,
+    pub resolved_at_ledger: u32,
+    pub deadline_ledger: u32,
 }
 
 /// Aggregated active-round pool composition for frontend transparency.
