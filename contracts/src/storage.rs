@@ -12,6 +12,7 @@
 //! through `clear_user_positions` or `clear_round_storage`.
 
 use crate::types::DataKeyCore;
+use crate::types::DataKeyExt;
 use crate::types::DataKeyScoped;
 use soroban_sdk::{Address, Env, Vec};
 
@@ -76,4 +77,116 @@ pub fn clear_round_storage(env: &Env, round_id: u64, participants: &Vec<Address>
     env.storage()
         .persistent()
         .remove(&DataKeyCore::PrecisionPositions);
+}
+
+// ─── TTL touch allowlist (Issue #862) ──────────────────────────────────────
+
+/// How a `DataKeyCore` variant is treated by `batch_touch_ttl`.
+///
+/// Every variant is classified explicitly in [`ttl_touch_policy`] with no
+/// wildcard arm, so adding a new `DataKeyCore` or `DataKeyExt` variant fails
+/// to compile until someone decides whether maintainers may batch-touch it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtlTouchPolicy {
+    /// Long-lived, contract-wide persistent singleton: accepted by
+    /// `batch_touch_ttl` and extended when present.
+    Allowed,
+    /// Accepted for backward compatibility, but the value lives in
+    /// **instance** storage, so the persistent entry never exists and the key
+    /// is always counted as skipped. Instance storage is kept alive with the
+    /// contract instance, not by this entrypoint.
+    AllowedInstanceTier,
+    /// Round-scoped state that is created and deleted per round and extended
+    /// on access (`ActiveRound`).
+    RoundScoped,
+    /// Read-only legacy keys kept for migration compatibility; removed during
+    /// round cleanup.
+    Legacy,
+    /// Variant exists in the enum but its value is stored under a different
+    /// key (a `Symbol`), so there is never an entry to touch.
+    NotStoredUnderVariant,
+    /// Parameterised (per-season / per-user / per-id) entries, extended on
+    /// access rather than in maintenance batches.
+    Indexed,
+}
+
+/// Exhaustive TTL-touch classification for every `DataKeyCore` variant.
+pub fn ttl_touch_policy(key: &DataKeyCore) -> TtlTouchPolicy {
+    use TtlTouchPolicy::*;
+    match key {
+        // Core config
+        DataKeyCore::Admin
+        | DataKeyCore::Oracle
+        | DataKeyCore::SchemaVersion
+        | DataKeyCore::NextSchemaVersion
+        | DataKeyCore::Paused
+        | DataKeyCore::MigratedToV3 => Allowed,
+        // Windows
+        DataKeyCore::BetWindowLedgers
+        | DataKeyCore::RunWindowLedgers
+        | DataKeyCore::CloseBufferLedgers => Allowed,
+        // Risk limits and matchmaking
+        DataKeyCore::MaxStake
+        | DataKeyCore::MaxUserRoundExposure
+        | DataKeyCore::MaxPendingWinnings
+        | DataKeyCore::MinBet
+        | DataKeyCore::MinParticipants
+        | DataKeyCore::MaxPrecisionParticipants => Allowed,
+        // Oracle safety
+        DataKeyCore::OracleHeartbeat
+        | DataKeyCore::OracleStaleThreshold
+        | DataKeyCore::OracleMaxDeviationBps
+        | DataKeyCore::OracleDeviationOverrideArmed
+        | DataKeyCore::OracleMinConfidenceBps
+        | DataKeyCore::OracleStrictMode
+        | DataKeyCore::OracleQuorum
+        | DataKeyCore::OracleRotationProposal => Allowed,
+        // Fees and payout policy
+        DataKeyCore::ProtocolFeeBps
+        | DataKeyCore::ProtocolFeeTreasury
+        | DataKeyCore::FeeModel
+        | DataKeyCore::EarlyCashoutBps
+        | DataKeyCore::PrecisionPayoutPolicy => Allowed,
+        // Archive / keeper / round counter
+        DataKeyCore::ArchiveRetention
+        | DataKeyCore::RecentArchivedRoundIds
+        | DataKeyCore::RoundTemplate
+        | DataKeyCore::LastRoundId => Allowed,
+        // Access control and governance
+        DataKeyCore::AccessControlEnabled
+        | DataKeyCore::GovApprover
+        | DataKeyCore::GovProposalTtlLedgers
+        | DataKeyCore::NextGovProposalId => Allowed,
+        // Instance-tier value (see `set_mint_limit_config`)
+        DataKeyCore::MintLimitConfig => AllowedInstanceTier,
+        // Round-scoped
+        DataKeyCore::ActiveRound => RoundScoped,
+        // Legacy migration keys
+        DataKeyCore::Positions | DataKeyCore::UpDownPositions | DataKeyCore::PrecisionPositions => {
+            Legacy
+        }
+        // Stored under Symbol keys ("EpMintBgt" in instance, "DisputeLedgers")
+        DataKeyCore::EpochMintBudget | DataKeyCore::DisputeLedgers => NotStoredUnderVariant,
+        DataKeyCore::Ext(ext) => match ext {
+            DataKeyExt::LeaderboardWins
+            | DataKeyExt::LeaderboardStreak
+            | DataKeyExt::SeasonId
+            | DataKeyExt::SeasonLeaderboardWins
+            | DataKeyExt::SeasonLeaderboardStreak
+            | DataKeyExt::ConstitutionMetadata
+            | DataKeyExt::NextAmendmentId => Allowed,
+            DataKeyExt::SeasonUserStats(_, _)
+            | DataKeyExt::SeasonArchive(_)
+            | DataKeyExt::Amendment(_) => Indexed,
+        },
+    }
+}
+
+/// Returns `true` when `batch_touch_ttl` accepts `key`.
+#[inline]
+pub fn is_ttl_touch_allowed(key: &DataKeyCore) -> bool {
+    matches!(
+        ttl_touch_policy(key),
+        TtlTouchPolicy::Allowed | TtlTouchPolicy::AllowedInstanceTier
+    )
 }
