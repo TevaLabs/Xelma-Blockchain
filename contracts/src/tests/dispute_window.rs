@@ -94,6 +94,63 @@ fn void_during_window_refunds_exact_stakes_and_conserves_pot() {
         symbol_short!("pending")
     ));
     assert!(has_round_event(&env, &contract_id, symbol_short!("voided")));
+    // Replay protection: a second void_round call must be rejected.
+    assert_eq!(
+        client.try_void_round(&round_id),
+        Err(Ok(ContractError::RoundNotCancellable))
+    );
+}
+
+#[test]
+fn void_during_window_refunds_precision_round_stakes() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.set_dispute_ledgers(&5u32);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.create_round(&1_000u128, &Some(1u32));
+    client.place_precision_prediction(&alice, &75i128, &1_050u128);
+    client.place_precision_prediction(&bob, &25i128, &950u128);
+
+    let round = client.get_active_round().unwrap();
+    let round_id = round.round_id;
+    env.ledger()
+        .with_mut(|ledger| ledger.sequence_number = round.end_ledger);
+    client.resolve_round(&OraclePayload {
+        price: 1_050,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    let treasury_before = client.get_protocol_fee_treasury();
+    client.void_round(&round_id);
+
+    assert_eq!(client.get_pending_winnings(&alice), 75);
+    assert_eq!(client.get_pending_winnings(&bob), 25);
+    assert_eq!(client.get_protocol_fee_treasury() - treasury_before, 0);
+    assert_eq!(
+        client.get_archived_round(&round_id).unwrap().status,
+        RoundArchiveStatus::Voided
+    );
+    assert!(has_round_event(&env, &contract_id, symbol_short!("voided")));
+    assert_eq!(
+        client.try_void_round(&round_id),
+        Err(Ok(ContractError::RoundNotCancellable))
+    );
 }
 
 #[test]
