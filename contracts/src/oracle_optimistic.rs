@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+//! Bonded optimistic oracle lifecycle (Issue #358).
+use crate::common::{_set_balance, balance};
+use crate::errors::ContractError;
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Map, Symbol};
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OptimisticOracleConfig { pub challenge_window_ledgers:u32, pub oracle_bond:i128, pub challenger_bond:i128 }
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProposalStatus { Proposed=0, Challenged=1, Escalated=2, Finalized=3 }
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OptimisticPriceProposal { pub round_id:u64, pub oracle:Address, pub proposed_price:i128, pub oracle_bond:i128, pub challenger:Option<Address>, pub counter_price:Option<i128>, pub challenger_bond:i128, pub proposed_at_ledger:u32, pub challenge_deadline:u32, pub status:ProposalStatus }
+fn ck(e:&Env)->Symbol{Symbol::new(e,"OptOracleCfg")} fn pk(e:&Env)->Symbol{Symbol::new(e,"OptOracleProps")}
+fn all(e:&Env)->Map<u64,OptimisticPriceProposal>{e.storage().persistent().get(&pk(e)).unwrap_or(Map::new(e))}
+fn load(e:&Env,id:u64)->Result<OptimisticPriceProposal,ContractError>{all(e).get(id).ok_or(ContractError::ProposalNotFound)}
+fn save(e:&Env,p:&OptimisticPriceProposal){let k=pk(e);let mut m=all(e);m.set(p.round_id,p.clone());e.storage().persistent().set(&k,&m);e.storage().persistent().extend_ttl(&k,100,10000);}
+fn debit(e:&Env,a:&Address,n:i128)->Result<(),ContractError>{if n<=0{return Err(ContractError::InvalidAmount)}a.require_auth();let b=balance(e.clone(),a.clone());let r=b.checked_sub(n).ok_or(ContractError::Overflow)?;if r<0{return Err(ContractError::InsufficientBalance)}_set_balance(e,a.clone(),r);Ok(())}
+fn credit(e:&Env,a:&Address,n:i128)->Result<(),ContractError>{if n<0{return Err(ContractError::InvalidAmount)}let b=balance(e.clone(),a.clone()).checked_add(n).ok_or(ContractError::Overflow)?;_set_balance(e,a.clone(),b);Ok(())}
+pub fn configure(e:&Env,c:OptimisticOracleConfig)->Result<(),ContractError>{if c.challenge_window_ledgers==0||c.oracle_bond<=0||c.challenger_bond<=0{return Err(ContractError::InvalidAmount)}e.storage().persistent().set(&ck(e),&c);Ok(())}
+pub fn propose(e:&Env,id:u64,oracle:Address,price:i128)->Result<(),ContractError>{if price<=0{return Err(ContractError::InvalidPrice)}let c:OptimisticOracleConfig=e.storage().persistent().get(&ck(e)).ok_or(ContractError::GovInvalidState)?;if all(e).contains_key(id){return Err(ContractError::GovInvalidState)}debit(e,&oracle,c.oracle_bond)?;let now=e.ledger().sequence();let deadline=now.checked_add(c.challenge_window_ledgers).ok_or(ContractError::Overflow)?;let p=OptimisticPriceProposal{round_id:id,oracle:oracle.clone(),proposed_price:price,oracle_bond:c.oracle_bond,challenger:None,counter_price:None,challenger_bond:0,proposed_at_ledger:now,challenge_deadline:deadline,status:ProposalStatus::Proposed};save(e,&p);#[allow(deprecated)]e.events().publish((symbol_short!("opt"),symbol_short!("propose")),(id,price,c.oracle_bond,deadline,oracle));Ok(())}
+pub fn challenge(e:&Env,id:u64,challenger:Address,price:i128)->Result<(),ContractError>{if price<=0{return Err(ContractError::InvalidPrice)}let mut p=load(e,id)?;if p.status!=ProposalStatus::Proposed||e.ledger().sequence()>p.challenge_deadline{return Err(ContractError::ClaimLocked)}if challenger==p.oracle{return Err(ContractError::GovUnauthorized)}let c:OptimisticOracleConfig=e.storage().persistent().get(&ck(e)).ok_or(ContractError::GovInvalidState)?;debit(e,&challenger,c.challenger_bond)?;p.challenger=Some(challenger.clone());p.counter_price=Some(price);p.challenger_bond=c.challenger_bond;p.status=ProposalStatus::Challenged;save(e,&p);#[allow(deprecated)]e.events().publish((symbol_short!("opt"),symbol_short!("challng")),(id,price,c.challenger_bond,challenger));Ok(())}
+pub fn finalize(e:&Env,id:u64)->Result<i128,ContractError>{let mut p=load(e,id)?;if p.status!=ProposalStatus::Proposed||e.ledger().sequence()<=p.challenge_deadline{return Err(ContractError::ClaimLocked)}credit(e,&p.oracle,p.oracle_bond)?;p.oracle_bond=0;p.status=ProposalStatus::Finalized;save(e,&p);#[allow(deprecated)]e.events().publish((symbol_short!("opt"),symbol_short!("final")),(id,p.proposed_price,p.oracle));Ok(p.proposed_price)}
+pub fn escalate(e:&Env,id:u64,caller:Address)->Result<(),ContractError>{caller.require_auth();let mut p=load(e,id)?;if p.status!=ProposalStatus::Challenged||e.ledger().sequence()<=p.challenge_deadline{return Err(ContractError::ClaimLocked)}p.status=ProposalStatus::Escalated;save(e,&p);#[allow(deprecated)]e.events().publish((symbol_short!("opt"),symbol_short!("escalat")),(id,caller));Ok(())}
+pub fn resolve(e:&Env,id:u64,governance:Address,challenger_wins:bool)->Result<i128,ContractError>{governance.require_auth();let mut p=load(e,id)?;if p.status!=ProposalStatus::Escalated{return Err(ContractError::GovInvalidState)}let challenger=p.challenger.clone().ok_or(ContractError::GovInvalidState)?;let (winner,price)=if challenger_wins{(challenger,p.counter_price.ok_or(ContractError::GovInvalidState)?)}else{(p.oracle.clone(),p.proposed_price)};let total=p.oracle_bond.checked_add(p.challenger_bond).ok_or(ContractError::Overflow)?;credit(e,&winner,total)?;p.oracle_bond=0;p.challenger_bond=0;p.status=ProposalStatus::Finalized;save(e,&p);#[allow(deprecated)]e.events().publish((symbol_short!("opt"),symbol_short!("decision")),(id,price,challenger_wins,winner));Ok(price)}
+pub fn get(e:&Env,id:u64)->Option<OptimisticPriceProposal>{all(e).get(id)}
