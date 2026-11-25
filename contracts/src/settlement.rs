@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
 use crate::admin::{
-    _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
+    _current_mode, _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
     _require_supported_schema,
 };
 use crate::common::{
@@ -371,7 +371,20 @@ pub fn claim_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     // ── Checks ────────────────────────────────────────────────────────────
     _require_supported_schema(&env)?;
     user.require_auth();
-    _ensure_not_paused(&env)?; // rejects FullyPaused; allows Normal & ClaimsOnly
+    _ensure_not_paused(&env)?; // rejects FullyPaused
+
+    // In ClaimsOnly mode (mode 1), claim_winnings is blocked to prevent
+    // claiming on rounds that were created in Normal mode but the mode was
+    // switched to ClaimsOnly. Only AdminConfig is allowed in ClaimsOnly.
+    let mode_key = crate::types::DataKeyCore::Paused;
+    let mode: crate::types::RuntimeMode = env
+        .storage()
+        .persistent()
+        .get::<_, crate::types::RuntimeMode>(&mode_key)
+        .unwrap_or(crate::types::RuntimeMode::Normal);
+    if mode == crate::types::RuntimeMode::ClaimsOnly {
+        return Err(ContractError::ContractPaused);
+    }
 
     let key = DataKeyScoped::PendingWinnings(user.clone());
     let pending: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -1547,6 +1560,16 @@ pub fn _apply_one_sided_policy(
         2
     };
 
+    // Collect protocol fee on one-sided pools (Issue #827).
+    // The fee is calculated based on the winning pool amount and the
+    // configured protocol fee bps and model.
+    let (_, _, fee_amount) = _apply_protocol_fee_updown(
+        env,
+        round.round_id,
+        round.pool_up.saturating_add(round.pool_down),
+        0,
+    )?;
+
     let (refund_amount, carry_amount) = match policy {
         OneSidedPolicy::Refund | OneSidedPolicy::Void => {
             if !participants.is_empty() {
@@ -1557,7 +1580,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (round.pool_up.saturating_add(round.pool_down), 0i128)
+            (round.pool_up.saturating_add(round.pool_down) - fee_amount, fee_amount)
         }
         OneSidedPolicy::CarryForward => {
             if !participants.is_empty() {
@@ -1568,7 +1591,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (0i128, round.pool_up.saturating_add(round.pool_down))
+            (0i128, round.pool_up.saturating_add(round.pool_down) - fee_amount)
         }
     };
 
@@ -1586,7 +1609,7 @@ pub fn _apply_one_sided_policy(
         ),
     );
 
-    Ok(0)
+    Ok(fee_amount)
 }
 
 #[allow(clippy::too_many_arguments)]
