@@ -1,7 +1,14 @@
 // scripts/check-doc-drift.js
 /**
- * Checks that the Wallet Error Integration Guide stays in sync with the contract error enum.
- * Exits with code 1 if any contract error is missing from the markdown table.
+ * Checks that docs/WALLET_ERROR_GUIDE.md stays in sync with the contract error
+ * enum (contracts/src/errors.rs), in both directions:
+ *
+ *  - every enum variant has a row in the guide,
+ *  - every guide row names a variant that still exists in the enum,
+ *  - the documented hex/decimal columns agree with the enum value, and
+ *  - the documented identifier matches the enum identifier for that value.
+ *
+ * Exits with code 1 on any drift so CI fails before a stale guide ships.
  */
 const fs = require('fs');
 const path = require('path');
@@ -11,7 +18,7 @@ const GUIDE_MD = path.join(__dirname, '..', 'docs', 'WALLET_ERROR_GUIDE.md');
 
 function parseEnum(fileContent) {
   const enumMap = new Map();
-  const regex = /\s*(\w+)\s*=\s*(\d+),/g; // matches "Identifier = number," inside enum
+  const regex = /\s*([A-Za-z0-9_]+)\s*=\s*(\d+),/g; // matches "Identifier = number," inside enum
   let match;
   while ((match = regex.exec(fileContent)) !== null) {
     const [, identifier, num] = match;
@@ -20,15 +27,23 @@ function parseEnum(fileContent) {
   return enumMap;
 }
 
+/**
+ * Parses guide rows shaped `| `0x16` | 22 | `ContractPaused` | ... |`.
+ * Returns Map<decimal, { identifier, hex }>.
+ */
 function parseGuide(fileContent) {
-  const guideSet = new Set();
-  const tableRegex = /\|\s*`?0x[0-9a-fA-F]+`?\s*\|\s*(\d+)\s*\|/g; // capture decimal column
+  const rows = new Map();
+  const tableRegex =
+    /\|\s*`?0x([0-9a-fA-F]+)`?\s*\|\s*(\d+)\s*\|\s*`?([A-Za-z0-9_]+)`?\s*\|/g;
   let match;
   while ((match = tableRegex.exec(fileContent)) !== null) {
-    const [, dec] = match;
-    guideSet.add(parseInt(dec, 10));
+    const [, hex, dec, identifier] = match;
+    rows.set(parseInt(dec, 10), {
+      identifier,
+      hex: parseInt(hex, 16),
+    });
   }
-  return guideSet;
+  return rows;
 }
 
 function main() {
@@ -39,18 +54,49 @@ function main() {
   const enumContent = fs.readFileSync(ERRORS_RS, 'utf8');
   const guideContent = fs.readFileSync(GUIDE_MD, 'utf8');
   const enumMap = parseEnum(enumContent);
-  const guideSet = parseGuide(guideContent);
+  const guideRows = parseGuide(guideContent);
 
   const missing = [];
-  for (const code of enumMap.keys()) {
-    if (!guideSet.has(code)) missing.push({code, name: enumMap.get(code)});
+  for (const [code, name] of enumMap) {
+    if (!guideRows.has(code)) missing.push({ code, name });
   }
+
+  const stale = [];
+  const mismatched = [];
+  for (const [code, row] of guideRows) {
+    const enumName = enumMap.get(code);
+    if (enumName === undefined) {
+      stale.push({ code, name: row.identifier });
+      continue;
+    }
+    if (row.hex !== code) {
+      mismatched.push(`code ${code} (${row.identifier}) lists hex 0x${row.hex.toString(16)}`);
+    }
+    if (enumName !== row.identifier) {
+      mismatched.push(`code ${code} is ${enumName} in errors.rs but ${row.identifier} in the guide`);
+    }
+  }
+
   if (missing.length > 0) {
     console.error('Documentation drift detected: the following error codes are missing from WALLET_ERROR_GUIDE.md');
-    missing.forEach(e => console.error(` - ${e.code} (${e.name})`));
+    missing.forEach((e) => console.error(` - ${e.code} (${e.name})`));
+  }
+  if (stale.length > 0) {
+    console.error('Stale documentation detected: WALLET_ERROR_GUIDE.md documents codes the contract no longer declares');
+    stale.forEach((e) => console.error(` - ${e.code} (${e.name})`));
+  }
+  if (mismatched.length > 0) {
+    console.error('Inconsistent documentation detected: WALLET_ERROR_GUIDE.md columns disagree with contracts/src/errors.rs');
+    mismatched.forEach((m) => console.error(` - ${m}`));
+  }
+
+  if (missing.length + stale.length + mismatched.length > 0) {
     process.exit(1);
   }
-  console.log('Documentation drift check passed.');
+
+  console.log(
+    `Documentation drift check passed (${enumMap.size} variants documented in ${path.relative(process.cwd(), GUIDE_MD)}).`
+  );
   process.exit(0);
 }
 
