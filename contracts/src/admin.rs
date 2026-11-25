@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 use crate::common::{
     _derive_round_phase, _emit_action_rejected, _extend_persistent_ttl, _set_balance, balance,
-    payout_add, CURRENT_SCHEMA_VERSION, DEFAULT_BET_WINDOW_LEDGERS,
-    DEFAULT_ORACLE_STALE_THRESHOLD, DEFAULT_RUN_WINDOW_LEDGERS, MAX_TWAP_WINDOW_SAMPLES,
-    MIN_TWAP_WINDOW_SAMPLES, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
+    payout_add, CURRENT_SCHEMA_VERSION, DEFAULT_BET_WINDOW_LEDGERS, DEFAULT_ORACLE_STALE_THRESHOLD,
+    DEFAULT_RUN_WINDOW_LEDGERS, MAX_TWAP_WINDOW_SAMPLES, MIN_TWAP_WINDOW_SAMPLES, TTL_BUMP_AMOUNT,
+    TTL_BUMP_THRESHOLD,
 };
 use crate::errors::ContractError;
 use crate::types::{
-    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt,
-    DeviationConfig, DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey,
-    OracleHeartbeatRecord, OracleQuorumConfig, PolicyAction, ProtocolHealthStatus, Round,
-    RuntimeMode, PENDING_WINNINGS_EXPIRY_KEY, PendingWinningsUpdatedAtKey,
+    AttestationConfig, AttestationConfigKey, DataKey, DataKeyCore, DataKeyExt, DeviationConfig,
+    DeviationConfigKey, DeviationReferenceMode, HbGateConfig, HbGateKey, OracleHeartbeatRecord,
+    OracleQuorumConfig, PendingWinningsUpdatedAtKey, PolicyAction, ProtocolHealthStatus, Round,
+    RuntimeMode, PENDING_WINNINGS_EXPIRY_KEY,
 };
 use soroban_sdk::{symbol_short, Address, BytesN, Env, Symbol, Vec};
 
@@ -27,7 +27,9 @@ pub fn initialize(env: Env, admin: Address, oracle: Address) -> Result<(), Contr
     }
 
     env.storage().persistent().set(&DataKeyCore::Admin, &admin);
-    env.storage().persistent().set(&DataKeyCore::Oracle, &oracle);
+    env.storage()
+        .persistent()
+        .set(&DataKeyCore::Oracle, &oracle);
     env.storage()
         .persistent()
         .set(&DataKeyCore::Paused, &RuntimeMode::Normal);
@@ -374,11 +376,9 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
 pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
     let key = DeviationConfigKey::Config;
     if env.storage().persistent().has(&key) {
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_BUMP_THRESHOLD,
-            TTL_BUMP_AMOUNT,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
     }
     env.storage()
         .persistent()
@@ -392,11 +392,9 @@ pub fn _load_deviation_config(env: &Env) -> DeviationConfig {
 fn _save_deviation_config(env: &Env, config: &DeviationConfig) {
     let key = DeviationConfigKey::Config;
     env.storage().persistent().set(&key, config);
-    env.storage().persistent().extend_ttl(
-        &key,
-        TTL_BUMP_THRESHOLD,
-        TTL_BUMP_AMOUNT,
-    );
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
 }
 
 /// Sets the oracle deviation reference mode and (for `Twap`) the trailing
@@ -461,11 +459,9 @@ pub fn get_deviation_window_samples(env: Env) -> u32 {
 pub fn _load_attestation_config(env: &Env) -> AttestationConfig {
     let key = AttestationConfigKey::Config;
     if env.storage().persistent().has(&key) {
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_BUMP_THRESHOLD,
-            TTL_BUMP_AMOUNT,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
     }
     env.storage()
         .persistent()
@@ -492,11 +488,9 @@ pub fn set_attestation_key(env: Env, key: Option<BytesN<32>>) -> Result<(), Cont
     env.storage()
         .persistent()
         .set(&storage_key, &AttestationConfig { key: key.clone() });
-    env.storage().persistent().extend_ttl(
-        &storage_key,
-        TTL_BUMP_THRESHOLD,
-        TTL_BUMP_AMOUNT,
-    );
+    env.storage()
+        .persistent()
+        .extend_ttl(&storage_key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -521,6 +515,9 @@ pub fn set_oracle_min_confidence_bps(env: Env, min_bps: Option<u32>) -> Result<(
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("omin_cnf"), e);
+    })?;
     if let Some(bps) = min_bps {
         if bps > 10_000 {
             return Err(ContractError::WindowOutOfRange);
@@ -550,6 +547,9 @@ pub fn set_oracle_strict_mode(env: Env, enabled: bool) -> Result<(), ContractErr
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("ostrict"), e);
+    })?;
     env.storage()
         .persistent()
         .set(&DataKeyCore::OracleStrictMode, &enabled);
@@ -583,6 +583,9 @@ pub fn set_hb_strict_mode(env: Env, enabled: bool) -> Result<(), ContractError> 
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("hbstrict"), e);
+    })?;
     let mut config = _load_hb_config(&env);
     config.strict_mode = enabled;
     _save_hb_config(&env, &config);
@@ -635,6 +638,9 @@ pub fn set_hb_grace_seconds(env: Env, seconds: u64) -> Result<(), ContractError>
         .get(&DataKeyCore::Admin)
         .ok_or(ContractError::AdminNotSet)?;
     admin.require_auth();
+    _ensure_not_paused(&env).inspect_err(|&e| {
+        _emit_action_rejected(&env, &admin, symbol_short!("hbgrace"), e);
+    })?;
     let mut config = _load_hb_config(&env);
     config.grace_seconds = seconds;
     _save_hb_config(&env, &config);
@@ -664,11 +670,9 @@ pub fn _consume_hb_override(env: &Env) -> bool {
 pub fn _load_hb_config(env: &Env) -> HbGateConfig {
     let key = HbGateKey::Config;
     if env.storage().persistent().has(&key) {
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_BUMP_THRESHOLD,
-            TTL_BUMP_AMOUNT,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
     }
     env.storage()
         .persistent()
@@ -684,11 +688,9 @@ pub fn _load_hb_config(env: &Env) -> HbGateConfig {
 pub fn _save_hb_config(env: &Env, config: &HbGateConfig) {
     let key = HbGateKey::Config;
     env.storage().persistent().set(&key, config);
-    env.storage().persistent().extend_ttl(
-        &key,
-        TTL_BUMP_THRESHOLD,
-        TTL_BUMP_AMOUNT,
-    );
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
 }
 
 /// Records an oracle heartbeat (oracle only).
@@ -815,9 +817,18 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
     };
 
     let schema_version = _schema_version(&env).unwrap_or(1);
+    let mode = _current_mode(&env);
+    let is_claims_only = mode == RuntimeMode::ClaimsOnly;
+    let access_restricted = crate::access_control::is_access_control_enabled(env.clone());
 
+    // Every non-`Normal` runtime mode counts as a degradation so that a
+    // ClaimsOnly incident can never mask a stale oracle or stale round
+    // (see "Status precedence" in docs/STATUS_CODES.md).
     let mut issues: u32 = 0;
     if paused {
+        issues += 1;
+    }
+    if is_claims_only {
         issues += 1;
     }
     if !oracle_live {
@@ -831,12 +842,16 @@ pub fn get_protocol_health(env: Env) -> ProtocolHealthStatus {
         1u32 // PAUSED
     } else if issues > 1 {
         5u32 // MULTIPLE_ISSUES
+    } else if is_claims_only {
+        6u32 // CLAIMS_ONLY
     } else if !oracle_live {
         2u32 // ORACLE_STALE
     } else if has_active_round && active_round_phase == 3 {
         3u32 // ROUND_STALE
     } else if !has_active_round {
         4u32 // NO_ACTIVE_ROUND
+    } else if access_restricted {
+        7u32 // ACCESS_RESTRICTED
     } else {
         0u32 // HEALTHY
     };
@@ -864,7 +879,7 @@ pub fn get_oracle_stale_threshold(env: Env) -> u64 {
 }
 
 /// Reads the current [`RuntimeMode`], defaulting to `Normal` if unset.
-fn _current_mode(env: &Env) -> RuntimeMode {
+pub(crate) fn _current_mode(env: &Env) -> RuntimeMode {
     let key = DataKeyCore::Paused;
     _extend_persistent_ttl(env, &key);
     env.storage()
@@ -900,18 +915,30 @@ fn _current_mode(env: &Env) -> RuntimeMode {
 ///
 /// - `RoundMutation`: `place_bet`, `place_precision_prediction`,
 ///   `predict_price`, `commit_prediction`, `reveal_prediction`,
-///   `mint_initial`.
+///   `mint_initial`, `apply_scheduled_changes` (activating a timelocked
+///   config change is treated as mutation-adjacent — it is deliberately
+///   blocked in `ClaimsOnly` too, unlike the rest of the config surface, so
+///   an incident freezes pending config activations along with new bets).
+///   `cancel_config_change` is *not* in this class — cancelling a pending
+///   change is `AdminConfig` below, so an operator can always back out a
+///   scheduled change even while `ClaimsOnly`.
 /// - `Claim`: `claim_winnings`.
 /// - `Settlement`: `resolve_round`, `cancel_round`.
-/// - `AdminConfig`: `pause_contract`, `unpause_contract`, `set_runtime_mode`,
-///   `migrate_schema_v1_to_v2`, `migrate_schema_v2_to_v3`,
+/// - Mode-transition controls — `pause_contract`, `unpause_contract`,
+///   `set_runtime_mode` — call `_set_mode` directly and are **not** routed
+///   through `_policy_gate` at all: they must stay callable in every mode,
+///   `FullyPaused` included, or there would be no way to escape an incident.
+///   (They are still `Some(admin)`-authenticated and blocked by
+///   `GovUnauthorized` when a governance approver is configured — just not by
+///   the runtime-mode gate.) Do not add a `_policy_gate` call to these.
+/// - `AdminConfig`: `migrate_schema_v1_to_v2`, `migrate_schema_v2_to_v3`,
 ///   `set_oracle_max_deviation_bps`, `arm_oracle_deviation_override`,
 ///   `set_oracle_min_confidence_bps`, `set_oracle_strict_mode`,
 ///   `set_hb_strict_mode`, `arm_hb_override`, `set_hb_grace_seconds`,
 ///   `propose_oracle_rotation`, `accept_oracle_rotation`,
 ///   `cancel_oracle_rotation`, `set_windows`, `set_max_stake`,
 ///   `set_max_user_exposure`, `set_max_pending_winnings`, `set_min_bet`,
-///   `schedule_*` variants, `apply_scheduled_changes`, `cancel_config_change`,
+///   `schedule_*` variants, `cancel_config_change`,
 ///   `set_protocol_fee_bps`, `withdraw_protocol_fee`, `set_min_participants`,
 ///   `set_max_precision_participants`, `set_mint_limit`,
 ///   `set_archive_retention`, `set_close_buffer_ledgers`,
@@ -1173,10 +1200,13 @@ pub fn _require_supported_schema(env: &Env) -> Result<u32, ContractError> {
 ///
 /// # Errors
 /// - `AdminNotSet` — contract not initialized.
-/// - `ContractPaused` — contract is fully paused.
+/// - `ContractPaused` — contract is fully paused (allowed in `ClaimsOnly`).
+/// - `ExpiryNotConfigured` — expiry is disabled (`0`, the default).
+/// - `PendingWinningsNotFound` — the user has no pending winnings (or no
+///   last-credited ledger is recorded for them).
 /// - `PendingWinningsNotExpired` — entry exists but hasn't reached the expiry threshold.
-/// - `NoActiveRound` — used as a generic "no pending winnings" signal when
-///   the entry doesn't exist or expiry is disabled (0).
+///
+/// Operator playbook: `docs/OPS_ARCHIVE_RECLAIM_PLAYBOOK.md`.
 pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128, ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env
@@ -1191,11 +1221,7 @@ pub fn reclaim_expired_pending_winnings(env: Env, user: Address) -> Result<i128,
 
     // Read the expiry config. 0 or absent means expiry is disabled.
     let expiry_key = PENDING_WINNINGS_EXPIRY_KEY;
-    let expiry_ledgers: u32 = env
-        .storage()
-        .persistent()
-        .get(&expiry_key)
-        .unwrap_or(0);
+    let expiry_ledgers: u32 = env.storage().persistent().get(&expiry_key).unwrap_or(0);
     if expiry_ledgers == 0 {
         _emit_action_rejected(
             &env,

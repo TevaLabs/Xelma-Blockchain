@@ -3,7 +3,9 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{BetSide, DataKeyCore, DataKeyScoped, OraclePayload, Round, RoundArchiveStatus, RoundMode};
+use crate::types::{
+    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, Round, RoundArchiveStatus, RoundMode,
+};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -196,7 +198,8 @@ fn test_full_round_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     // Round should be cleared
     assert_eq!(client.get_active_round(), None);
@@ -283,7 +286,8 @@ fn test_multiple_rounds_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     client.claim_winnings(&alice);
 
     let stats = client.get_user_stats(&alice);
@@ -320,7 +324,8 @@ fn test_multiple_rounds_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let stats = client.get_user_stats(&alice);
     assert_eq!(stats.total_wins, 2);
@@ -450,7 +455,8 @@ fn test_resolve_round_fails_without_oracle_auth() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert!(result.is_err());
 }
 
@@ -537,7 +543,8 @@ fn test_round_created_event_includes_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     client.create_round(&1_0000000, &Some(1));
 
@@ -762,6 +769,12 @@ fn test_cancelled_round_allows_new_round() {
     client.create_round(&1_0000000, &None);
     client.cancel_round(&0u32);
 
+    // A ledger sequence backs at most one round (oracle payloads bind to
+    // `Round.start_ledger`), so advance before creating the replacement.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
     // A new round can be started after cancellation
     client.create_round(&1_2000000, &None);
     let new_round = client.get_active_round().unwrap();
@@ -851,7 +864,8 @@ fn test_cross_round_mode_alternation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_active_round(), None);
 
@@ -906,7 +920,8 @@ fn test_cross_round_mode_alternation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_active_round(), None);
 
@@ -915,11 +930,17 @@ fn test_cross_round_mode_alternation() {
         assert!(!env
             .storage()
             .persistent()
-            .has(&DataKeyScoped::PrecisionPosition(round2.round_id, alice.clone())));
+            .has(&DataKeyScoped::PrecisionPosition(
+                round2.round_id,
+                alice.clone()
+            )));
         assert!(!env
             .storage()
             .persistent()
-            .has(&DataKeyScoped::PrecisionPosition(round2.round_id, bob.clone())));
+            .has(&DataKeyScoped::PrecisionPosition(
+                round2.round_id,
+                bob.clone()
+            )));
     });
 
     // Verify archived summary for round 2
@@ -945,7 +966,10 @@ fn test_cross_round_mode_alternation() {
         assert!(!env
             .storage()
             .persistent()
-            .has(&DataKeyScoped::PrecisionPosition(round2.round_id, bob.clone())));
+            .has(&DataKeyScoped::PrecisionPosition(
+                round2.round_id,
+                bob.clone()
+            )));
     });
 
     // Resolve — DOWN wins (price 2.5 < 3.0)
@@ -960,7 +984,8 @@ fn test_cross_round_mode_alternation() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_active_round(), None);
 
@@ -1125,7 +1150,8 @@ fn test_create_next_from_template_after_settle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     assert_eq!(client.get_active_round(), None);
 
     let next_round_id = client.create_next_from_template();
@@ -1185,6 +1211,12 @@ fn test_create_next_from_template_after_cancel() {
     let round1 = client.get_active_round().unwrap();
     client.cancel_round(&1u32);
     assert_eq!(client.get_active_round(), None);
+
+    // A ledger sequence backs at most one round (oracle payloads bind to
+    // `Round.start_ledger`), so advance before creating the replacement.
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
 
     let next_round_id = client.create_next_from_template();
     assert_eq!(next_round_id, round1.round_id + 1);

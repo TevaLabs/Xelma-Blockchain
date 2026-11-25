@@ -6,6 +6,7 @@ use crate::settlement_math::{
     split_pot_stake_weighted, PrecisionEntry, PrecisionPayoutPolicy, PrecisionScoringMode,
     PrecisionScoringPolicy,
 };
+use alloc::vec;
 
 #[test]
 fn test_absolute_vs_relative_scoring_modes() {

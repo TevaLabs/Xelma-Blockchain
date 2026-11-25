@@ -63,7 +63,7 @@ Read-only functions (`get_*`, `is_*`, `balance`) are excluded.
 | 28 | `set_max_user_exposure` | admin | (delegates to `schedule_max_user_exposure`) | (same as above) | None | PASS | Thin alias |
 | 29 | `set_max_pending_winnings` | admin | (delegates to `schedule_max_pending_winnings`) | (same as above) | None | PASS | Thin alias |
 | 30 | `apply_scheduled_changes` | any | Schema OK, not paused, pending change exists, activation_ledger reached | Apply config payload (write actual config key), remove PendingConfigChange | Emit `(config, applied)` | PASS | |
-| 31 | `cancel_config_change` | admin | Schema OK, not paused, pending change exists, activation ledger not yet reached | Remove PendingConfigChange | Emit `(config, cancelled)` | PASS (fixed) | **CEI fix applied**: storage removal now occurs before event emission. See SR-2026-06-002. |
+| 31 | `cancel_config_change` | admin | Schema OK, not paused, pending change exists, activation ledger not yet reached | Remove PendingConfigChange | Emit `(config, cancel)` | PASS (fixed) | **CEI fix applied**: storage removal now occurs before event emission. See SR-2026-06-002. |
 | 32 | `mint_initial` | none | Checks if user already minted (balance > 0) | Write balance | None | PASS | |
 
 **Total mutating entrypoints audited: 32 (including aliases)**
@@ -153,7 +153,7 @@ cross-contract interaction paths.
 ```rust
 let cancelled_at = env.ledger().sequence();
 // INTERACTION: event emitted while key still exists in storage
-env.events().publish((symbol_short!("config"), symbol_short!("cancelled")), (kind, cancelled_at));
+env.events().publish((symbol_short!("config"), symbol_short!("cancel")), (kind, cancelled_at));
 // EFFECT: key removed (too late)
 env.storage().persistent().remove(&key);
 ```
@@ -164,7 +164,7 @@ let cancelled_at = env.ledger().sequence();
 // EFFECT: remove key first — committed state change
 env.storage().persistent().remove(&key);
 // INTERACTION: event emitted only after state is fully settled
-env.events().publish((symbol_short!("config"), symbol_short!("cancelled")), (kind, cancelled_at));
+env.events().publish((symbol_short!("config"), symbol_short!("cancel")), (kind, cancelled_at));
 ```
 
 **Risk level:** Low. The event emission cannot reenter the contract in Soroban's model, but the prior ordering meant the emitted event did not accurately represent a completed state transition (the key was still present in storage at the moment the event fired). The fix ensures state is finalized before any observable side-effect.
@@ -178,7 +178,7 @@ env.events().publish((symbol_short!("config"), symbol_short!("cancelled")), (kin
 | Test | Entrypoint | What it verifies |
 |---|---|---|
 | `test_claim_winnings_cei_pending_cleared_after_claim` | `claim_winnings` | After a successful claim, the `PendingWinnings` slot is absent, balance reflects the credited amount, AND the structured event contains `(user, amount, balance_before, balance_after)` |
-| `test_cancel_config_change_cei_key_removed_before_event` | `cancel_config_change` | After cancellation, the `PendingConfigChange` key is absent, and a second cancellation attempt fails with `CommitmentNotFound` |
+| `test_cancel_config_change_cei_key_removed_before_event` | `cancel_config_change` | After cancellation, the `PendingConfigChange` key is absent, the structured `(config, cancel)` event `(kind, cancelled_at)` is emitted, and a second cancellation attempt fails with `CommitmentNotFound` |
 | `test_cancel_config_change_rejected_after_activation` | `cancel_config_change` | Cancellation is rejected once the activation ledger is reached |
 | `test_claim_winnings_respects_runtime_mode` | `claim_winnings` | Claim succeeds in Normal and ClaimsOnly modes; rejected with `ContractPaused` in FullyPaused mode |
 

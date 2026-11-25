@@ -14,7 +14,7 @@ use crate::errors::ContractError;
 use crate::types::{BetSide, ConfigChangeKind};
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Ledger as _},
+    testutils::{Address as _, Events, Ledger as _},
     Address, Env, TryIntoVal,
 };
 
@@ -81,7 +81,8 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
     client.resolve_round(&payload);
 
     // Alice should have pending winnings.
@@ -120,10 +121,8 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
         .find(|e| {
             let (_contract, topics, _data) = e;
             topics.len() == 2
-                && topics.get(0).unwrap().try_into_val(&env)
-                    == Ok(symbol_short!("claim"))
-                && topics.get(1).unwrap().try_into_val(&env)
-                    == Ok(symbol_short!("winnings"))
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("claim"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("winnings"))
         })
         .expect("claim_winnings event must be present");
 
@@ -158,7 +157,7 @@ fn test_claim_winnings_cei_pending_cleared_after_claim() {
 /// after the event Interaction.
 #[test]
 fn test_cancel_config_change_cei_key_removed_before_event() {
-    let (_env, _admin, _oracle, client) = setup();
+    let (env, _admin, _oracle, client) = setup();
 
     // Schedule a windows change (creates PendingConfigChange(Windows)).
     client.schedule_windows(&10, &20);
@@ -171,6 +170,7 @@ fn test_cancel_config_change_cei_key_removed_before_event() {
 
     // Cancel before the timelock expires.
     // activation_ledger = current + CONFIG_TIMELOCK_LEDGERS; stay before that.
+    let expected_cancelled_at = env.ledger().sequence();
     client.cancel_config_change(&ConfigChangeKind::Windows);
 
     // Effect: the pending key must be gone.
@@ -179,6 +179,25 @@ fn test_cancel_config_change_cei_key_removed_before_event() {
         pending_after.is_none(),
         "PendingConfigChange key must be absent after cancellation (CEI: Effect before Interaction)"
     );
+
+    // Interaction: structured `(config, cancel)` event emitted with (kind, cancelled_at).
+    let events = env.events().all();
+    let cancel_event = events
+        .iter()
+        .rev()
+        .find(|e| {
+            let (_contract, topics, _data) = e;
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("config"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("cancel"))
+        })
+        .expect("config cancel event must be present");
+    let (_contract, _topics, data) = cancel_event;
+    let parsed: Result<(ConfigChangeKind, u32), _> = data.try_into_val(&env);
+    let (ev_kind, ev_cancelled_at) =
+        parsed.expect("cancel event data must parse as (ConfigChangeKind, u32)");
+    assert_eq!(ev_kind, ConfigChangeKind::Windows);
+    assert_eq!(ev_cancelled_at, expected_cancelled_at);
 
     // Idempotency / Effect finality: a second cancellation must fail.
     let result = client.try_cancel_config_change(&ConfigChangeKind::Windows);
@@ -251,6 +270,7 @@ fn test_claim_winnings_respects_runtime_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+        attestation: None,
     });
 
     let pending = client.get_pending_winnings(&alice);
@@ -284,18 +304,19 @@ fn test_claim_winnings_respects_runtime_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+        attestation: None,
     });
 
     let pending2 = client.get_pending_winnings(&alice);
-    assert!(pending2 > 0, "alice should have pending winnings after round 2");
+    assert!(
+        pending2 > 0,
+        "alice should have pending winnings after round 2"
+    );
 
     client.set_runtime_mode(&1u32); // switch to ClaimsOnly
     let bal_before2 = client.balance(&alice);
     let claimed2 = client.claim_winnings(&alice);
-    assert_eq!(
-        claimed2, pending2,
-        "claim must succeed in ClaimsOnly mode"
-    );
+    assert_eq!(claimed2, pending2, "claim must succeed in ClaimsOnly mode");
     assert_eq!(client.balance(&alice), bal_before2 + pending2);
     assert_eq!(client.get_pending_winnings(&alice), 0);
 
@@ -321,10 +342,14 @@ fn test_claim_winnings_respects_runtime_mode() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
+        attestation: None,
     });
 
     let pending3 = client.get_pending_winnings(&alice);
-    assert!(pending3 > 0, "alice should have pending winnings after round 3");
+    assert!(
+        pending3 > 0,
+        "alice should have pending winnings after round 3"
+    );
     let bal_before3 = client.balance(&alice);
 
     client.set_runtime_mode(&2u32); // switch to FullyPaused

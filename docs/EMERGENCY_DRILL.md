@@ -84,12 +84,50 @@ The protocol's incident behavior is validated deterministically in `contracts/sr
    - Escalation to `FullyPaused` mode locking all contract interactions.
    - Successful recovery via `unpause_contract()`, restoring minting, market creation, and trading.
 
+4. **`test_chaos_recovery_migrate_active_round_pause_resume`** (Issue #417):
+   Chaos recovery drill walking `create round → pause → migration dry-run → claims-only → resolve → claim`:
+   - Migration dry-run with an active round is refused (`MigrationActiveRound`) with no storage or fund movement.
+   - `pause_contract()` locks trading/claiming, and a migration dry-run while paused is refused (`ContractPaused`).
+   - Transition to `ClaimsOnly` blocks new bets while still allowing the in-flight round to be resolved and claimed.
+   - **No-funds-stuck invariant**: the sum of all pending winnings equals the total staked, and after claiming, every balance reconciles exactly to the initial mints.
+
+5. **`test_chaos_recovery_migrate_active_round_pause_cancel`** (Issue #417):
+   Same chaos sequence ending in the **cancel** path instead of resolution:
+   - After `pause → claims-only`, `cancel_round` refunds every stake in full during `ClaimsOnly` mode.
+   - **No-funds-stuck invariant**: refunds equal the total staked and balances reconcile exactly after claims.
+   - Recovery to `Normal` restores round creation and trading.
+
+6. **`drill_chaos_migration::*`** (Issue #565, `contracts/src/tests/drill_chaos_migration.rs`):
+   Table-driven chaos drill that starts from a contract with a **pending
+   migration** (schema v2) and a live round, then runs every combination of:
+
+   | Entry sequence (while the round is live)                              | Exit                                                        |
+   |-----------------------------------------------------------------------|-------------------------------------------------------------|
+   | `pause → dry-run → claims-only` (canonical)                           | resolve in `ClaimsOnly`                                     |
+   | `dry-run → pause → dry-run → claims-only`                             | resume to `Normal`, then resolve                            |
+   | `claims-only → dry-run → pause → dry-run → claims-only`               | cancel in `ClaimsOnly` (generic reason)                     |
+   | `pause → pause → claims-only → pause → dry-run`                       | cancel in `ClaimsOnly` for oracle outage (insurance payout) |
+   |                                                                       | resume to `Normal`, then cancel                             |
+
+   After **every** step it asserts value conservation across balances, pending
+   winnings, the active round pot, the fee treasury and the insurance fund.
+   Refused dry-runs must leave every amount, the schema and the mode
+   untouched. After the exit, the drill proves **no funds are stuck**: every
+   holder claims to zero pending, the deferred dry-run passes without mutating
+   state, the real `migrate_schema_v2_to_v3` completes, and a fresh round can be
+   created and traded.
+
+   `drill_cancel_with_insurance_eligible_reason_does_not_trap` is a regression
+   guard: insurance storage keys were built in a foreign `Env`, so
+   `cancel_round(1..=3)` trapped and an active round could not be cancelled.
+
 ### Executing the Emergency Drill
 
-Run the drill suite using cargo test:
+Run the drill suite using cargo test (the filter also matches
+`tests::drill_chaos_migration`, so CI's "emergency drill" step runs both):
 
 ```bash
-cargo test --lib tests::drill
+cargo test --package xelma-contract --lib tests::drill -- --nocapture
 ```
 
 To run all tests in the workspace:

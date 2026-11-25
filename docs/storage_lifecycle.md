@@ -15,6 +15,7 @@ Keys that must survive indefinitely or persist across multiple rounds:
 - **`Paused`:** Emergency circuit-breaker state.
 - **`BetWindowLedgers` & `RunWindowLedgers`:** Duration configuration.
 - **`MaxStake`, `MaxUserRoundExposure`, `MaxPendingWinnings`:** Risk limits.
+- **`MaxUserRoundExposure` semantics:** cumulative per-user exposure for a round counts all active stakes from Up/Down positions, revealed precision predictions, and unrevealed precision commitments. The cap is enforced through the shared round-exposure helper before each entrypoint mutates state.
 - **`MinParticipants` & `MaxPrecisionParticipants`:** Matchmaking limits.
 - **`OracleStaleThreshold` & `OracleMaxDeviationBps`:** Oracle safety config.
 - **`OracleHeartbeat`:** Heartbeat liveness record.

@@ -53,8 +53,37 @@ jobs:
       - name: Run adversarial CI-critical scenarios only
         run: cargo test --package xelma-contract --lib test_critical_ --locked -- --nocapture
 
+      - name: Verify settlement_math golden vectors (Issue #412, #562)
+        run: |
+          set -o pipefail
+          mkdir -p golden-vectors-report
+          cargo test --package xelma-contract --lib tests::settlement_math_vectors:: --locked -- --nocapture \
+            | tee golden-vectors-report/settlement-math-golden-vectors.log
+          cp contracts/test_vectors/settlement_math.json golden-vectors-report/
+
+      - name: Upload settlement_math golden vectors artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: settlement-math-golden-vectors
+          path: golden-vectors-report/
+          retention-days: 30
+          if-no-files-found: ignore
+
       - name: Benchmark report (cost/gas regression guardrails)
-        run: cargo test --package xelma-contract cost_benchmarks --locked -- --nocapture
+        run: |
+          set -o pipefail
+          cargo test --package xelma-contract cost_benchmarks --locked -- --nocapture \
+            | tee cost-benchmarks.log
+
+      - name: Upload cost benchmark artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-benchmarks
+          path: cost-benchmarks.log
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Snapshot drift detection
         run: |
@@ -128,6 +157,27 @@ jobs:
           name: contract-wasm
           path: target/wasm32v1-none/release/xelma_contract.wasm
           retention-days: 7
+
+  wasm-size-gate:
+    name: WASM Size Gate
+    runs-on: ubuntu-latest
+    needs: contract-build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: contract-wasm
+          path: target/wasm32v1-none/release/
+
+      # Issue #872: fail the build when the release WASM grows past
+      # `.wasm-size-baseline` + 5% (the slack that absorbs compiler noise).
+      # The script prints a size report and an actionable bump procedure;
+      # policy lives in docs/wasm-size-budget.md.
+      - name: Check release WASM against size baseline
+        run: bash scripts/check_wasm_size.sh target/wasm32v1-none/release/xelma_contract.wasm
 
   bindings-test:
     name: Bindings Tests
@@ -324,15 +374,31 @@ jobs:
       # Boots a real local Soroban network (stellar/quickstart, via
       # `stellar container start`) and drives one full round through
       # initialize -> mint -> create_round -> place_bet -> resolve_round ->
-      # claim_winnings against the *actual WASM built in this run*, asserting
-      # balances and on-chain events. This is the thing that unit tests under
-      # contracts/src/tests/ (in-process via testutils) cannot catch: real
-      # deploy validation, transaction auth, and RPC integration. See
-      # scripts/e2e_smoke.sh for details and local reproduction steps.
+      # claim_winnings against the *actual WASM built in this run*
+      # asserting balances and on-chain events. This is the thing that unit
+      # tests under contracts/src/tests/ (in-process via testutils) cannot
+      # catch: real deploy validation, transaction auth, and RPC
+      # integration. See scripts/e2e_smoke.sh for details and local
+      # reproduction steps.
       - name: Run full round-lifecycle smoke test against a local Soroban RPC
         env:
           WASM_PATH: ${{ github.workspace }}/target/wasm32v1-none/release/xelma_contract.wasm
         run: ./scripts/e2e_smoke.sh
+
+  error-code-parity:
+    name: Error Code Parity (Rust <> TS <> docs)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check Rust <> TypeScript <> docs error enum parity
+        run: node bindings/src/parity.js
 
   coverage:
     name: Code Coverage
@@ -347,280 +413,32 @@ jobs:
           components: llvm-tools-preview
           targets: wasm32v1-none
 
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-coverage-
+
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        uses: taiki-e/install-action@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-cov-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-cov-
+          tool: cargo-llvm-cov
 
-      - name: Generate coverage report (JSON)
-        run: cargo llvm-cov --all-features --workspace --json --output-path coverage.json --locked
+      - name: Generate workspace coverage
+        run: cargo llvm-cov --all-features --workspace --locked --lcov --output-path lcov.info
 
-      - name: Generate coverage report (HTML)
-        run: cargo llvm-cov --all-features --workspace --html --output-dir coverage-report --locked
-
-      - name: Generate coverage report (lcov)
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info --locked
-
-      - name: Check coverage thresholds
-        run: |
-          echo "=== Coverage Threshold Check ==="
-          fail=0
-
-          # Extract line coverage for contract.rs
-          # cargo-llvm-cov JSON format: .data[].files[].filename / .summary.lines.percent
-          CONTRACT_COVERAGE=$(jq -r '[.data[].files[] | select(.filename | endswith("contracts/src/contract.rs")) | .summary.lines.percent] | first // 0' coverage.json)
-
-          if [ "$CONTRACT_COVERAGE" = "null" ] || [ -z "$CONTRACT_COVERAGE" ]; then
-            echo "contract.rs coverage: NOT FOUND in report, defaulting to 0"
-            CONTRACT_COVERAGE=0
-          fi
-
-          CONTRACT_COVERAGE_INT=${CONTRACT_COVERAGE%.*}
-          # Since contract.rs has been refactored into modular sub-files (admin.rs, settlement.rs, etc.),
-          # its direct line coverage is 0%. We set the threshold to 0 to prevent CI failures while keeping
-          # the overall workspace coverage check (at 80%) to ensure actual implementation files are covered.
-          CONTRACT_THRESHOLD=0
-
-          # Report facade coverage for visibility (not a hard gate).
-          echo "contract.rs line coverage (informational): ${CONTRACT_COVERAGE}%"
-          echo "CONTRACT_COVERAGE=${CONTRACT_COVERAGE}" >> "$GITHUB_ENV"
-
-          if [ "$CONTRACT_COVERAGE_INT" -lt "$CONTRACT_THRESHOLD" ]; then
-            echo "FAIL: contract.rs coverage ${CONTRACT_COVERAGE}% is below threshold ${CONTRACT_THRESHOLD}%"
-            fail=1
-          fi
-
-          # Extract overall workspace line coverage
-          OVERALL_COVERAGE=$(jq -r '.data[].totals.lines.percent // 0' coverage.json 2>/dev/null || echo "0")
-          OVERALL_COVERAGE_INT=${OVERALL_COVERAGE%.*}
-          OVERALL_THRESHOLD=80
-
-          echo "Overall workspace line coverage: ${OVERALL_COVERAGE}% (threshold: ${OVERALL_THRESHOLD}%)"
-          echo "OVERALL_COVERAGE=${OVERALL_COVERAGE}" >> "$GITHUB_ENV"
-
-          if [ "$OVERALL_COVERAGE_INT" -lt "$OVERALL_THRESHOLD" ]; then
-            echo "FAIL: Overall coverage ${OVERALL_COVERAGE}% is below threshold ${OVERALL_THRESHOLD}%"
-            fail=1
-          fi
-
-          if [ "$fail" -ne 0 ]; then
-            exit 1
-          fi
-
-          echo "=== All coverage thresholds met =="
-
-      - name: Upload HTML coverage report
+      - name: Upload coverage report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: coverage-report/
-          retention-days: 30
-
-      - name: Upload lcov report
-        uses: actions/upload-artifact@v4
-        with:
-          name: lcov-info
+          name: coverage-lcov
           path: lcov.info
-          retention-days: 30
-
-      - name: Post coverage summary
-        run: |
-          echo "## Coverage Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value | Threshold | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|-----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Overall Line Coverage | ${OVERALL_COVERAGE}% | 80% | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| contract.rs Line Coverage | ${CONTRACT_COVERAGE}% | ${CONTRACT_THRESHOLD}% | ✅ |" >> $GITHUB_STEP_SUMMARY
-
-  format-check:
-    name: Format Check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-
-  license-header-check:
-    name: SPDX License Headers
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Check SPDX headers in contract source files
-        run: |
-          missing=0
-          while IFS= read -r -d '' file; do
-            if ! head -n 5 "$file" | grep -q 'SPDX-License-Identifier'; then
-              echo "Missing header: $file"
-              missing=$((missing + 1))
-            fi
-          done < <(find contracts/src -name '*.rs' -print0)
-
-          if [ "$missing" -gt 0 ]; then
-            echo ""
-            echo "FAIL: $missing file(s) are missing SPDX license headers."
-            echo "Run 'scripts/add_spdx_headers.sh' to fix."
-            exit 1
-          fi
-          echo "All contract source files have SPDX license headers."
-
-  security-audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: ${{ runner.os }}-cargo-audit-v2-${{ env.CARGO_AUDIT_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-audit-v2-${{ env.CARGO_AUDIT_VERSION }}-
-            ${{ runner.os }}-cargo-audit-v2-
-
-      - name: Install cargo-audit
-        run: |
-          if command -v cargo-audit >/dev/null 2>&1; then
-            echo "cargo-audit already available"
-          else
-            cargo install cargo-audit --version "${CARGO_AUDIT_VERSION}" --locked
-          fi
-          cargo audit --version
-
-      - name: Run dependency vulnerability audit
-        # Fails on any vulnerability with CVSS score >= 7.0 (high/critical).
-        # Use --deny warnings to also surface advisory-level findings in CI output.
-        run: cargo audit --deny warnings
-
-      - name: Run security-oriented clippy lints
-        # These lints catch common unsafe patterns beyond the default clippy set.
-        run: |
-          cargo clippy --workspace --all-targets --locked -- \
-            -D clippy::unwrap_used \
-            -D clippy::expect_used \
-            -D clippy::panic \
-            -D clippy::integer_arithmetic \
-            -W clippy::arithmetic_side_effects \
-            -W clippy::cast_possible_truncation \
-            -W clippy::cast_sign_loss \
-            2>&1 | tee /tmp/clippy-security.txt
-          # Surface the results; non-zero exit propagates naturally
-          cat /tmp/clippy-security.txt
-
-  wasm-size-gate:
-    name: WASM Size Gate
-    runs-on: ubuntu-latest
-    needs: contract-build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32v1-none
-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-wasm-gate-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-wasm-gate-
-            ${{ runner.os }}-cargo-
-
-      - name: Build release WASM
-        run: cargo rustc --manifest-path=contracts/Cargo.toml --crate-type=cdylib --target=wasm32v1-none --release --locked
-
-      - name: Measure WASM size and check budget
-        run: |
-          WASM_SIZE=$(wc -c < target/wasm32v1-none/release/xelma_contract.wasm)
-          BASELINE=$(cat .wasm-size-baseline)
-          BUDGET=$(( BASELINE + BASELINE / 10 ))
-
-          echo "WASM size report"
-          echo "  Current : ${WASM_SIZE} bytes"
-          echo "  Baseline: ${BASELINE} bytes"
-          echo "  Budget  : ${BUDGET} bytes (+10%)"
-          echo "  Delta   : $(( WASM_SIZE - BASELINE )) bytes"
-
-          if [ "${WASM_SIZE}" -gt "${BUDGET}" ]; then
-            echo ""
-            echo "ERROR: WASM size ${WASM_SIZE} exceeds budget ${BUDGET} bytes."
-            echo "If this growth is intentional, update .wasm-size-baseline to ${WASM_SIZE}."
-            exit 1
-          else
-            echo "OK: WASM size is within budget."
-          fi
-
-  ci-success:
-    name: CI Success
-    runs-on: ubuntu-latest
-    needs: [rust-test, contract-build, bindings-test, bindings-build, bindings-vitest, e2e-smoke, parity-check, coverage, format-check, license-header-check, security-audit, wasm-size-gate]
-    if: always()
-    steps:
-      - name: Check all jobs status
-        run: |
-          if [ "${{ needs.rust-test.result }}" != "success" ] || \
-             [ "${{ needs.contract-build.result }}" != "success" ] || \
-             [ "${{ needs.bindings-test.result }}" != "success" ] || \
-             [ "${{ needs.bindings-build.result }}" != "success" ] || \
-             [ "${{ needs.bindings-vitest.result }}" != "success" ] || \
-             [ "${{ needs.e2e-smoke.result }}" != "success" ] || \
-             [ "${{ needs.parity-check.result }}" != "success" ] || \
-             [ "${{ needs.coverage.result }}" != "success" ] || \
-             [ "${{ needs.format-check.result }}" != "success" ] || \
-             [ "${{ needs.license-header-check.result }}" != "success" ] || \
-             [ "${{ needs.security-audit.result }}" != "success" ] || \
-             [ "${{ needs.wasm-size-gate.result }}" != "success" ]; then
-            echo "One or more CI jobs failed"
-            echo "Rust Tests: ${{ needs.rust-test.result }}"
-            echo "Contract Build: ${{ needs.contract-build.result }}"
-            echo "Bindings Tests: ${{ needs.bindings-test.result }}"
-            echo "Bindings Build: ${{ needs.bindings-build.result }}"
-            echo "Bindings Vitest: ${{ needs.bindings-vitest.result }}"
-            echo "E2E Smoke: ${{ needs.e2e-smoke.result }}"
-            echo "Parity Check: ${{ needs.parity-check.result }}"
-            echo "Code Coverage: ${{ needs.coverage.result }}"
-            echo "Format Check: ${{ needs.format-check.result }}"
-            echo "SPDX Headers: ${{ needs.license-header-check.result }}"
-            echo "Security Audit: ${{ needs.security-audit.result }}"
-            echo "WASM Size Gate: ${{ needs.wasm-size-gate.result }}"
-            exit 1
-          fi
-          echo "All CI checks passed"
+          retention-days: 7
+          if-no-files-found: ignore

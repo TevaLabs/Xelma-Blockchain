@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
-use alloc::vec::Vec as StdVec;
 use crate::errors::ContractError;
 use crate::types::{
-    ConfigChangeKind, ConfigChangePayload, DataKey, PendingWinningsUpdatedAtKey, Round, RoundPhase,
+    ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, PendingWinningsUpdatedAtKey,
+    Round, RoundPhase,
 };
+use alloc::vec::Vec as StdVec;
 use soroban_sdk::{symbol_short, Address, Env, IntoVal, Symbol, Val, Vec};
 
 pub const DEFAULT_PENDING_WINNINGS_EXPIRY: u32 = 0; // 0 = disabled
-pub const MIN_PENDING_WINNINGS_EXPIRY: u32 = 128;   // ~10 min at 5s ledgers
+pub const MIN_PENDING_WINNINGS_EXPIRY: u32 = 128; // ~10 min at 5s ledgers
 pub const MAX_PENDING_WINNINGS_EXPIRY: u32 = 1_000_000; // ~58 days
-use crate::types::{ConfigChangeKind, ConfigChangePayload, DataKeyCore, DataKeyScoped, Round, RoundPhase};
-use soroban_sdk::{symbol_short, Address, Env, IntoVal, Symbol, Val, Vec};
+pub const DEFAULT_GOV_PROPOSAL_TTL_LEDGERS: u32 = 100;
 
 // ─── DataKey overflow workaround (DataKey has 51 variants, XDR limit is 50) ──
 // Moved out of DataKey to get under the limit.
@@ -35,6 +35,10 @@ pub const MAX_MIN_PARTICIPANTS: u32 = 10_000;
 pub const DEFAULT_MAX_PRECISION_PARTICIPANTS: u32 = 1_000;
 pub const MAX_PRECISION_PARTICIPANTS_LIMIT: u32 = 10_000;
 pub const MAX_PAGE_SIZE: u32 = 100;
+/// Hard cap on the number of addresses accepted by `claim_many` in a single
+/// call, bounding per-invocation compute/storage-op cost for operator batch
+/// claims (Issue #277).
+pub const MAX_CLAIM_BATCH_SIZE: u32 = 50;
 /// Maximum entries retained in each bounded leaderboard index (lifetime and
 /// per-season). Keeps insertion-sort maintenance cost bounded on every
 /// win/loss update, at the cost of not tracking ranks below the top N.
@@ -140,7 +144,7 @@ pub fn sort_addresses(addresses: Vec<Address>) -> Vec<Address> {
 
 /// Accumulates `amount` into a user's pending winnings, enforcing the cap if set (Issue #120).
 pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(), ContractError> {
-    let key = DataKey::PendingWinnings(user.clone());
+    let user_key = user.clone();
     let key = DataKeyScoped::PendingWinnings(user);
     let existing: i128 = env.storage().persistent().get(&key).unwrap_or(0);
     let new_pending = payout_add(existing, amount)?;
@@ -160,9 +164,11 @@ pub fn _accumulate_pending(env: &Env, user: Address, amount: i128) -> Result<(),
     _extend_persistent_ttl(env, &key);
 
     // Track the ledger when this entry was last written for expiry checks.
-    let updated_key = PendingWinningsUpdatedAtKey(user.clone());
+    let updated_key = PendingWinningsUpdatedAtKey(user_key);
     let current_ledger = env.ledger().sequence();
-    env.storage().persistent().set(&updated_key, &current_ledger);
+    env.storage()
+        .persistent()
+        .set(&updated_key, &current_ledger);
     _extend_persistent_ttl(env, &updated_key);
 
     Ok(())
@@ -202,7 +208,11 @@ pub fn _derive_round_phase(ledger_sequence: u32, round: &Round) -> RoundPhase {
 /// Rejects `amount` if it falls below the configured minimum bet, when set (Issue #269).
 /// `None` (unset) preserves pre-#269 behaviour: any amount `> 0` is accepted.
 pub fn _enforce_min_bet(env: &Env, amount: i128) -> Result<(), ContractError> {
-    if let Some(min_bet) = env.storage().persistent().get::<_, i128>(&DataKeyCore::MinBet) {
+    if let Some(min_bet) = env
+        .storage()
+        .persistent()
+        .get::<_, i128>(&DataKeyCore::MinBet)
+    {
         if amount < min_bet {
             return Err(ContractError::BelowMinBet);
         }

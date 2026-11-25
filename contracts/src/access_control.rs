@@ -10,7 +10,8 @@
 //!   changes nothing on its own.
 //! - **Denylist overrides**: a denylisted address is refused **regardless of
 //!   mode**. This is an emergency block / ban that works on open deployments
-//!   too, and always takes precedence over the allowlist.
+//!   too, and always takes precedence over the allowlist. An address carrying
+//!   both markers is blocked (#838).
 //! - **Allowlist mode**: when enabled via
 //!   [`set_access_control_enabled(true)`], only addresses that are explicitly
 //!   allowlisted are admitted. The admin signal (`DataKeyCore::AccessControlEnabled`)
@@ -55,10 +56,8 @@ pub fn set_access_control_enabled(env: Env, enabled: bool) -> Result<(), Contrac
     }
 
     #[allow(deprecated)]
-    env.events().publish(
-        (symbol_short!("access"), symbol_short!("mode")),
-        (enabled,),
-    );
+    env.events()
+        .publish((symbol_short!("access"), symbol_short!("mode")), (enabled,));
 
     Ok(())
 }
@@ -201,9 +200,17 @@ pub fn is_denylisted(env: Env, user: Address) -> bool {
 /// Denylist takes precedence over allowlist. An address that is neither marked
 /// resolves to `Open`, regardless of whether allowlist mode is enabled.
 pub fn get_access_state(env: Env, user: Address) -> AccessState {
-    if env.storage().persistent().has(&DataKeyScoped::Denylisted(user.clone())) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKeyScoped::Denylisted(user.clone()))
+    {
         AccessState::Denylisted
-    } else if env.storage().persistent().has(&DataKeyScoped::Allowlisted(user)) {
+    } else if env
+        .storage()
+        .persistent()
+        .has(&DataKeyScoped::Allowlisted(user))
+    {
         AccessState::Allowlisted
     } else {
         AccessState::Open
@@ -223,6 +230,9 @@ pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
 ///    must win even on open deployments.
 /// 2. If allowlist mode is enabled, an `user` that is not allowlisted is rejected.
 /// 3. Otherwise, the call proceeds (default open).
+///
+/// Both rejection paths return the stable, dedicated
+/// [`ContractError::AccessDenied`] error (code `79`).
 pub fn _enforce_access_control(env: &Env, user: &Address) -> Result<(), ContractError> {
     if env
         .storage()

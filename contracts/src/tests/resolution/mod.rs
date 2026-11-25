@@ -26,14 +26,13 @@ use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
 use crate::settlement_math::{
     classify_price_direction, compute_deviation_bps, compute_precision_fee,
-    compute_precision_payouts, compute_updown_fee, compute_updown_payouts,
-    find_precision_winners, is_one_sided_pool, split_pot_among_winners,
-    total_pot_updown, PrecisionEntry, PrecisionPayoutEntry, PriceDirection, UpDownPosition,
-    UpDownPayoutEntry,
+    compute_precision_payouts, compute_updown_fee, compute_updown_payouts, find_precision_winners,
+    is_one_sided_pool, split_pot_among_winners, total_pot_updown, PrecisionEntry,
+    PrecisionPayoutEntry, PriceDirection, UpDownPayoutEntry, UpDownPosition,
 };
 use crate::types::{
-    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, PrecisionPrediction, Round, RoundArchiveStatus, RoundMode,
-    UserOutcomeType, UserPosition,
+    BetSide, DataKeyCore, DataKeyScoped, OraclePayload, PrecisionPrediction, Round,
+    RoundArchiveStatus, RoundMode, UserOutcomeType, UserPosition,
 };
 use soroban_sdk::BytesN;
 use soroban_sdk::{
@@ -93,7 +92,8 @@ pub(super) fn resolve_active_round(
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
     round_id
 }
 

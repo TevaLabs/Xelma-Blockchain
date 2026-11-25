@@ -70,6 +70,17 @@ export class NoRoundTemplateError extends XelmaError {
   }
 }
 
+export class AccessDeniedError extends XelmaError {
+  constructor() {
+    super(
+      "Participant is blocked by the active access-control policy",
+      79,
+      "AccessDenied",
+    );
+    this.name = "AccessDeniedError";
+  }
+}
+
 // ─── Error Mapping ─────────────────────────────────────────────
 
 const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
@@ -80,6 +91,7 @@ const ERROR_CODE_TO_CLASS: Record<number, new () => XelmaError> = {
   28: StakeExceedsMaxError,
   29: ExposureCapExceededError,
   65: NoRoundTemplateError,
+  79: AccessDeniedError,
 };
 
 /**
@@ -260,4 +272,46 @@ export async function simulateBet(
       error: wrapContractError(err),
     };
   }
+}
+
+// ─── Access Policy Preflight (#841) ────────────────────────────
+
+/** Mirrors the contract's `AccessState` (`#[repr(u32)]`: Open=0, Allowlisted=1, Denylisted=2). */
+export type AccessStateName = "Open" | "Allowlisted" | "Denylisted";
+
+export interface AccessPolicy {
+  allowlistMode: boolean;
+  state: AccessStateName;
+  /** Whether `place_bet` / precision entrypoints would pass `_enforce_access_control`. */
+  canBet: boolean;
+}
+
+const ACCESS_STATES: readonly AccessStateName[] = ["Open", "Allowlisted", "Denylisted"];
+
+/**
+ * Decodes the `(bool, AccessState)` tuple returned by `get_access_policy`
+ * so wallets can preflight a bet without broadcasting.
+ *
+ * Mirrors the on-chain gate: denylisted is always blocked (it wins over the
+ * allowlist), and in allowlist mode only allowlisted addresses may bet.
+ *
+ * @example
+ * const tx = await client.get_access_policy({ user });
+ * const { canBet } = decodeAccessPolicy(tx.result as [boolean, number]);
+ */
+export function decodeAccessPolicy(
+  raw: readonly [boolean, number | AccessStateName | { tag: AccessStateName }],
+): AccessPolicy {
+  const [allowlistMode, rawState] = raw;
+  const state =
+    typeof rawState === "number"
+      ? ACCESS_STATES[rawState]
+      : typeof rawState === "string"
+        ? rawState
+        : rawState?.tag;
+  if (!state || !ACCESS_STATES.includes(state)) {
+    throw new XelmaError(`Unknown AccessState: ${JSON.stringify(rawState)}`);
+  }
+  const canBet = state !== "Denylisted" && (!allowlistMode || state === "Allowlisted");
+  return { allowlistMode, state, canBet };
 }

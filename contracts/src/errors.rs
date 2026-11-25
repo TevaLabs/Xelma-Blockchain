@@ -4,7 +4,7 @@
 use soroban_sdk::contracterror;
 
 /// Contract error types
-#[contracterror]
+#[contracterror(export = false)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum ContractError {
@@ -60,7 +60,7 @@ pub enum ContractError {
     OracleTimestampOutsideWindow = 66,
     /// Pending winnings entry exists but has not yet reached the configured
     /// expiry threshold — caller must wait before reclaiming.
-    PendingWinningsNotExpired = 66,
+    PendingWinningsNotExpired = 86,
     /// Epoch mint budget has been fully consumed
     EpochBudgetExceeded = 67,
     /// Oracle heartbeat is not live and strict mode blocks settlement (Issue #264)
@@ -89,4 +89,52 @@ pub enum ContractError {
     PendingWinningsNotFound = 77,
     /// Pending winnings expiry is not configured (value is 0).
     ExpiryNotConfigured = 78,
+    /// Participant is blocked by the active allowlist or denylist policy.
+    AccessDenied = 79,
+    /// Governance proposal does not exist.
+    ProposalNotFound = 80,
+    /// Governance proposal is past its execution deadline.
+    ProposalExpired = 81,
+    /// Governance proposal cannot transition from its current state.
+    GovInvalidState = 82,
+    /// Caller is not authorized by the configured governance policy.
+    GovUnauthorized = 83,
+    /// Requested action is not valid in the round's current lifecycle phase.
+    IllegalPhaseTransition = 84,
+    /// Oracle heartbeat failed the configured freshness or health policy.
+    OracleHeartbeatUnhealthy = 85,
+    /// claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE (Issue #277)
+    ClaimBatchTooLarge = 87,
+    /// claim_many batch contains the same address more than once (Issue #277)
+    DuplicateClaimAddress = 88,
+    /// Early cash-out feature is disabled or not configured
+    EarlyCashoutDisabled = 95,
+    /// User does not have an active position to cash out
+    PositionNotFound = 96,
+    /// Early cash-out attempted outside the valid running phase
+    InvalidPhaseForCashout = 97,
+    /// Early cash-out is only supported for UpDown rounds
+    WrongModeForCashout = 98,
+    /// A proposed insurance payout split does not sum to the covered balance.
+    InsuranceInvalidSplit = 99,
+    /// The insurance backstop fund has insufficient balance to cover the claim.
+    InsuranceInsufficientFund = 100,
+    /// The supplied token amount is invalid for the requested operation.
+    InvalidAmount = 101,
+    /// The close-buffer has frozen betting before the round's betting window ends.
+    BettingClosed = 102,
+    /// The dispute window for `void_round` has expired, or dispute windows
+    /// are not configured (`dispute_ledgers == 0`).
+    DisputeWindowExpired = 91,
+    /// `finalize_round` was called before the dispute window elapsed.
+    ClaimLocked = 92,
+    /// A round cannot be created because the current ledger sequence has
+    /// already backed another round's `start_ledger`.
+    ///
+    /// Oracle payloads bind to `Round.start_ledger`, so reusing a ledger
+    /// sequence would make a payload signed for the earlier round valid for
+    /// the later one. Retry once the ledger has advanced.
+    RoundStartLedgerReused = 93,
+    /// Pagination limit exceeds MAX_PAGE_SIZE (Issue #430, gas guard)
+    PageSizeExceeded = 94,
 }
