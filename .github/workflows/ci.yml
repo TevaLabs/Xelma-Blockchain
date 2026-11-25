@@ -10,6 +10,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CARGO_AUDIT_VERSION: "0.22.2"
+  WASM_TARGET: wasm32v1-none
 
 permissions:
   contents: read
@@ -26,7 +27,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-          targets: wasm32v1-none
+          targets: ${{ env.WASM_TARGET }}
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -112,7 +113,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32v1-none
+          targets: ${{ env.WASM_TARGET }}
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -141,21 +142,21 @@ jobs:
       # network's upload resource budget. Confirmed via scripts/e2e_smoke.sh
       # deploying to a real local Soroban RPC.
       - name: Build contract (release)
-        run: cargo rustc --manifest-path=contracts/Cargo.toml --crate-type=cdylib --target=wasm32v1-none --release --locked
+        run: cargo rustc --manifest-path=contracts/Cargo.toml --crate-type=cdylib --target=${{ env.WASM_TARGET }} --release --locked
 
       - name: Check WASM artifact exists
         run: |
-          if [ ! -f "target/wasm32v1-none/release/xelma_contract.wasm" ]; then
+          if [ ! -f "target/$WASM_TARGET/release/xelma_contract.wasm" ]; then
             echo "Error: WASM file not found"
             exit 1
           fi
-          ls -lh target/wasm32v1-none/release/xelma_contract.wasm
+          ls -lh target/$WASM_TARGET/release/xelma_contract.wasm
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
         with:
           name: contract-wasm
-          path: target/wasm32v1-none/release/xelma_contract.wasm
+          path: target/${{ env.WASM_TARGET }}/release/xelma_contract.wasm
           retention-days: 7
 
   wasm-size-gate:
@@ -170,14 +171,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: contract-wasm
-          path: target/wasm32v1-none/release/
+          path: target/${{ env.WASM_TARGET }}/release/
 
       # Issue #872: fail the build when the release WASM grows past
       # `.wasm-size-baseline` + 5% (the slack that absorbs compiler noise).
       # The script prints a size report and an actionable bump procedure;
       # policy lives in docs/wasm-size-budget.md.
       - name: Check release WASM against size baseline
-        run: bash scripts/check_wasm_size.sh target/wasm32v1-none/release/xelma_contract.wasm
+        run: bash scripts/check_wasm_size.sh target/$WASM_TARGET/release/xelma_contract.wasm
 
   bindings-test:
     name: Bindings Tests
@@ -202,7 +203,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: contract-wasm
-          path: target/wasm32v1-none/release/
+          path: target/${{ env.WASM_TARGET }}/release/
 
       - name: Run source-level parity and error tests
         working-directory: bindings
@@ -211,7 +212,7 @@ jobs:
       - name: Run vitest WASM integration suite
         working-directory: bindings
         env:
-          WASM_PATH: ${{ github.workspace }}/target/wasm32v1-none/release/xelma_contract.wasm
+          WASM_PATH: ${{ github.workspace }}/target/${{ env.WASM_TARGET }}/release/xelma_contract.wasm
         run: npm run test:wasm
 
   bindings-build:
@@ -269,7 +270,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: contract-wasm
-          path: target/wasm32v1-none/release/
+          path: target/${{ env.WASM_TARGET }}/release/
 
       - name: Download bindings artifact
         uses: actions/download-artifact@v4
@@ -280,7 +281,7 @@ jobs:
       - name: Verify WASM and bindings compatibility
         run: |
           echo "Checking WASM file..."
-          ls -lh target/wasm32v1-none/release/xelma_contract.wasm
+          ls -lh target/$WASM_TARGET/release/xelma_contract.wasm
 
           echo "Checking bindings..."
           ls -lh bindings/dist/
@@ -328,11 +329,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: contract-wasm
-          path: target/wasm32v1-none/release/
+          path: target/${{ env.WASM_TARGET }}/release/
 
       - name: Verify WASM artifact exists and is valid
         run: |
-          WASM=target/wasm32v1-none/release/xelma_contract.wasm
+          WASM=target/$WASM_TARGET/release/xelma_contract.wasm
           if [ ! -f "$WASM" ]; then
             echo "Error: WASM artifact not found at $WASM"
             exit 1
@@ -348,7 +349,7 @@ jobs:
       - name: Run bindings vitest suite against CI-built WASM
         working-directory: bindings
         env:
-          WASM_PATH: ${{ github.workspace }}/target/wasm32v1-none/release/xelma_contract.wasm
+          WASM_PATH: ${{ github.workspace }}/target/${{ env.WASM_TARGET }}/release/xelma_contract.wasm
         run: npm run test:vitest
 
   e2e-smoke:
@@ -369,7 +370,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: contract-wasm
-          path: target/wasm32v1-none/release/
+          path: target/${{ env.WASM_TARGET }}/release/
 
       # Boots a real local Soroban network (stellar/quickstart, via
       # `stellar container start`) and drives one full round through
@@ -382,7 +383,7 @@ jobs:
       # reproduction steps.
       - name: Run full round-lifecycle smoke test against a local Soroban RPC
         env:
-          WASM_PATH: ${{ github.workspace }}/target/wasm32v1-none/release/xelma_contract.wasm
+          WASM_PATH: ${{ github.workspace }}/target/${{ env.WASM_TARGET }}/release/xelma_contract.wasm
         run: ./scripts/e2e_smoke.sh
 
   error-code-parity:
@@ -411,7 +412,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-          targets: wasm32v1-none
+          targets: ${{ env.WASM_TARGET }}
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
