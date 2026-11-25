@@ -11,19 +11,58 @@ use soroban_sdk::{
     Address, BytesN, Env, IntoVal, Symbol, TryIntoVal,
 };
 
+
+/// Registers the contract, initializes it, records an active oracle heartbeat,
+/// and creates a round from `start_price` with auth mocking enabled.
+fn standard_setup(
+    env: &Env,
+    start_price: u128,
+) -> (
+    VirtualTokenContractClient<'static>,
+    Address,
+    Address,
+    Address,
+) {
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(env, &contract_id);
+    let admin = Address::generate(env);
+    let oracle = Address::generate(env);
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.create_round(&start_price, &None);
+    (client, contract_id, admin, oracle)
+}
+
+/// Builds a canonical oracle payload bound to `contract_id`, the current
+/// ledger's network, and no attestation.
+/// Builds a canonical oracle payload bound to `contract_id`, the current
+/// ledger's network, and no attestation.
+fn oracle_payload(
+    env: &Env,
+    contract_id: &Address,
+    price: u128,
+    timestamp: u64,
+    round_id: u32,
+    nonce: u64,
+    confidence: Option<u32>,
+) -> OraclePayload {
+    OraclePayload {
+        price,
+        timestamp,
+        round_id,
+        nonce,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence,
+        attestation: None,
+    }
+}
+
 #[test]
 fn test_resolve_round_stale_timestamp() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
 
     // Advance ledger time to 1000
     env.ledger().with_mut(|li| {
@@ -50,32 +89,14 @@ fn test_resolve_round_stale_timestamp() {
 #[test]
 fn test_resolve_round_invalid_round_id() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
     });
 
     // Submit payload with wrong round_id (e.g., 999 instead of 0)
-    let payload = OraclePayload {
-        price: 1_5000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 999,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    };
+    let payload = oracle_payload(&env, &contract_id, 1_5000000, env.ledger().timestamp(), 999, 1u64, None);
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
@@ -84,16 +105,7 @@ fn test_resolve_round_invalid_round_id() {
 #[test]
 fn test_resolve_round_valid_payload() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 12;
@@ -119,16 +131,7 @@ fn test_resolve_round_valid_payload() {
 #[test]
 fn test_resolve_round_future_timestamp() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
 
     // Current ledger time is 1000
     env.ledger().with_mut(|li| {
@@ -137,16 +140,7 @@ fn test_resolve_round_future_timestamp() {
     });
 
     // Submit payload with timestamp 1001 (future)
-    let payload = OraclePayload {
-        price: 1_5000000,
-        timestamp: 1001,
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    };
+    let payload = oracle_payload(&env, &contract_id, 1_5000000, 1001, 0, 1u64, None);
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::FutureOracleData)));
@@ -175,16 +169,7 @@ fn test_cancelled_round_cannot_be_resolved() {
         li.sequence_number = 12;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::NoActiveRound)));
 }
 
@@ -233,16 +218,7 @@ fn test_cancel_round_without_admin_auth_fails() {
 #[test]
 fn test_resolve_round_duplicate_nonce_rejected() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
@@ -258,16 +234,7 @@ fn test_resolve_round_duplicate_nonce_rejected() {
         );
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 42u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 900, round.start_ledger, 42u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleNonceReused)));
 }
 
@@ -275,16 +242,7 @@ fn test_resolve_round_duplicate_nonce_rejected() {
 #[test]
 fn test_resolve_round_unique_nonce_resolves() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
@@ -292,16 +250,7 @@ fn test_resolve_round_unique_nonce_resolves() {
         li.timestamp = 1000;
     });
 
-    client.resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 7u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 900, round.start_ledger, 7u64, None));
 
     // Round resolved and the nonce is recorded as consumed for that round.
     assert_eq!(client.get_active_round(), None);
@@ -580,16 +529,7 @@ fn test_heartbeat_active_fresh_allows_resolve() {
         li.timestamp = 100;
     });
 
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -611,16 +551,7 @@ fn test_heartbeat_degraded_fresh_allows_resolve() {
         li.timestamp = 100;
     });
 
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
 }
 
 /// Stale but within grace period allows settlement (non-strict mode).
@@ -652,16 +583,7 @@ fn test_heartbeat_stale_within_grace_allows_resolve() {
         li.timestamp = 500;
     });
 
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
 }
 
 /// Stale beyond grace period blocks settlement.
@@ -691,16 +613,7 @@ fn test_heartbeat_stale_beyond_grace_blocks_resolve() {
         li.timestamp = 800;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
@@ -730,16 +643,7 @@ fn test_heartbeat_stale_within_grace_strict_blocks_resolve() {
         li.timestamp = 200;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
@@ -766,16 +670,7 @@ fn test_heartbeat_degraded_fresh_strict_blocks_resolve() {
         li.timestamp = 200;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
@@ -801,16 +696,7 @@ fn test_heartbeat_offline_blocks_resolve() {
         li.timestamp = 200;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
@@ -832,16 +718,7 @@ fn test_heartbeat_none_blocks_resolve() {
         li.timestamp = 100;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleHeartbeatUnhealthy)));
 }
 
@@ -864,16 +741,7 @@ fn test_heartbeat_override_allows_resolve() {
         li.timestamp = 100;
     });
 
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -894,16 +762,7 @@ fn test_heartbeat_override_cleared_after_use() {
         li.sequence_number = 12;
         li.timestamp = 100;
     });
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
 
     // Verify override is consumed (one-shot)
     let armed = client.get_hb_override_armed();
@@ -948,16 +807,7 @@ fn test_heartbeat_override_emits_event() {
         li.timestamp = 100;
     });
 
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
 
     let events = env.events().all();
     let hb_override_event = events.iter().find(|e| {
@@ -1045,16 +895,7 @@ fn test_arm_heartbeat_override_emits_event() {
 #[test]
 fn test_oracle_deviation_rejected_when_over_threshold() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000u128, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     // Set max deviation to 5% (500 bp)
@@ -1066,32 +907,14 @@ fn test_oracle_deviation_rejected_when_over_threshold() {
     });
 
     // 50% jump: diff_bps = 5000 > 500
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000u128,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_5000000u128, 900, round.start_ledger, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleDeviationExceeded)));
 }
 
 #[test]
 fn test_oracle_deviation_allows_at_exact_threshold() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000u128, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     // 5% (500 bp)
@@ -1103,16 +926,7 @@ fn test_oracle_deviation_allows_at_exact_threshold() {
     });
 
     // Exactly 5%: 1.00 -> 1.05 => diff_bps = 500
-    client.resolve_round(&OraclePayload {
-        price: 1_0500000u128,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_0500000u128, 900, round.start_ledger, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -1139,32 +953,14 @@ fn test_oracle_deviation_rounding_floor_is_deterministic() {
     });
 
     // At threshold should pass
-    client.resolve_round(&OraclePayload {
-        price: 4u128,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 4u128, 900, round.start_ledger, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
 #[test]
 fn test_oracle_deviation_override_allows_over_threshold_and_emits_event() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000u128, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     apply_oracle_max_deviation_bps(&env, &client, Some(500u32)); // 5%
@@ -1243,16 +1039,7 @@ fn test_oracle_liveness_custom_threshold() {
 #[test]
 fn test_resolve_round_nonce_boundary_values() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
@@ -1272,28 +1059,10 @@ fn test_resolve_round_nonce_boundary_values() {
         );
     });
 
-    let zero = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 0u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let zero = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 900, round.start_ledger, 0u64, None));
     assert_eq!(zero, Err(Ok(ContractError::OracleNonceReused)));
 
-    let max = client.try_resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: u64::MAX,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let max = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 900, round.start_ledger, u64::MAX, None));
     assert_eq!(max, Err(Ok(ContractError::OracleNonceReused)));
 }
 
@@ -1302,16 +1071,7 @@ fn test_resolve_round_nonce_boundary_values() {
 #[test]
 fn test_resolve_round_wrong_network_id_rejected() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
@@ -1337,16 +1097,7 @@ fn test_resolve_round_wrong_network_id_rejected() {
 #[test]
 fn test_resolve_round_wrong_contract_addr_rejected() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, _contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
@@ -1372,16 +1123,7 @@ fn test_resolve_round_wrong_contract_addr_rejected() {
 #[test]
 fn test_resolve_round_valid_domain_context_resolves() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
@@ -1390,32 +1132,14 @@ fn test_resolve_round_valid_domain_context_resolves() {
     });
 
     // Correct network + correct contract => resolves normally
-    client.resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 900,
-        round_id: round.start_ledger,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 900, round.start_ledger, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
 #[test]
 fn test_resolve_round_both_network_and_contract_wrong() {
     let env = Env::default();
-    let contract_id = env.register(VirtualTokenContract, ());
-    let client = VirtualTokenContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    env.mock_all_auths();
-
-    client.initialize(&admin, &oracle);
-    client.update_oracle_heartbeat(&0u32);
-    client.create_round(&1_0000000, &None);
+    let (client, _contract_id, _admin, _oracle) = standard_setup(&env, 1_0000000);
     let round = client.get_active_round().unwrap();
 
     env.ledger().with_mut(|li| {
@@ -1644,16 +1368,7 @@ fn test_confidence_below_threshold_rejected() {
         li.timestamp = 100;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: Some(5000u32),
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, Some(5000u32)));
     assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
 }
 
@@ -1676,16 +1391,7 @@ fn test_confidence_above_threshold_accepted() {
         li.timestamp = 100;
     });
 
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: Some(9000u32),
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, Some(9000u32)));
 }
 
 #[test]
@@ -1709,16 +1415,7 @@ fn test_missing_confidence_accepted_when_not_strict() {
     });
 
     // Legacy payload without confidence accepted when strict mode is off
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
 }
 
 #[test]
@@ -1741,16 +1438,7 @@ fn test_missing_confidence_rejected_in_strict_mode() {
         li.timestamp = 100;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::InvalidPrice)));
 }
 
@@ -1800,16 +1488,7 @@ fn test_heartbeat_gate_strict_off_allows_settlement_even_when_stale() {
     });
 
     // Should still resolve — strict mode is off
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -1839,16 +1518,7 @@ fn test_heartbeat_gate_strict_on_blocks_when_stale_past_grace() {
         li.timestamp = 4000;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
 }
 
@@ -1878,16 +1548,7 @@ fn test_heartbeat_gate_strict_on_allows_when_live() {
         li.timestamp = 200;
     });
 
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -1917,16 +1578,7 @@ fn test_heartbeat_gate_blocks_offline_status_in_strict_mode() {
         li.timestamp = 10;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
 }
 
@@ -1950,16 +1602,7 @@ fn test_heartbeat_gate_blocks_no_heartbeat_in_strict_mode() {
         li.timestamp = 100;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
 }
 
@@ -1985,16 +1628,7 @@ fn test_heartbeat_gate_override_bypasses_block_and_emits_event() {
         li.timestamp = 100;
     });
 
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
 
     assert_eq!(client.get_active_round(), None);
 
@@ -2047,16 +1681,7 @@ fn test_heartbeat_gate_override_is_one_shot() {
         li.sequence_number = 12;
         li.timestamp = 100;
     });
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
 
     // Second round: no heartbeat, no override — should block
     env.ledger().with_mut(|li| {
@@ -2070,16 +1695,7 @@ fn test_heartbeat_gate_override_is_one_shot() {
         li.timestamp = 300;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
 }
 
@@ -2113,16 +1729,7 @@ fn test_heartbeat_gate_grace_period_allows_stale_within_grace() {
     });
 
     // Should resolve — within grace period
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -2154,16 +1761,7 @@ fn test_heartbeat_gate_grace_period_blocks_after_grace_expires() {
         li.timestamp = 4300; // 4300 > 4200, beyond grace
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
 }
 
@@ -2194,16 +1792,7 @@ fn test_heartbeat_gate_degraded_status_allowed_when_current() {
     });
 
     // Degraded but current — should be allowed
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -2233,16 +1822,7 @@ fn test_heartbeat_gate_degraded_stale_past_grace_blocked() {
         li.timestamp = 4000;
     });
 
-    let result = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let result = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
     assert_eq!(result, Err(Ok(ContractError::OracleNotLive)));
 }
 
@@ -2266,16 +1846,7 @@ fn test_heartbeat_gate_hblocked_event_emitted() {
         li.timestamp = 100;
     });
 
-    let _ = client.try_resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    let _ = client.try_resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, None));
 
     let events = env.events().all();
     let blocked_event = events.iter().find(|e| {
@@ -2392,16 +1963,7 @@ fn test_no_confidence_check_when_threshold_unset() {
     });
 
     // Even zero confidence accepted when threshold unset
-    client.resolve_round(&OraclePayload {
-        price: 1_2000000,
-        timestamp: env.ledger().timestamp(),
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: Some(0u32),
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_2000000, env.ledger().timestamp(), 0, 1u64, Some(0u32)));
 }
 
 #[test]
@@ -2426,16 +1988,7 @@ fn test_resolve_round_timestamp_after_round_window() {
     // Round started at ts=0, end_ledger=12 -> end_estimate = 0 + 12*5 = 60
     // Window with default skew 300: [0, 60+300] = [0, 360]
     // Payload ts=500 is after the upper bound
-    let payload = OraclePayload {
-        price: 1_5000000,
-        timestamp: 500,
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    };
+    let payload = oracle_payload(&env, &contract_id, 1_5000000, 500, 0, 1u64, None);
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::OracleTimestampOutsideWindow)));
@@ -2475,16 +2028,7 @@ fn test_resolve_round_timestamp_before_round_window() {
     // With skew=30: window = [70, 190]
     // Payload ts=10 is before the lower bound
 
-    let payload = OraclePayload {
-        price: 1_5000000,
-        timestamp: 10,
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    };
+    let payload = oracle_payload(&env, &contract_id, 1_5000000, 10, 0, 1u64, None);
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::OracleTimestampOutsideWindow)));
@@ -2520,16 +2064,7 @@ fn test_resolve_round_timestamp_boundary_lower() {
     });
 
     // Payload at exactly the lower bound (70) must be accepted
-    client.resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 70,
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 70, 0, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
 
@@ -2554,15 +2089,6 @@ fn test_resolve_round_timestamp_boundary_upper() {
     // Round start=0, end_ledger=12 -> end_estimate = 60
     // Default skew=300 -> window: [0, 360]
     // Payload at exactly the upper bound (360) must be accepted
-    client.resolve_round(&OraclePayload {
-        price: 1_5000000,
-        timestamp: 360,
-        round_id: 0,
-        nonce: 1u64,
-        network_id: env.ledger().network_id(),
-        contract_addr: contract_id.clone(),
-        confidence: None,
-        attestation: None,
-    });
+    client.resolve_round(&oracle_payload(&env, &contract_id, 1_5000000, 360, 0, 1u64, None));
     assert_eq!(client.get_active_round(), None);
 }
