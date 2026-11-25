@@ -151,9 +151,19 @@ impl ReferenceModel {
         };
 
         let (winning_pool, losing_pool, winner_bets, loser_bets) = if price_is_up {
-            (round.pool_up, round.pool_down, round.bets_up, round.bets_down)
+            (
+                round.pool_up,
+                round.pool_down,
+                round.bets_up,
+                round.bets_down,
+            )
         } else {
-            (round.pool_down, round.pool_up, round.bets_down, round.bets_up)
+            (
+                round.pool_down,
+                round.pool_up,
+                round.bets_down,
+                round.bets_up,
+            )
         };
 
         // One-sided or zero-pool round: 100% refund to all participants
@@ -282,10 +292,7 @@ pub const FEE_MODEL_ON_WINNINGS: u32 = 1;
 /// - `FeeOnPot` (0): fee = taxable_base * bps / 10_000  (taxable_base = pot)
 /// - `FeeOnWinnings` (1): fee = profit * bps / 10_000 (profit = losing_pool for UpDown,
 ///   profit = pot - winner_stakes for Precision)
-pub fn compute_fee_with_model(
-    taxable_base: i128,
-    fee_bps: Option<u32>,
-) -> i128 {
+pub fn compute_fee_with_model(taxable_base: i128, fee_bps: Option<u32>) -> i128 {
     match fee_bps {
         None | Some(0) => 0,
         Some(bps) => {
@@ -313,7 +320,13 @@ pub fn ref_updown_settle(
     winner_stakes: &[i128],
     fee_bps: Option<u32>,
 ) -> (i128, i128) {
-    ref_updown_settle_with_model(winning_pool, losing_pool, winner_stakes, fee_bps, FEE_MODEL_ON_POT)
+    ref_updown_settle_with_model(
+        winning_pool,
+        losing_pool,
+        winner_stakes,
+        fee_bps,
+        FEE_MODEL_ON_POT,
+    )
 }
 
 /// Reference UpDown settlement with explicit fee model (Issue #268).

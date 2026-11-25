@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Event coverage and completeness verification tests (Issue #117).
 
-use super::config_helpers::apply_windows;
+use super::config_helpers::{apply_protocol_fee_bps, apply_windows};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
 use crate::types::{BetSide, ConfigChangeKind, ConfigChangePayload, OraclePayload};
@@ -384,7 +384,8 @@ fn test_event_coverage_resolve_round() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let events = env.events().all();
     let last_event = events.last().unwrap();
@@ -433,20 +434,33 @@ fn test_event_coverage_cancel_round() {
         topics.get(1).unwrap().try_into_val(&env),
         Ok(symbol_short!("summary"))
     );
-    let canon: (u32, u64, u32, u32, u128, u128, i128, i128, u32, i128, i128, u32, Option<u32>) =
-        data.try_into_val(&env).unwrap();
-    assert_eq!(canon.0, 0u32);           // version
-    assert_eq!(canon.1, 1u64);           // round_id
-    assert_eq!(canon.2, 1u32);           // status (Cancelled)
-    assert_eq!(canon.3, 0u32);           // mode (UpDown)
-    assert_eq!(canon.4, 1_0000000u128);  // price_start
-    assert_eq!(canon.5, 0u128);          // price_final (0 for cancelled)
-    assert_eq!(canon.6, 0i128);          // pool_up
-    assert_eq!(canon.7, 0i128);          // pool_down
-    assert_eq!(canon.8, 0u32);           // participant_count
-    assert_eq!(canon.9, 0i128);          // total_pot
-    assert_eq!(canon.10, 0i128);         // fee_amount
-    assert_eq!(canon.12, None);          // confidence
+    let canon: (
+        u32,
+        u64,
+        u32,
+        u32,
+        u128,
+        u128,
+        i128,
+        i128,
+        u32,
+        i128,
+        i128,
+        u32,
+        Option<u32>,
+    ) = data.try_into_val(&env).unwrap();
+    assert_eq!(canon.0, 0u32); // version
+    assert_eq!(canon.1, 1u64); // round_id
+    assert_eq!(canon.2, 1u32); // status (Cancelled)
+    assert_eq!(canon.3, 0u32); // mode (UpDown)
+    assert_eq!(canon.4, 1_0000000u128); // price_start
+    assert_eq!(canon.5, 0u128); // price_final (0 for cancelled)
+    assert_eq!(canon.6, 0i128); // pool_up
+    assert_eq!(canon.7, 0i128); // pool_down
+    assert_eq!(canon.8, 0u32); // participant_count
+    assert_eq!(canon.9, 0i128); // total_pot
+    assert_eq!(canon.10, 0i128); // fee_amount
+    assert_eq!(canon.12, None); // confidence
 }
 
 #[test]
@@ -469,7 +483,8 @@ fn test_event_coverage_claim_winnings() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     client.claim_winnings(&user);
 
@@ -593,7 +608,8 @@ fn test_action_rejected_resolve_round_oracle_nonce_reused() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let round = client.get_active_round().unwrap();
 
@@ -635,7 +651,8 @@ fn test_action_rejected_resolve_round_invalid_round_id() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::InvalidOracleRound)));
@@ -775,7 +792,8 @@ fn test_action_rejected_resolve_round_future_timestamp() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::FutureOracleData)));
@@ -807,7 +825,8 @@ fn test_action_rejected_resolve_round_timestamp_outside_window() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::OracleTimestampOutsideWindow)));
@@ -835,7 +854,8 @@ fn test_action_rejected_resolve_round_wrong_network() {
         network_id: BytesN::from_array(&env, &[1; 32]), // wrong network
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::OracleNetworkMismatch)));
@@ -865,7 +885,8 @@ fn test_action_rejected_resolve_round_not_ended() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
 
     let result = client.try_resolve_round(&payload);
     assert_eq!(result, Err(Ok(ContractError::RoundNotEnded)));
@@ -898,7 +919,8 @@ fn test_event_coverage_round_summary() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let events = env.events().all();
     let summary_event = events
@@ -914,21 +936,34 @@ fn test_event_coverage_round_summary() {
 
     let (_contract, _topics, data) = summary_event;
     // Payload: (version: u32, round_id: u64, status: u32, mode: u32, price_start: u128, price_final: u128, pool_up: i128, pool_down: i128, participant_count: u32, total_pot: i128, fee_amount: i128, settled_at_ledger: u32, confidence: Option<u32>)
-    let canon: (u32, u64, u32, u32, u128, u128, i128, i128, u32, i128, i128, u32, Option<u32>) =
-        data.try_into_val(&env).unwrap();
-    assert_eq!(canon.0, 0u32);           // version
-    assert_eq!(canon.1, 1u64);           // round_id
-    assert_eq!(canon.2, 0u32);           // status (Resolved)
-    assert_eq!(canon.3, 0u32);           // mode (UpDown)
-    assert_eq!(canon.4, 1_0000000u128);  // price_start
-    assert_eq!(canon.5, 1_2000000u128);  // price_final
+    let canon: (
+        u32,
+        u64,
+        u32,
+        u32,
+        u128,
+        u128,
+        i128,
+        i128,
+        u32,
+        i128,
+        i128,
+        u32,
+        Option<u32>,
+    ) = data.try_into_val(&env).unwrap();
+    assert_eq!(canon.0, 0u32); // version
+    assert_eq!(canon.1, 1u64); // round_id
+    assert_eq!(canon.2, 0u32); // status (Resolved)
+    assert_eq!(canon.3, 0u32); // mode (UpDown)
+    assert_eq!(canon.4, 1_0000000u128); // price_start
+    assert_eq!(canon.5, 1_2000000u128); // price_final
     assert_eq!(canon.6, 100_0000000i128); // pool_up
     assert_eq!(canon.7, 200_0000000i128); // pool_down
-    assert_eq!(canon.8, 2u32);           // participant_count
+    assert_eq!(canon.8, 2u32); // participant_count
     assert_eq!(canon.9, 300_0000000i128); // total_pot
-    assert_eq!(canon.10, 0i128);         // fee_amount
-    assert_eq!(canon.11, 12u32);         // settled_at_ledger
-    assert_eq!(canon.12, None);          // confidence
+    assert_eq!(canon.10, 0i128); // fee_amount
+    assert_eq!(canon.11, 12u32); // settled_at_ledger
+    assert_eq!(canon.12, None); // confidence
 
     // 2. Precision Mode Resolution Summary Event
     let start_price: u128 = 2000;
@@ -953,7 +988,8 @@ fn test_event_coverage_round_summary() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let events = env.events().all();
     let summary_event = events
@@ -967,7 +1003,21 @@ fn test_event_coverage_round_summary() {
             {
                 #[allow(clippy::type_complexity)]
                 let parsed_opt: Result<
-                    (u32, u64, u32, u32, u128, u128, i128, i128, u32, i128, i128, u32, Option<u32>),
+                    (
+                        u32,
+                        u64,
+                        u32,
+                        u32,
+                        u128,
+                        u128,
+                        i128,
+                        i128,
+                        u32,
+                        i128,
+                        i128,
+                        u32,
+                        Option<u32>,
+                    ),
                     _,
                 > = data.try_into_val(&env);
                 if let Ok((_, r_id, _, _, _, _, _, _, _, _, _, _, _)) = parsed_opt {
@@ -979,21 +1029,34 @@ fn test_event_coverage_round_summary() {
         .expect("Precision summary event should exist");
 
     let (_contract, _topics, data) = summary_event;
-    let canon: (u32, u64, u32, u32, u128, u128, i128, i128, u32, i128, i128, u32, Option<u32>) =
-        data.try_into_val(&env).unwrap();
-    assert_eq!(canon.0, 0u32);            // version
-    assert_eq!(canon.1, round_id);        // round_id
-    assert_eq!(canon.2, 0u32);            // status (Resolved)
-    assert_eq!(canon.3, 1u32);            // mode (Precision)
-    assert_eq!(canon.4, 2000u128);        // price_start
-    assert_eq!(canon.5, 2150u128);        // price_final
-    assert_eq!(canon.6, 0i128);           // pool_up
-    assert_eq!(canon.7, 0i128);           // pool_down
-    assert_eq!(canon.8, 2u32);            // participant_count
+    let canon: (
+        u32,
+        u64,
+        u32,
+        u32,
+        u128,
+        u128,
+        i128,
+        i128,
+        u32,
+        i128,
+        i128,
+        u32,
+        Option<u32>,
+    ) = data.try_into_val(&env).unwrap();
+    assert_eq!(canon.0, 0u32); // version
+    assert_eq!(canon.1, round_id); // round_id
+    assert_eq!(canon.2, 0u32); // status (Resolved)
+    assert_eq!(canon.3, 1u32); // mode (Precision)
+    assert_eq!(canon.4, 2000u128); // price_start
+    assert_eq!(canon.5, 2150u128); // price_final
+    assert_eq!(canon.6, 0i128); // pool_up
+    assert_eq!(canon.7, 0i128); // pool_down
+    assert_eq!(canon.8, 2u32); // participant_count
     assert_eq!(canon.9, 400_0000000i128); // total_pot
-    assert_eq!(canon.10, 0i128);          // fee_amount
+    assert_eq!(canon.10, 0i128); // fee_amount
     assert_eq!(canon.11, round.end_ledger); // settled_at_ledger
-    assert_eq!(canon.12, None);           // confidence
+    assert_eq!(canon.12, None); // confidence
 
     // 3. Cancelled Round Summary Event
     client.create_round(&1_0000000, &None);
@@ -1014,7 +1077,21 @@ fn test_event_coverage_round_summary() {
             {
                 #[allow(clippy::type_complexity)]
                 let parsed_opt: Result<
-                    (u32, u64, u32, u32, u128, u128, i128, i128, u32, i128, i128, u32, Option<u32>),
+                    (
+                        u32,
+                        u64,
+                        u32,
+                        u32,
+                        u128,
+                        u128,
+                        i128,
+                        i128,
+                        u32,
+                        i128,
+                        i128,
+                        u32,
+                        Option<u32>,
+                    ),
                     _,
                 > = data.try_into_val(&env);
                 if let Ok((_, r_id, _, _, _, _, _, _, _, _, _, _, _)) = parsed_opt {
@@ -1026,18 +1103,158 @@ fn test_event_coverage_round_summary() {
         .expect("Cancelled summary event should exist");
 
     let (_contract, _topics, data) = summary_event;
-    let canon: (u32, u64, u32, u32, u128, u128, i128, i128, u32, i128, i128, u32, Option<u32>) =
-        data.try_into_val(&env).unwrap();
-    assert_eq!(canon.0, 0u32);              // version
-    assert_eq!(canon.1, cancel_round_id);   // round_id
-    assert_eq!(canon.2, 1u32);              // status (Cancelled)
-    assert_eq!(canon.3, 0u32);              // mode (UpDown)
-    assert_eq!(canon.4, 1_0000000u128);      // price_start
-    assert_eq!(canon.5, 0u128);             // price_final (0 for cancelled)
-    assert_eq!(canon.6, 50_0000000i128);    // pool_up
-    assert_eq!(canon.7, 0i128);             // pool_down
-    assert_eq!(canon.8, 1u32);              // participant_count
-    assert_eq!(canon.9, 50_0000000i128);    // total_pot
-    assert_eq!(canon.10, 0i128);            // fee_amount
-    assert_eq!(canon.12, None);             // confidence
+    let canon: (
+        u32,
+        u64,
+        u32,
+        u32,
+        u128,
+        u128,
+        i128,
+        i128,
+        u32,
+        i128,
+        i128,
+        u32,
+        Option<u32>,
+    ) = data.try_into_val(&env).unwrap();
+    assert_eq!(canon.0, 0u32); // version
+    assert_eq!(canon.1, cancel_round_id); // round_id
+    assert_eq!(canon.2, 1u32); // status (Cancelled)
+    assert_eq!(canon.3, 0u32); // mode (UpDown)
+    assert_eq!(canon.4, 1_0000000u128); // price_start
+    assert_eq!(canon.5, 0u128); // price_final (0 for cancelled)
+    assert_eq!(canon.6, 50_0000000i128); // pool_up
+    assert_eq!(canon.7, 0i128); // pool_down
+    assert_eq!(canon.8, 1u32); // participant_count
+    assert_eq!(canon.9, 50_0000000i128); // total_pot
+    assert_eq!(canon.10, 0i128); // fee_amount
+    assert_eq!(canon.12, None); // confidence
+}
+
+// ─── Fee event / treasury consistency (Issue #672) ──────────────────────────
+//
+// `_collect_protocol_fee` credits the treasury and (when the insurance split
+// is enabled) the insurance fund, then emits `("protocol", "fee_coll")` with
+// `(round_id, fee_amount, treasury_balance, bps_active, fee_model)`.
+//
+// These tests pin the relationship between the emitted amounts and the actual
+// storage deltas so an indexer rebuilding the treasury from events can never
+// drift from on-chain state:
+//   * with no insurance split, `fee_collected == treasury delta`, and
+//   * with an insurance split, `fee_collected == treasury delta + insurance
+//     delta` while the emitted cumulative `treasury_balance` still matches the
+//     treasury exactly.
+
+/// Highest `("protocol", "fee_coll")` payload in the last invocation, decoded
+/// as `(round_id, fee_amount, treasury_balance, bps_active, fee_model)`.
+fn last_protocol_fee_event(env: &Env) -> (u64, i128, i128, u32, u32) {
+    let events = env.events().all();
+    let mut found = None;
+    for (_contract, topics, data) in events.iter() {
+        if topics.len() != 2 {
+            continue;
+        }
+        if topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("protocol"))
+            && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("fee_coll"))
+        {
+            found = Some(data.try_into_val(env).unwrap());
+        }
+    }
+    found.expect("protocol fee_coll event should exist")
+}
+
+/// Places a balanced two-sided Up/Down round (100_0000000 each side), enables
+/// a 5% protocol fee, and returns the active round.
+fn prepare_fee_round(
+    env: &Env,
+    client: &VirtualTokenContractClient,
+) -> crate::types::Round {
+    let alice = Address::generate(env);
+    let bob = Address::generate(env);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+
+    client.create_round(&1_0000000u128, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    client.place_bet(&bob, &100_0000000, &BetSide::Down);
+
+    // Timelocked protocol fee change, activated immediately by the helper.
+    apply_protocol_fee_bps(env, client, Some(500));
+    client.get_active_round().expect("round should be active")
+}
+
+/// Resolves `round` at a higher price so the fee path runs.
+fn resolve_fee_round(
+    env: &Env,
+    contract_id: &Address,
+    client: &VirtualTokenContractClient,
+    round: &crate::types::Round,
+) {
+    env.ledger()
+        .with_mut(|li| li.sequence_number = round.end_ledger);
+    client.resolve_round(&OraclePayload {
+        price: 1_2000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+}
+
+#[test]
+fn test_event_coverage_fee_collected_matches_treasury_credit() {
+    let (env, contract_id, _, _, client) = setup();
+    let round = prepare_fee_round(&env, &client);
+
+    let treasury_before = client.get_protocol_fee_treasury();
+    let insurance_before = client.get_insurance_fund_balance();
+    resolve_fee_round(&env, &contract_id, &client, &round);
+
+    let (round_id, fee_collected, treasury_balance, bps, model) = last_protocol_fee_event(&env);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+    let insurance_delta = client.get_insurance_fund_balance() - insurance_before;
+
+    // 5% of the 200_0000000 pot = 10_0000000 stroops, credited entirely to the
+    // treasury because the insurance split is disabled by default.
+    assert_eq!(fee_collected, 10_0000000i128);
+    assert_eq!(insurance_delta, 0i128);
+    assert_eq!(
+        fee_collected, treasury_delta,
+        "fee_collected must equal the treasury credit"
+    );
+    assert_eq!(
+        treasury_balance, treasury_before + treasury_delta,
+        "emitted cumulative treasury must equal the on-chain treasury"
+    );
+    assert_eq!(bps, 500u32);
+    assert_eq!(model, 0u32); // FeeOnPot
+    assert_eq!(round_id, round.round_id);
+}
+
+#[test]
+fn test_event_coverage_fee_collected_splits_with_insurance_fund() {
+    let (env, contract_id, _, _, client) = setup();
+    let round = prepare_fee_round(&env, &client);
+    // Half of every collected fee is routed to the insurance fund.
+    client.set_insurance_split_bps(&5_000u32);
+
+    let treasury_before = client.get_protocol_fee_treasury();
+    let insurance_before = client.get_insurance_fund_balance();
+    resolve_fee_round(&env, &contract_id, &client, &round);
+
+    let (_, fee_collected, treasury_balance, _, _) = last_protocol_fee_event(&env);
+    let treasury_delta = client.get_protocol_fee_treasury() - treasury_before;
+    let insurance_delta = client.get_insurance_fund_balance() - insurance_before;
+
+    assert_eq!(fee_collected, 10_0000000i128);
+    assert_eq!(treasury_delta, 5_0000000i128);
+    assert_eq!(insurance_delta, 5_0000000i128);
+    // The emitted cumulative balance tracks the treasury, not the gross fee.
+    assert_eq!(treasury_balance, treasury_before + treasury_delta);
+    // The two independent credits together reproduce the emitted fee amount.
+    assert_eq!(fee_collected, treasury_delta + insurance_delta);
 }

@@ -13,6 +13,7 @@
 //!   that walks the entire pipeline end-to-end and verifies the integration
 //!   contract between modules.
 //! - Failure-branch coverage: hash mismatch, reveal-window boundaries,
+//!   direct predictions rejected inside the reveal-only window (Issue #661),
 //!   double reveal, missing commitment, commit-then-direct `AlreadyBet`,
 //!   invalid zero commitment, weak salt entropy, all-unrevealed refunds,
 //!   and mixed-reveal forfeit-to-pot conservation.
@@ -244,7 +245,8 @@ fn test_commit_reveal_e2e_full_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_active_round(), None);
 
@@ -432,6 +434,70 @@ fn test_commit_reveal_e2e_reveal_before_bet_window_closes_is_rejected() {
     client.reveal_prediction(&user, &price, &salt);
     let prediction = client.get_user_precision_prediction(&user).unwrap();
     assert_eq!(prediction.predicted_price, price);
+}
+
+/// Direct Precision predictions are rejected for the entire reveal-only
+/// window `[bet_end_ledger, end_ledger)` (Issue #661). The bet window is
+/// the half-open range `[0, bet_end_ledger)`:
+///
+/// - `bet_end_ledger - 1` (last betting ledger) — prediction accepted;
+/// - `bet_end_ledger` (reveal window opens) — `RoundEnded`;
+/// - mid-reveal ledger — `RoundEnded`.
+///
+/// Both submission routes (`place_precision_prediction` and
+/// `commit_prediction`) are closed by the same window check, and a
+/// rejected attempt must move no balance and write no position.
+#[test]
+fn test_commit_reveal_e2e_place_precision_in_reveal_window_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    let latecomer = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user);
+    client.mint_initial(&latecomer);
+    client.create_round(&ROUND_START_PRICE, &Some(1));
+    // Round created at ledger 0 ⇒ bet_end_ledger = 6, end_ledger = 12.
+
+    // bet_end_ledger - 1: the last ledger of the bet window — accepted.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 5;
+    });
+    client.place_precision_prediction(&user, &ALICE_BET, &ALICE_PRICE);
+    assert_eq!(client.balance(&user), INITIAL_BALANCE - ALICE_BET);
+
+    // Exactly at bet_end_ledger the reveal window opens and the direct
+    // prediction route is closed.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 6;
+    });
+    let result = client.try_place_precision_prediction(&latecomer, &BOB_BET, &BOB_PRICE);
+    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+
+    // Mid-reveal window: still rejected with the same error.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 7;
+    });
+    let result = client.try_place_precision_prediction(&latecomer, &BOB_BET, &BOB_PRICE);
+    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+
+    // The commit route is closed by the same window check.
+    let salt = test_salt(&env, 51);
+    let hash = make_commitment(&env, BOB_PRICE, &salt);
+    let result = client.try_commit_prediction(&latecomer, &hash, &BOB_BET);
+    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+
+    // No side effects anywhere: the rejected calls moved no balance and
+    // stored no position for `latecomer`.
+    assert_eq!(client.balance(&latecomer), INITIAL_BALANCE);
+    assert!(client.get_user_precision_prediction(&latecomer).is_none());
+    assert_eq!(client.balance(&user), INITIAL_BALANCE - ALICE_BET);
 }
 
 /// Reveal after `end_ledger` → `InvalidRevealWindow`. Once the round exits
@@ -640,7 +706,8 @@ fn test_commit_reveal_e2e_two_way_tie_splits_pot_evenly() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let total_pot = bet_a + bet_b;
     let payout_a = client.get_pending_winnings(&user_a);
@@ -778,7 +845,8 @@ fn test_commit_reveal_e2e_all_unrevealed_refunds_conservatively() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     assert_eq!(client.get_pending_winnings(&alice), ALICE_BET);
     assert_eq!(client.get_pending_winnings(&bob), BOB_BET);
@@ -840,7 +908,8 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let total_pot = ALICE_BET + BOB_BET;
     assert_eq!(client.get_pending_winnings(&alice), total_pot);
@@ -856,8 +925,7 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
                 .get(1)
                 .and_then(|topic| soroban_sdk::Symbol::try_from_val(&env, &topic).ok())
                 == Some(symbol_short!("predict"))
-            && <(Address, u64, i128)>::try_from_val(&env, data)
-                == Ok((bob.clone(), 1u64, BOB_BET))
+            && <(Address, u64, i128)>::try_from_val(&env, data) == Ok((bob.clone(), 1u64, BOB_BET))
     });
     assert_eq!(
         forfeits.count(),

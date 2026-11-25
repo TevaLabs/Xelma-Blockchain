@@ -6,7 +6,7 @@ use crate::errors::ContractError;
 use crate::types::{BetSide, DataKey, OraclePayload, ProtocolStatus};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    Address, Env, BytesN,
+    Address, BytesN, Env,
 };
 
 fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address, Address) {
@@ -41,7 +41,7 @@ fn test_claims_only_matrix_verification() {
 
     env.ledger().with_mut(|li| {
         li.sequence_number = 65;
-        li.timestamp = 1000;
+        li.timestamp = 65 * 5; // 5 s per ledger; stays inside the oracle timestamp window
     });
 
     client.resolve_round(&OraclePayload {
@@ -52,14 +52,16 @@ fn test_claims_only_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     assert!(client.get_pending_winnings(&user1) > 0);
 
     // Seed protocol fee treasury for test fee withdrawal validation
     env.as_contract(&contract_id, || {
-        env.storage().persistent().set(&DataKey::ProtocolFeeTreasury, &5000_0000000i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolFeeTreasury, &5000_0000000i128);
     });
 
     // ─── ENTER CLAIMS-ONLY MODE ────────────────────────────────────────────────
@@ -112,24 +114,29 @@ fn test_claims_only_matrix_verification() {
     // Active Round 1 exists, admin cancels it
     client.cancel_round(&1);
 
-    // Create Round 2 in ClaimsOnly mode
+    // Create Round 2 in ClaimsOnly mode (one ledger later: a start ledger
+    // can never be reused by a second round).
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+        li.timestamp += 5;
+    });
     client.create_round(&2_0000000, &None);
 
     // 5. Resolution -> ALLOWED
     env.ledger().with_mut(|li| {
         li.sequence_number = 130;
-        li.timestamp = 2000;
+        li.timestamp = 130 * 5;
     });
 
     let resolve_res = client.try_resolve_round(&OraclePayload {
         price: 2_1000000,
         timestamp: env.ledger().timestamp(),
-        round_id: 65,
+        round_id: client.get_active_round().unwrap().start_ledger,
         nonce: 101,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
     assert_eq!(resolve_res, Ok(Ok(())));
 
@@ -186,7 +193,7 @@ fn test_fully_paused_matrix_verification() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
     assert_eq!(resolve_res, Err(Ok(ContractError::ContractPaused)));
 
@@ -241,7 +248,7 @@ fn test_emergency_incident_simulation_lifecycle() {
     // Step D: In-Flight Round Resolution in Claims-Only Mode
     env.ledger().with_mut(|li| {
         li.sequence_number = 65;
-        li.timestamp = 1000;
+        li.timestamp = 65 * 5; // 5 s per ledger; stays inside the oracle timestamp window
     });
 
     client.resolve_round(&OraclePayload {
@@ -252,7 +259,7 @@ fn test_emergency_incident_simulation_lifecycle() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // Step E: Claim Winnings Executed Successfully During Emergency Mode

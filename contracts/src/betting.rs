@@ -329,7 +329,10 @@ pub fn place_bet(
 
     _enforce_user_round_exposure(&env, round.round_id, &user, amount)?;
 
-    // Verify round is in Up/Down mode
+    // Verify round is in Up/Down mode. This guard runs before any balance,
+    // pool, or position write, so a wrong-mode bet on a Precision round
+    // leaves `pool_up` / `pool_down` — and the caller's balance — exactly
+    // as they were (Issue #662).
     if round.mode != RoundMode::UpDown {
         return Err(ContractError::WrongModeForPrediction);
     }
@@ -345,7 +348,7 @@ pub fn place_bet(
         return Err(ContractError::RoundEnded);
     }
     if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::BettingClosed);
     }
 
     let user_balance = balance(env.clone(), user.clone());
@@ -416,6 +419,25 @@ pub fn place_bet(
     Ok(())
 }
 
+/// Places a direct Precision prediction for `user` in the active round.
+///
+/// # Window semantics (Issue #661)
+///
+/// Accepted only while the bet window is open (`ledger < bet_end_ledger`).
+/// Once the reveal-only window starts (`bet_end_ledger ≤ ledger <
+/// end_ledger`) a direct prediction is rejected with
+/// [`ContractError::RoundEnded`] — reveals (`reveal_prediction`) are the
+/// only submission a round accepts until `end_ledger`. `commit_prediction`
+/// is closed by the same check.
+///
+/// With a close buffer configured, the last `close_buffer` ledgers before
+/// `bet_end_ledger` are a soft close rejected with
+/// [`ContractError::BettingClosed`]; from `bet_end_ledger` on, `RoundEnded`
+/// takes precedence. Both checks return before any write (Issue #797).
+///
+/// The round-mode guard runs *before* the window check, so on an Up/Down
+/// round the call fails with [`ContractError::WrongModeForPrediction`]
+/// regardless of which window the ledger is in (Issue #662).
 pub fn place_precision_prediction(
     env: Env,
     user: Address,
@@ -472,7 +494,7 @@ pub fn place_precision_prediction(
         return Err(ContractError::RoundEnded);
     }
     if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::BettingClosed);
     }
 
     let pred_key = DataKeyScoped::PrecisionPosition(round.round_id, user.clone());
@@ -526,6 +548,9 @@ pub fn place_precision_prediction(
     Ok(())
 }
 
+/// Legacy alias of [`place_precision_prediction`] (argument order
+/// `guessed_price, amount`). Same guards and window semantics: rejected with
+/// [`ContractError::RoundEnded`] in the reveal-only window (Issue #797).
 pub fn predict_price(
     env: Env,
     user: Address,
@@ -535,6 +560,20 @@ pub fn predict_price(
     place_precision_prediction(env, user, amount, guessed_price)
 }
 
+/// Commits a hashed Precision prediction for later reveal.
+///
+/// # Window semantics (Issue #797)
+///
+/// Shares the bet-window check with [`place_precision_prediction`]:
+///
+/// - `ledger < bet_end_ledger - close_buffer`: accepted;
+/// - `bet_end_ledger - close_buffer ≤ ledger < bet_end_ledger` (soft close,
+///   only with a close buffer set): [`ContractError::BettingClosed`];
+/// - `bet_end_ledger ≤ ledger < end_ledger` (reveal-only window):
+///   [`ContractError::RoundEnded`]. Only `reveal_prediction` is accepted.
+///
+/// Every window check returns before any balance, commitment, or
+/// participant write, so a rejected commit leaves storage unchanged.
 pub fn commit_prediction(
     env: Env,
     user: Address,
@@ -592,7 +631,7 @@ pub fn commit_prediction(
         return Err(ContractError::RoundEnded);
     }
     if close_buffer_ledgers > 0 && current_ledger >= close_ledger {
-        return Err(ContractError::RoundEnded);
+        return Err(ContractError::BettingClosed);
     }
 
     let user_balance = balance(env.clone(), user.clone());
@@ -760,8 +799,8 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     _enforce_access_control(&env, &user)?;
 
     // Check early cash-out is enabled
-    let penalty_bps = get_early_cashout_bps(env.clone())
-        .ok_or(ContractError::EarlyCashoutDisabled)?;
+    let penalty_bps =
+        get_early_cashout_bps(env.clone()).ok_or(ContractError::EarlyCashoutDisabled)?;
 
     if penalty_bps == 0 || penalty_bps > 10_000 {
         return Err(ContractError::EarlyCashoutDisabled);
@@ -807,9 +846,7 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
 
     // If forfeit rounds down to zero (very small stake relative to penalty),
     // user gets full refund — still remove position from pool.
-    let cashout = stake
-        .checked_sub(forfeit)
-        .ok_or(ContractError::Overflow)?;
+    let cashout = stake.checked_sub(forfeit).ok_or(ContractError::Overflow)?;
 
     // Deduct full stake from the appropriate pool
     match position.side {
@@ -940,38 +977,23 @@ pub fn mint_initial(env: Env, user: Address) -> i128 {
 
     // ─── Epoch budget check ──────────────────────────────────────────────
     const EP_BUDGET_KEY: Symbol = symbol_short!("EpMintBgt");
-    let epoch_budget: i128 = env
-        .storage()
-        .instance()
-        .get(&EP_BUDGET_KEY)
-        .unwrap_or(0);
+    let epoch_budget: i128 = env.storage().instance().get(&EP_BUDGET_KEY).unwrap_or(0);
     if epoch_budget > 0 {
         let current_epoch = _current_epoch_id(&env);
         const EP_CONSUMED_KEY: Symbol = symbol_short!("EpMintCsm");
         const EP_EPOCH_KEY: Symbol = symbol_short!("EpMintEpc");
-        let stored_epoch: u32 = env
-            .storage()
-            .temporary()
-            .get(&EP_EPOCH_KEY)
-            .unwrap_or(0);
+        let stored_epoch: u32 = env.storage().temporary().get(&EP_EPOCH_KEY).unwrap_or(0);
         let consumed: i128 = if stored_epoch == current_epoch {
-            env.storage()
-                .temporary()
-                .get(&EP_CONSUMED_KEY)
-                .unwrap_or(0)
+            env.storage().temporary().get(&EP_CONSUMED_KEY).unwrap_or(0)
         } else {
             0
         };
         let new_consumed = consumed.checked_add(initial_amount);
         match new_consumed {
             Some(val) if val <= epoch_budget => {
-                env.storage()
-                    .temporary()
-                    .set(&EP_CONSUMED_KEY, &val);
+                env.storage().temporary().set(&EP_CONSUMED_KEY, &val);
                 if stored_epoch != current_epoch {
-                    env.storage()
-                        .temporary()
-                        .set(&EP_EPOCH_KEY, &current_epoch);
+                    env.storage().temporary().set(&EP_EPOCH_KEY, &current_epoch);
                 }
             }
             _ => {

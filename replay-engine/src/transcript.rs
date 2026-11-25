@@ -145,6 +145,14 @@ pub struct RoundTranscript {
     pub pool_down: i128,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fee_bps: Option<u32>,
+    /// Fee incidence discriminant active when the round settled:
+    /// `0` = `FeeOnPot`, `1` = `FeeOnWinnings` (Issue #531).
+    ///
+    /// `#[serde(default)]` so transcripts recorded before the fee model was
+    /// configurable keep replaying: absent means the pre-#268 behaviour,
+    /// which was always fee-on-pot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_model: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_participants: Option<u32>,
     pub participant_count: u32,
@@ -190,8 +198,14 @@ impl RoundTranscript {
 pub enum TranscriptError {
     UnsupportedSchema(u32),
     EmptyParticipants,
-    ParticipantOrder { expected_index: usize, found_index: usize },
-    ParticipantCountMismatch { declared: u32, actual: u32 },
+    ParticipantOrder {
+        expected_index: usize,
+        found_index: usize,
+    },
+    ParticipantCountMismatch {
+        declared: u32,
+        actual: u32,
+    },
 }
 
 impl std::fmt::Display for TranscriptError {
@@ -199,7 +213,10 @@ impl std::fmt::Display for TranscriptError {
         match self {
             Self::UnsupportedSchema(v) => write!(f, "unsupported transcript schema version {v}"),
             Self::EmptyParticipants => write!(f, "transcript has no participants"),
-            Self::ParticipantOrder { expected_index, found_index } => {
+            Self::ParticipantOrder {
+                expected_index,
+                found_index,
+            } => {
                 write!(
                     f,
                     "participants must be sorted by index: expected {expected_index}, found {found_index}"

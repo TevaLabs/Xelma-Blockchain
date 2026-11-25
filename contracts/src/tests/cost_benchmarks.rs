@@ -159,7 +159,8 @@ fn bench_cost_resolve_round() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    };
+        attestation: None,
+    };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_round", cpu, mem);
     assert!(
@@ -193,7 +194,8 @@ fn bench_cost_claim_winnings() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let (cpu, mem, claimed) = measure(&env, || client.claim_winnings(&alice));
     report("claim_winnings", cpu, mem);
@@ -279,7 +281,7 @@ fn bench_cost_resolve_round_medium_set() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_round_medium_n25", cpu, mem);
@@ -313,7 +315,7 @@ fn bench_cost_resolve_round_max_cap() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_round_max_cap_n100", cpu, mem);
@@ -342,7 +344,7 @@ fn bench_cost_resolve_precision_round_max_cap() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     };
     let (cpu, mem, _) = measure(&env, || client.resolve_round(&payload));
     report("resolve_precision_max_cap_n100", cpu, mem);
@@ -370,10 +372,7 @@ fn bench_cost_resolve_precision_round_max_cap() {
 /// Populates the lifetime leaderboard to `LEADERBOARD_LIMIT` by calling
 /// `_update_stats_win` for that many unique users. Returns the generated
 /// addresses.
-fn populate_leaderboard(
-    env: &Env,
-    contract_id: &Address,
-) -> soroban_sdk::Vec<Address> {
+fn populate_leaderboard(env: &Env, contract_id: &Address) -> soroban_sdk::Vec<Address> {
     let mut addrs = soroban_sdk::Vec::new(env);
     for _ in 0..LEADERBOARD_LIMIT {
         let user = Address::generate(env);
@@ -397,7 +396,7 @@ fn bench_cost_leaderboard_update_at_limit() {
     let new_user = Address::generate(&env);
     let (cpu, mem, _) = measure(&env, || {
         env.as_contract(&contract_id, || {
-            VirtualTokenContract::_update_stats_win(env, new_user.clone()).unwrap();
+            VirtualTokenContract::_update_stats_win(&env, new_user.clone()).unwrap();
         })
     });
     report("leaderboard_update_at_limit", cpu, mem);
@@ -442,11 +441,11 @@ fn bench_cost_leaderboard_full_page_read_at_limit() {
 
     // Read a full page (LEADERBOARD_LIMIT entries).
     let (cpu, mem, page) = measure(&env, || {
-        client.get_leaderboard_by_wins(&0, &LEADERBOARD_LIMIT)
+        client.get_leaderboard_by_wins(&None, &LEADERBOARD_LIMIT)
     });
     report("leaderboard_full_page_read_at_limit", cpu, mem);
     assert_eq!(
-        page.len(),
+        page.0.len(),
         LEADERBOARD_LIMIT,
         "should return exactly LEADERBOARD_LIMIT entries"
     );
@@ -471,7 +470,7 @@ fn verify_leaderboard_update_cost_is_bounded() {
     let new_user = Address::generate(&env);
     let (cpu, _mem, _) = measure(&env, || {
         env.as_contract(&contract_id, || {
-            VirtualTokenContract::_update_stats_win(env, new_user.clone()).unwrap();
+            VirtualTokenContract::_update_stats_win(&env, new_user.clone()).unwrap();
         })
     });
 

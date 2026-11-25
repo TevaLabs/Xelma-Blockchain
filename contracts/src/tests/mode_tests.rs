@@ -155,9 +155,40 @@ fn test_place_bet_on_precision_mode_fails() {
     // Create Precision round
     client.create_round(&1_0000000, &Some(1));
 
+    // A valid Precision prediction first: precision stakes never touch the
+    // Up/Down pools, so the round's pools stay at zero.
+    client.place_precision_prediction(&user, &100_0000000, &2297);
+    let round = client.get_active_round().expect("round must be active");
+    assert_eq!(round.pool_up, 0);
+    assert_eq!(round.pool_down, 0);
+
+    let balance_before = client.balance(&user);
+    assert_eq!(balance_before, 900_0000000);
+
     // place_bet should fail on Precision mode
     let result = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
     assert_eq!(result, Err(Ok(ContractError::WrongModeForPrediction)));
+
+    // The mode guard fires before any write: pools, balance, and the
+    // Up/Down position store are all untouched (Issue #662).
+    let round = client.get_active_round().expect("round must be active");
+    assert_eq!(
+        round.pool_up, 0,
+        "pool_up must be unchanged after rejection"
+    );
+    assert_eq!(
+        round.pool_down, 0,
+        "pool_down must be unchanged after rejection"
+    );
+    assert!(
+        client.get_user_position(&user).is_none(),
+        "no Up/Down position may be written on a wrong-mode bet"
+    );
+    assert_eq!(
+        client.balance(&user),
+        balance_before,
+        "rejected wrong-mode bet must not move balance"
+    );
 }
 
 #[test]
@@ -487,7 +518,8 @@ fn test_predict_price_valid_scales() {
                 network_id: env.ledger().network_id(),
                 contract_addr: contract_id.clone(),
                 confidence: None,
-                attestation: None,            });
+                attestation: None,
+            });
         }
 
         // Create new Precision round for each test case
@@ -663,7 +695,8 @@ fn test_all_events_for_updown_round() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let events = env.events().all();
     let resolved_event = events.iter().find(|e| {
@@ -785,7 +818,8 @@ fn test_all_events_for_precision_round() {
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-        attestation: None,    });
+        attestation: None,
+    });
 
     let events = env.events().all();
     let resolved_event = events.iter().find(|e| {
@@ -936,9 +970,10 @@ fn test_updown_bet_counts_precision_commitment_toward_exposure_cap() {
         revealed: false,
     };
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::PrecisionCommitment(round.round_id, user.clone()), &commitment);
+        env.storage().persistent().set(
+            &DataKeyScoped::PrecisionCommitment(round.round_id, user.clone()),
+            &commitment,
+        );
     });
 
     let result = client.try_place_bet(&user, &30_0000000, &BetSide::Up);
@@ -968,9 +1003,10 @@ fn test_precision_prediction_counts_updown_position_toward_exposure_cap() {
         side: BetSide::Up,
     };
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::Position(round.round_id, user.clone()), &position);
+        env.storage().persistent().set(
+            &DataKeyScoped::Position(round.round_id, user.clone()),
+            &position,
+        );
     });
 
     let result = client.try_place_precision_prediction(&user, &30_0000000, &2297u128);
@@ -1001,16 +1037,14 @@ fn test_commit_prediction_counts_precision_prediction_toward_exposure_cap() {
         amount: 75_0000000,
     };
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKeyScoped::PrecisionPosition(round.round_id, user.clone()), &prediction);
+        env.storage().persistent().set(
+            &DataKeyScoped::PrecisionPosition(round.round_id, user.clone()),
+            &prediction,
+        );
     });
 
-    let result = client.try_commit_prediction(
-        &user,
-        &BytesN::from_array(&env, &[11u8; 32]),
-        &30_0000000,
-    );
+    let result =
+        client.try_commit_prediction(&user, &BytesN::from_array(&env, &[11u8; 32]), &30_0000000);
     assert_eq!(result, Err(Ok(ContractError::ExposureCapExceeded)));
 }
 
@@ -1752,12 +1786,15 @@ fn test_alternation_updown_after_precision_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2298,
         timestamp: env.ledger().timestamp(),
-        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // --- Step 2: Run an UpDown round (mode switch) ---
@@ -1770,12 +1807,15 @@ fn test_alternation_updown_after_precision_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
         timestamp: env.ledger().timestamp(),
-        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
         nonce: 2u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // --- Step 3: Verify no stale Precision data leaks into UpDown round ---
@@ -1810,10 +1850,19 @@ fn test_alternation_updown_after_precision_no_stale_data() {
         );
 
         // Legacy keys should also be cleared
-        let has_legacy_updown = env.storage().persistent().has(&DataKeyCore::UpDownPositions);
-        assert!(!has_legacy_updown, "Legacy UpDownPositions should be cleared");
+        let has_legacy_updown = env
+            .storage()
+            .persistent()
+            .has(&DataKeyCore::UpDownPositions);
+        assert!(
+            !has_legacy_updown,
+            "Legacy UpDownPositions should be cleared"
+        );
 
-        let has_legacy_precision = env.storage().persistent().has(&DataKeyCore::PrecisionPositions);
+        let has_legacy_precision = env
+            .storage()
+            .persistent()
+            .has(&DataKeyCore::PrecisionPositions);
         assert!(
             !has_legacy_precision,
             "Legacy PrecisionPositions should be cleared"
@@ -1844,12 +1893,15 @@ fn test_alternation_precision_after_updown_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 1_5000000,
         timestamp: env.ledger().timestamp(),
-        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // --- Step 2: Run a Precision round (mode switch) ---
@@ -1861,12 +1913,15 @@ fn test_alternation_precision_after_updown_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2298,
         timestamp: env.ledger().timestamp(),
-        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
         nonce: 2u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // --- Step 3: Verify no stale UpDown data leaks into Precision round ---
@@ -1952,12 +2007,15 @@ fn test_alternation_three_round_cycle_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2100,
         timestamp: env.ledger().timestamp(),
-        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
         nonce: 1u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // Round 2: UpDown
@@ -1968,12 +2026,15 @@ fn test_alternation_three_round_cycle_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 2_0000000,
         timestamp: env.ledger().timestamp(),
-        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
         nonce: 2u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // Round 3: Precision again
@@ -1984,12 +2045,15 @@ fn test_alternation_three_round_cycle_no_stale_data() {
     client.resolve_round(&OraclePayload {
         price: 3000,
         timestamp: env.ledger().timestamp(),
-        round_id: client.get_active_round().map(|r| r.start_ledger).unwrap_or(0),
+        round_id: client
+            .get_active_round()
+            .map(|r| r.start_ledger)
+            .unwrap_or(0),
         nonce: 3u64,
         network_id: env.ledger().network_id(),
         contract_addr: contract_id.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // Verify NO stale data from any round
@@ -2024,4 +2088,150 @@ fn test_alternation_three_round_cycle_no_stale_data() {
             }
         }
     });
+}
+
+// ─── Issue #798: mode guard leaves pools unchanged ───────────────────────────
+//
+// `place_bet` checks the round mode before the window, balance and
+// duplicate-bet checks and before any write, and every Precision route
+// (`place_precision_prediction`, `predict_price`, `commit_prediction`,
+// `reveal_prediction`) does the same on Up/Down rounds. So a wrong-mode
+// call fails with `WrongModeForPrediction` in every phase of the round and
+// writes nothing.
+
+/// An Up/Down bet on a Precision round is rejected with
+/// `WrongModeForPrediction` on both sides and in every phase (bet window,
+/// reveal-only window, after `end_ledger`), for a user with no prior stake.
+/// Nothing in the ledger changes, and the existing Precision prediction and
+/// pool stats are untouched.
+#[test]
+fn test_wrong_mode_updown_bet_on_precision_round_every_phase_leaves_storage_unchanged() {
+    use super::ledger_snapshot::assert_ledger_unchanged;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let predictor = Address::generate(&env);
+    let bettor = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&predictor);
+    client.mint_initial(&bettor);
+    client.create_round(&1_0000000, &Some(1));
+    client.place_precision_prediction(&predictor, &100_0000000, &1_2000000);
+
+    let round = client.get_active_round().expect("round must be active");
+    assert_eq!(round.mode, RoundMode::Precision);
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    let bettor_balance = client.balance(&bettor);
+
+    let phases = [
+        ("bet window", round.start_ledger),
+        ("last bet ledger", round.bet_end_ledger - 1),
+        ("reveal-only window", round.bet_end_ledger),
+        ("after end_ledger", round.end_ledger),
+    ];
+    for (phase, ledger) in phases {
+        env.ledger().with_mut(|li| li.sequence_number = ledger);
+        for side in [BetSide::Up, BetSide::Down] {
+            let r = assert_ledger_unchanged(&env, phase, || {
+                client.try_place_bet(&bettor, &100_0000000, &side)
+            });
+            assert_eq!(
+                r,
+                Err(Ok(ContractError::WrongModeForPrediction)),
+                "{phase}: {side:?} bet on a Precision round"
+            );
+        }
+    }
+
+    let after = client.get_active_round().expect("round must be active");
+    assert_eq!(after, round, "round (incl. pool_up/pool_down) unchanged");
+    assert_eq!(after.pool_up, 0);
+    assert_eq!(after.pool_down, 0);
+    assert_eq!(client.get_round_pool_stats(), Some(stats));
+    assert_eq!(client.balance(&bettor), bettor_balance);
+    assert!(client.get_user_position(&bettor).is_none());
+    assert!(client.get_updown_positions().is_empty());
+    assert_eq!(
+        client
+            .get_user_precision_prediction(&predictor)
+            .expect("existing prediction survives")
+            .amount,
+        100_0000000
+    );
+}
+
+/// The reverse direction: every Precision route on an Up/Down round with
+/// funded pools is rejected with `WrongModeForPrediction`, and `pool_up` /
+/// `pool_down` keep their exact values.
+#[test]
+fn test_wrong_mode_precision_routes_on_updown_round_keep_pools_unchanged() {
+    use super::ledger_snapshot::assert_ledger_unchanged;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let up = Address::generate(&env);
+    let down = Address::generate(&env);
+    let predictor = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&up);
+    client.mint_initial(&down);
+    client.mint_initial(&predictor);
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&up, &100_0000000, &BetSide::Up);
+    client.place_bet(&down, &40_0000000, &BetSide::Down);
+
+    let round = client.get_active_round().expect("round must be active");
+    assert_eq!(round.mode, RoundMode::UpDown);
+    assert_eq!(round.pool_up, 100_0000000);
+    assert_eq!(round.pool_down, 40_0000000);
+    let predictor_balance = client.balance(&predictor);
+
+    for (phase, ledger) in [
+        ("bet window", round.start_ledger),
+        ("after bet_end", round.bet_end_ledger),
+    ] {
+        env.ledger().with_mut(|li| li.sequence_number = ledger);
+
+        let r = assert_ledger_unchanged(&env, "place_precision_prediction", || {
+            client.try_place_precision_prediction(&predictor, &50_0000000, &1_1000000)
+        });
+        assert_eq!(r, Err(Ok(ContractError::WrongModeForPrediction)), "{phase}");
+
+        let r = assert_ledger_unchanged(&env, "predict_price", || {
+            client.try_predict_price(&predictor, &1_1000000, &50_0000000)
+        });
+        assert_eq!(r, Err(Ok(ContractError::WrongModeForPrediction)), "{phase}");
+
+        let hash = BytesN::from_array(&env, &[7u8; 32]);
+        let r = assert_ledger_unchanged(&env, "commit_prediction", || {
+            client.try_commit_prediction(&predictor, &hash, &50_0000000)
+        });
+        assert_eq!(r, Err(Ok(ContractError::WrongModeForPrediction)), "{phase}");
+
+        let salt = test_salt(&env, 9);
+        let r = assert_ledger_unchanged(&env, "reveal_prediction", || {
+            client.try_reveal_prediction(&predictor, &1_1000000, &salt)
+        });
+        assert_eq!(r, Err(Ok(ContractError::WrongModeForPrediction)), "{phase}");
+    }
+
+    let after = client.get_active_round().expect("round must be active");
+    assert_eq!(after, round);
+    assert_eq!(after.pool_up, 100_0000000, "pool_up unchanged");
+    assert_eq!(after.pool_down, 40_0000000, "pool_down unchanged");
+    assert_eq!(client.balance(&predictor), predictor_balance);
+    assert!(client.get_user_precision_prediction(&predictor).is_none());
+    assert!(client.get_precision_predictions().is_empty());
 }

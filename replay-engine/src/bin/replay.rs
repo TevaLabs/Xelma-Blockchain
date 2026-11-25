@@ -7,8 +7,7 @@ use std::path::PathBuf;
 use std::process;
 
 use xelma_replay::{
-    assert_live_matches_replay, replay_round, transcript_commitment_hex,
-    RoundTranscript,
+    assert_live_matches_replay, replay_round, transcript_commitment_hex, RoundTranscript,
 };
 
 fn usage() -> ! {
@@ -94,7 +93,10 @@ fn main() {
         if let Err(mismatches) = assert_live_matches_replay(&transcript, &replay) {
             eprintln!("REPLAY_MISMATCH: live != replay for {}", path.display());
             for m in &mismatches {
-                eprintln!("  {}: expected={}, replayed={}", m.field, m.expected, m.replayed);
+                eprintln!(
+                    "  {}: expected={}, replayed={}",
+                    m.field, m.expected, m.replayed
+                );
             }
             process::exit(1);
         }

@@ -54,7 +54,7 @@ fn test_one_sided_up_market() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // Capture events before subsequent contract calls reset the log
@@ -106,7 +106,7 @@ fn test_one_sided_down_market() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     let events = env.events().all();
@@ -143,7 +143,7 @@ fn test_empty_market() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     assert_eq!(client.get_active_round(), None);
@@ -161,6 +161,22 @@ fn test_deterministic_policy_selection() {
 
     let contract_policy = client.get_one_sided_policy();
     assert_eq!(contract_policy, Policy::Refund);
+}
+
+/// #828: querying the policy with no active round must not panic and
+/// defaults to `Refund`, both before any round and after one settles.
+#[test]
+fn test_one_sided_policy_defaults_to_refund_without_active_round() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    // Uninitialized contract: no active round, no config.
+    assert_eq!(client.get_active_round(), None);
+    assert_eq!(client.get_one_sided_policy(), OneSidedPolicy::Refund);
+
+    let (_env, client, _admin, _oracle) = setup_test_env();
+    assert_eq!(client.get_active_round(), None);
+    assert_eq!(client.get_one_sided_policy(), OneSidedPolicy::Refund);
 }
 
 #[test]
@@ -184,7 +200,7 @@ fn test_emitted_events_and_metadata() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     let events = env.events().all();
@@ -230,7 +246,7 @@ fn test_refund_behavior_value_preservation() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     // Claim pending winnings
@@ -289,7 +305,7 @@ fn test_repeated_settlement_attempts() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     };
 
     client.resolve_round(&payload);
@@ -331,7 +347,7 @@ fn test_rounding_and_value_conservation() {
         network_id: env.ledger().network_id(),
         contract_addr: client.address.clone(),
         confidence: None,
-    attestation: None,
+        attestation: None,
     });
 
     let alice_refund = client.get_pending_winnings(&alice);

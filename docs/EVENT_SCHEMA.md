@@ -718,6 +718,97 @@ ended season are never deleted and remain independently queryable.
 **Topics**: `("season", "reset")`
 **Source contracts**: `VirtualTokenContract`
 **Emitted by**: `reset_leaderboard_season`.
+**Golden test**: `tests::event_order_golden::golden_season_reset_*`.
+
+---
+
+## Governance events (dual approval, Issue #272)
+
+All governance events use topic0 `"gov"`. Payload fields are positional and
+pinned by `tests::event_order_golden` (Issue #568): adding, removing or
+reordering a field is a breaking change for indexers.
+
+`action_code` values: `0` PauseProtocol, `1` UnpauseProtocol,
+`2` SetProtocolFeeBps, `3` WithdrawProtocolFee, `4` SetTreasuryAddress,
+`5` SetAdmin, `6` SetOracle, `7` WithdrawInsuranceFund,
+`8` SetInsuranceSplitBps, `9` SetInsuranceCoverageBps.
+
+### `("gov", "appr_set")` — Secondary approver configured
+
+| Position | Field      | Type      |
+|----------|------------|-----------|
+| 0        | `admin`    | `Address` |
+| 1        | `approver` | `Address` |
+
+**Emitted by**: `set_gov_approver`.
+
+### `("gov", "proposed")` — Proposal created
+
+| Position | Field               | Type      | Description                                                   |
+|----------|---------------------|-----------|---------------------------------------------------------------|
+| 0        | `proposal_id`       | `u64`     | Monotonic id (starts at 1).                                   |
+| 1        | `proposer`          | `Address` | Admin or approver who proposed.                               |
+| 2        | `action_code`       | `u32`     | See table above.                                              |
+| 3        | `expires_at_ledger` | `u32`     | `created_at_ledger + ttl`; `ttl` is `custom_ttl` or `get_gov_proposal_ttl()`. |
+
+**Emitted by**: `propose_gov_action`.
+
+### `("gov", "approved")` — Proposal approved
+
+| Position | Field         | Type      |
+|----------|---------------|-----------|
+| 0        | `proposal_id` | `u64`     |
+| 1        | `approver`    | `Address` |
+
+**Emitted by**: `approve_gov_proposal`.
+
+### `("gov", "executed")` — Proposal executed
+
+| Position | Field         | Type      |
+|----------|---------------|-----------|
+| 0        | `proposal_id` | `u64`     |
+| 1        | `executor`    | `Address` |
+| 2        | `action_code` | `u32`     |
+
+Always the **last** event of `execute_gov_proposal`. Side-effect events of the
+action are emitted first, in the same invocation; e.g. `PauseProtocol` /
+`UnpauseProtocol` emit `("mode", "transition")` immediately before `executed`.
+
+### `("gov", "cancel")` — Proposal cancelled
+
+| Position | Field         | Type      |
+|----------|---------------|-----------|
+| 0        | `proposal_id` | `u64`     |
+| 1        | `canceller`   | `Address` |
+
+**Emitted by**: `cancel_gov_proposal` (from `Pending`, `Approved` or `Expired`).
+
+### `("gov", "expired")` — Proposal found expired
+
+| Position | Field            | Type  |
+|----------|------------------|-------|
+| 0        | `proposal_id`    | `u64` |
+| 1        | `current_ledger` | `u32` |
+
+Published by `approve_gov_proposal` / `execute_gov_proposal` right before they
+return `ProposalExpired`. Because the call fails, the host rolls the event
+back, so **it never reaches the ledger** today. Indexers should derive expiry
+from `expires_at_ledger` in `("gov", "proposed")` instead.
+
+---
+
+## `("storage", "touch")` — Batch TTL extension
+
+| Position | Field     | Type  | Description                                                   |
+|----------|-----------|-------|---------------------------------------------------------------|
+| 0        | `touched` | `u32` | Allowlisted keys that existed and had their TTL extended.     |
+| 1        | `skipped` | `u32` | Allowlisted keys that were absent from storage (no-op).       |
+
+Emitted once per successful call, including an empty batch (`(0, 0)`).
+A non-allowlisted key aborts the call, so no `touch` event is emitted.
+
+**Emitted by**: `batch_touch_ttl`.
+**Golden test**: `tests::event_order_golden::golden_storage_touch_*`.
 
 ---
 

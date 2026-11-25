@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 extern crate alloc;
-use alloc::vec::Vec as StdVec;
 use crate::admin::{
     _ensure_not_paused, _load_attestation_config, _load_deviation_config, _load_hb_config,
     _require_supported_schema,
@@ -11,9 +10,7 @@ use crate::common::{
     DEFAULT_ORACLE_TIMESTAMP_SKEW, MAX_CLAIM_BATCH_SIZE, MAX_ORACLE_OBSERVATIONS,
     SECONDS_PER_LEDGER, TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD,
 };
-use crate::config::{
-    _apply_protocol_fee_precision, _apply_protocol_fee_updown, _read_fee_model,
-};
+use crate::config::{_apply_protocol_fee_precision, _apply_protocol_fee_updown, _read_fee_model};
 use crate::errors::ContractError;
 use crate::settlement_math::{
     classify_price_direction, compute_deviation_bps, compute_updown_winner_payout,
@@ -22,11 +19,12 @@ use crate::settlement_math::{
 use crate::storage::clear_round_storage;
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
-    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OracleHeartbeatRecord, OraclePayload,
-    OracleQuorumConfig, OneSidedPolicy, PendingWinningsUpdatedAtKey, PrecisionCommitment,
+    HbGateConfig, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord,
+    OraclePayload, OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment,
     PrecisionPayoutPolicy, PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode,
     TwapSamplesKey, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
 };
+use alloc::vec::Vec as StdVec;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
 
@@ -210,7 +208,9 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
                     }
 
                     participant_stakes.push_back(refund_amount);
-                    total_stake = total_stake.checked_add(refund_amount).unwrap_or(total_stake);
+                    total_stake = total_stake
+                        .checked_add(refund_amount)
+                        .unwrap_or(total_stake);
 
                     if refund_amount > 0 {
                         _accumulate_pending(&env, user.clone(), refund_amount)?;
@@ -244,7 +244,8 @@ pub fn cancel_round(env: Env, reason: u32) -> Result<(), ContractError> {
             }
         }
         if total_coverage > 0 {
-            let distributed = crate::insurance::deduct_insurance_coverage(&env, round_id, total_coverage)?;
+            let distributed =
+                crate::insurance::deduct_insurance_coverage(&env, round_id, total_coverage)?;
             // Distribute coverage proportionally to participants
             if distributed > 0 && total_stake > 0 {
                 for i in 0..participants.len() {
@@ -941,7 +942,11 @@ pub fn resolve_round_multi(env: Env, payload: MultiFeedPayload) -> Result<(), Co
         .checked_sub(round.start_ledger)
         .ok_or(ContractError::Overflow)?;
     let round_end_estimate = round_start
-        .checked_add((round_duration_ledgers as u64).checked_mul(SECONDS_PER_LEDGER).ok_or(ContractError::Overflow)?)
+        .checked_add(
+            (round_duration_ledgers as u64)
+                .checked_mul(SECONDS_PER_LEDGER)
+                .ok_or(ContractError::Overflow)?,
+        )
         .ok_or(ContractError::Overflow)?;
 
     let lower_bound = round_start.saturating_sub(skew);
@@ -1352,7 +1357,9 @@ fn _complete_settlement(
 
     env.storage().persistent().remove(&DataKeyCore::ActiveRound);
     env.storage().persistent().remove(&DataKeyCore::Positions);
-    env.storage().persistent().remove(&DataKeyCore::UpDownPositions);
+    env.storage()
+        .persistent()
+        .remove(&DataKeyCore::UpDownPositions);
     // A merge left this guarded re-remove of the active round split across
     // two fragments (the `if` keyword and its condition were separated from
     // the body). Rejoined here so the file parses again.
@@ -1388,7 +1395,9 @@ fn _complete_settlement(
 
 /// Permissionlessly voids a resolved round while its dispute window is open.
 /// Payouts and fees remain deferred, so each participant receives exactly the
-/// stake recorded for this round.
+/// stake recorded for this round. All storage effects (pending refunds, archive,
+/// storage cleanup, and pending-dispute removal) complete before emitting the
+/// `(round, voided)` event.
 pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     _ensure_not_paused(&env)?;
@@ -1548,10 +1557,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                round.pool_up.saturating_add(round.pool_down),
-                0i128,
-            )
+            (round.pool_up.saturating_add(round.pool_down), 0i128)
         }
         OneSidedPolicy::CarryForward => {
             if !participants.is_empty() {
@@ -1562,10 +1568,7 @@ pub fn _apply_one_sided_policy(
                     _record_refunds_legacy(env, round.round_id, pos_map)?;
                 }
             }
-            (
-                0i128,
-                round.pool_up.saturating_add(round.pool_down),
-            )
+            (0i128, round.pool_up.saturating_add(round.pool_down))
         }
     };
 
@@ -1877,6 +1880,36 @@ fn _calculate_precision_payouts(
     Ok(payouts)
 }
 
+/// Resolves a Precision round: finds the closest revealed guess(es), splits
+/// the pot, and records outcomes for losers and non-revealers.
+///
+/// # Forfeit accounting (invariant I8 — settlement conservation)
+///
+/// Every participant's stake enters `total_pot` regardless of how it was
+/// placed (direct prediction, revealed commitment, or unrevealed
+/// commitment). What differs is what happens to it at settlement:
+///
+/// - **Mixed reveal** (`winners` non-empty, i.e. ≥1 prediction revealed or
+///   placed directly): unrevealed commitments are **forfeited to the pot**
+///   (anti-griefing). Their stakes stay inside `total_pot` and are paid out
+///   through `payout_pool = total_pot - fee`; nothing is burned and nothing
+///   is credited back to the forfeiter. Each forfeiter receives a
+///   `("forfeit", "predict")` event plus a `Loss` outcome.
+/// - **All unrevealed** (`winners` empty): there is no winner to forfeit
+///   to, so every stake is refunded to pending winnings with `fee == 0`.
+///
+/// Both branches satisfy the I8 conservation identity for any fee
+/// configuration:
+///
+/// ```text
+/// Σ winner payouts + protocol fee == total pot   (mixed reveal)
+/// Σ refunds                      == total pot   (all unrevealed)
+/// ```
+///
+/// Evidence:
+/// `tests::conservation::precision_mixed_reveal_forfeit_fee_enabled_exact_conservation`,
+/// `tests::commit_reveal_e2e::test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot`,
+/// `tests::adversarial::grinding::test_adversarial_commit_and_grief_non_reveal`.
 pub fn _resolve_precision_mode(
     env: &Env,
     round_id: u64,
@@ -2031,6 +2064,13 @@ pub fn _resolve_precision_mode(
             }
         }
 
+        // Forfeit accounting (I8). Every participant's stake — revealed
+        // or not — was already added to `total_pot` above, and
+        // `payout_pool = total_pot - fee` redistributes it to the winners.
+        // Unrevealed stakes therefore stay in circulation as winner payouts:
+        // they are neither refunded to nor burned away from the forfeiter,
+        // so `Σ winner payouts + fee == total_pot` holds for any fee
+        // configuration (Issue #664).
         for i in 0..participants.len() {
             if let Some(user) = participants.get(i) {
                 let idx = i as usize;
@@ -2526,11 +2566,13 @@ pub fn _archive_round(
                 (symbol_short!("archive"), symbol_short!("pruned")),
                 (oldest, retention_limit),
             );
+            // Drop exactly the id that was just pruned. (A second
+            // `remove(0)` here used to discard the next id without deleting
+            // its `ArchivedRound`, orphaning it and keeping only N-1 rounds.)
             recent.remove(0);
         } else {
             break;
         }
-        recent.remove(0);
     }
 
     env.storage()
@@ -2855,5 +2897,4 @@ pub fn _update_stats_loss(env: &Env, user: Address) -> Result<(), ContractError>
     crate::leaderboard::_update_leaderboards(env, user.clone());
     crate::leaderboard::_update_season_stats_loss(env, user)?;
     Ok(())
-
 }

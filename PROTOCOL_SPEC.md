@@ -67,6 +67,15 @@ Pot conservation (I8) still holds: with mixed reveals,
 unrevealed stakes); with all-unrevealed refunds,
 `Σ refunds == total pot`.
 
+Evidence:
+- Code: `_resolve_precision_mode` (mixed-reveal forfeit branch).
+- Tests: `tests::conservation::precision_mixed_reveal_forfeit_fee_enabled_exact_conservation`
+  (fee on: payouts + treasury delta == pot),
+  `tests::commit_reveal_e2e::test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot`
+  (forfeit event + supply conservation),
+  `tests::conservation::precision_all_unrevealed_refunds_ignores_configured_fee`
+  (refund branch conserves with `fee == 0`).
+
 All token amounts are stored as `i128` stroops where `1 vXLM = 10_000_000`.
 Prices are stored as `u128` values scaled to 4 decimal places.
 
@@ -171,7 +180,9 @@ deterministically and no dust is intentionally lost.
 Evidence:
 - Code: `_resolve_updown_mode`, `_resolve_precision_mode`, refund helpers.
 - Tests: `resolution.rs`, `property_invariants.rs`,
-  `storage_benchmarks.rs::bench_large_round_resolves_correctly`.
+  `storage_benchmarks.rs::bench_large_round_resolves_correctly`,
+  `conservation.rs` rows 9–10 (all-unrevealed refund and mixed-reveal
+  forfeit exact conservation).
 
 ### I9. Checked Arithmetic
 
@@ -373,6 +384,7 @@ Evidence:
 | I6 | Mode isolation | `RoundMode` checks | `mode_tests.rs` | Covered |
 | I7 | Balance and pending accounting | `_set_balance`, `_accumulate_pending`, `claim_winnings` | `betting.rs`, `resolution.rs`, `overflow_tests.rs` | Covered |
 | I8 | Settlement conservation | payout/refund helpers | `resolution.rs`, `property_invariants.rs` | Covered |
+| I8-A | Mixed-reveal forfeit-to-pot accounting: unrevealed stakes stay in `total_pot` and are redistributed to winners; never refunded or burned | `_resolve_precision_mode` mixed branch | `conservation.rs` (row 10, fee-on exact conservation), `commit_reveal_e2e.rs` (forfeit event + supply conservation), `adversarial/grinding.rs` (commit-and-grief) | Covered |
 | I9 | Checked arithmetic | `checked_*`, `payout_add`, `payout_mul` | `overflow_tests.rs`, `edge_cases.rs` | Covered with noted precision-error caveat in `SECURITY_REVIEW.md` |
 | I10 | Oracle payload binding | `resolve_round`, `create_round` | `security.rs`, `adversarial/oracle.rs` | Covered |
 | I11 | Cancellation/fallback refunds | `cancel_round`, `_refund_under_threshold` | `lifecycle.rs`, `resolution.rs`, `chaos_recovery.rs`, `cancel_refund_matrix.rs` (UpDown + Precision, including unrevealed commitments, zero-fee, `Cancelled` archive status) | Covered |

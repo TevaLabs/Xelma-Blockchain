@@ -59,6 +59,14 @@ To tighten the guardrail toward true regression detection:
 | season reset            | _record_     | _record_     | _date/sha_  |
 | leaderboard read        | _record_     | _record_     | _date/sha_  |
 
+The three leaderboard rows are generated at the hard cap of 100 entries by
+`bench_cost_leaderboard_update_at_limit`, `bench_cost_season_reset_at_limit`,
+and `bench_cost_leaderboard_full_page_read_at_limit`. Their companion guard
+tests require update and reset CPU consumption to remain below 50% of the
+Soroban transaction budget. CI publishes the untruncated measurements in its
+`cost-benchmarks` artifact; copy those values here only from a green run on the
+same SDK version.
+
 ## CI integration
 
 The CI `rust-test` job runs the full workspace test suite (which includes these

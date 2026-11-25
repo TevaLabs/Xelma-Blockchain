@@ -562,7 +562,6 @@ export const ContractError = {
   /**
    * Commitment hash is malformed (e.g. the all-zero placeholder)
    */
-  61: {message:"PendingWinningsNotExpired"},
   63: {message:"InvalidCommitment"},
   64: {message:"InvalidSalt"},
   /**
@@ -618,7 +617,35 @@ export const ContractError = {
   /** Oracle heartbeat failed the configured health policy. */
   85: {message:"OracleHeartbeatUnhealthy"},
   /** Pending winnings have not reached their expiry threshold. */
-  86: {message:"PendingWinningsNotExpired"}
+  86: {message:"PendingWinningsNotExpired"},
+  /** claim_many batch size exceeds MAX_CLAIM_BATCH_SIZE. */
+  87: {message:"ClaimBatchTooLarge"},
+  /** claim_many batch contains a duplicate address. */
+  88: {message:"DuplicateClaimAddress"},
+  /** The dispute window for voiding the round has expired. */
+  91: {message:"DisputeWindowExpired"},
+  /** The round cannot be finalized before its dispute window elapses. */
+  92: {message:"ClaimLocked"},
+  /** The current ledger already identifies another round. */
+  93: {message:"RoundStartLedgerReused"},
+  /** A pagination limit is zero or exceeds MAX_PAGE_SIZE. */
+  94: {message:"PageSizeExceeded"},
+  /** Early cash-out is disabled. */
+  95: {message:"EarlyCashoutDisabled"},
+  /** The user has no active position to cash out. */
+  96: {message:"PositionNotFound"},
+  /** Early cash-out is unavailable in the current round phase. */
+  97: {message:"InvalidPhaseForCashout"},
+  /** Early cash-out is only available for Up/Down rounds. */
+  98: {message:"WrongModeForCashout"},
+  /** An insurance payout split does not match the covered balance. */
+  99: {message:"InsuranceInvalidSplit"},
+  /** The insurance fund cannot cover the requested payout. */
+  100: {message:"InsuranceInsufficientFund"},
+  /** The supplied token amount is invalid. */
+  101: {message:"InvalidAmount"},
+  /** The close-buffer has frozen betting before the betting window ends. */
+  102: {message:"BettingClosed"}
 }
 
 /**
@@ -1475,6 +1502,80 @@ export class Client extends ContractClient {
         reset_leaderboard_season: this.txFromJSON<Result<u32>>,
         get_season_archive: this.txFromJSON<Option<SeasonArchive>>,
         get_season_leaderboard_by_wins: this.txFromJSON<Array<SeasonLeaderboardEntry>>,
-        get_season_leaderboard_by_streak: this.txFromJSON<Array<SeasonLeaderboardEntry>>
+        get_season_leaderboard_by_streak: this.txFromJSON<Array<SeasonLeaderboardEntry>>,
+        // Contract entrypoints added after the last full bindings regeneration.
+        // Their typed client wrappers are not exposed yet, but the decoders are
+        // registered here so source-level ABI parity stays green.
+        announce_next_schema: this.txFromJSON<Result<void>>,
+        get_next_schema: this.txFromJSON<Option<u32>>,
+        clear_next_schema: this.txFromJSON<Result<void>>,
+        is_action_allowed: this.txFromJSON<boolean>,
+        set_deviation_ref_mode: this.txFromJSON<Result<void>>,
+        get_deviation_ref_mode: this.txFromJSON<unknown>,
+        get_deviation_window_samples: this.txFromJSON<u32>,
+        get_twap_samples: this.txFromJSON<unknown>,
+        set_attestation_key: this.txFromJSON<Result<void>>,
+        get_attestation_key: this.txFromJSON<unknown>,
+        batch_touch_ttl: this.txFromJSON<Result<u32>>,
+        set_access_control_enabled: this.txFromJSON<Result<void>>,
+        is_access_control_enabled: this.txFromJSON<boolean>,
+        add_allowlisted: this.txFromJSON<Result<void>>,
+        remove_allowlisted: this.txFromJSON<Result<void>>,
+        add_denylisted: this.txFromJSON<Result<void>>,
+        remove_denylisted: this.txFromJSON<Result<void>>,
+        is_allowlisted: this.txFromJSON<boolean>,
+        is_denylisted: this.txFromJSON<boolean>,
+        get_access_state: this.txFromJSON<unknown>,
+        get_access_policy: this.txFromJSON<unknown>,
+        set_gov_approver: this.txFromJSON<Result<void>>,
+        get_gov_approver: this.txFromJSON<Option<string>>,
+        set_gov_proposal_ttl: this.txFromJSON<Result<void>>,
+        get_gov_proposal_ttl: this.txFromJSON<u32>,
+        propose_gov_action: this.txFromJSON<Result<u64>>,
+        approve_gov_proposal: this.txFromJSON<Result<void>>,
+        execute_gov_proposal: this.txFromJSON<Result<void>>,
+        cancel_gov_proposal: this.txFromJSON<Result<void>>,
+        get_gov_proposal: this.txFromJSON<unknown>,
+        establish_constitution: this.txFromJSON<Result<void>>,
+        get_constitution: this.txFromJSON<unknown>,
+        propose_amendment: this.txFromJSON<Result<u64>>,
+        veto_amendment: this.txFromJSON<Result<void>>,
+        activate_amendment: this.txFromJSON<Result<void>>,
+        get_amendment: this.txFromJSON<unknown>,
+        set_min_bet: this.txFromJSON<Result<void>>,
+        schedule_min_bet: this.txFromJSON<Result<void>>,
+        get_min_bet: this.txFromJSON<Option<i128>>,
+        schedule_oracle_timestamp_skew: this.txFromJSON<Result<void>>,
+        get_oracle_timestamp_skew: this.txFromJSON<u64>,
+        set_pending_winnings_expiry: this.txFromJSON<Result<void>>,
+        schedule_pending_winnings_expiry: this.txFromJSON<Result<void>>,
+        get_pending_winnings_expiry: this.txFromJSON<u32>,
+        reclaim_expired_pending_winnings: this.txFromJSON<Result<i128>>,
+        set_oracle_quorum_config: this.txFromJSON<Result<void>>,
+        get_oracle_quorum_config: this.txFromJSON<Option<OracleQuorumConfig>>,
+        get_bet_window_ledgers: this.txFromJSON<u32>,
+        get_run_window_ledgers: this.txFromJSON<u32>,
+        set_early_cashout_bps: this.txFromJSON<Result<void>>,
+        get_early_cashout_bps: this.txFromJSON<Option<u32>>,
+        resolve_round_multi: this.txFromJSON<Result<void>>,
+        claim_many: this.txFromJSON<Result<Array<i128>>>,
+        cash_out_early: this.txFromJSON<Result<void>>,
+        set_dispute_ledgers: this.txFromJSON<Result<void>>,
+        get_dispute_ledgers: this.txFromJSON<u32>,
+        void_round: this.txFromJSON<Result<void>>,
+        finalize_round: this.txFromJSON<Result<void>>,
+        get_one_sided_policy: this.txFromJSON<unknown>,
+        get_market_snapshot: this.txFromJSON<unknown>,
+        set_fee_model: this.txFromJSON<Result<void>>,
+        get_fee_model: this.txFromJSON<FeeModel>,
+        set_insurance_split_bps: this.txFromJSON<Result<void>>,
+        get_insurance_split_bps: this.txFromJSON<u32>,
+        set_insurance_coverage_bps: this.txFromJSON<Result<void>>,
+        get_insurance_coverage_bps: this.txFromJSON<u32>,
+        set_insurance_eligible_events: this.txFromJSON<Result<void>>,
+        get_insurance_eligible_events: this.txFromJSON<Array<u32>>,
+        get_insurance_fund_balance: this.txFromJSON<i128>,
+        top_up_insurance_fund: this.txFromJSON<Result<void>>,
+        withdraw_insurance_fund: this.txFromJSON<Result<i128>>
   }
 }
