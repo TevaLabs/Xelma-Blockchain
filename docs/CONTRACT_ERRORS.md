@@ -10,7 +10,13 @@ When adding, removing, renaming, or renumbering an error:
 1. Update `contracts/src/errors.rs`.
 2. Update `bindings/src/index.ts`.
 3. Update the table below.
-4. Run `npm --prefix bindings run test:parity`.
+4. Run `npm --prefix bindings run test:parity` and
+   `npm --prefix bindings run test:errors`.
+
+Codes are part of the public ABI: each code maps to exactly one variant and
+each variant to exactly one code. Never reuse a retired code; take the next
+unused number instead. The `test:errors` suite fails on a duplicate code or
+variant name in any of the three sources, and on a name mismatch between them.
 
 | Code | Variant |
 |---:|---|
