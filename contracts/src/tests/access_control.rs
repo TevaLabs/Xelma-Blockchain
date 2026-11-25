@@ -332,3 +332,100 @@ fn test_protocol_health_reports_access_mode() {
         "allowlist mode should surface ACCESS_RESTRICTED"
     );
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// #842: open mode never bypasses the denylist, and the documented unblock
+// path is an explicit admin list mutation.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// #842: with allowlist mode off (the default), a denylisted address is still
+/// refused at mint time. Open mode only removes the allowlist requirement.
+#[test]
+fn test_denylist_blocks_mint_in_open_mode() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    assert!(!client.is_access_control_enabled());
+    client.add_denylisted(&user);
+
+    assert_eq!(
+        client.try_mint_initial(&user),
+        Err(Ok(soroban_sdk::Error::from_contract_error(
+            ContractError::AccessDenied as u32
+        )))
+    );
+    assert_eq!(client.balance(&user), 0);
+}
+
+/// #842: the documented bypass is `remove_denylisted` — once the admin clears
+/// the marker the address is `Open` again and may mint and bet immediately.
+#[test]
+fn test_remove_denylisted_restores_open_mode_access() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.create_round(&1_0000000, &None);
+    client.add_denylisted(&user);
+
+    assert_eq!(
+        client.try_place_bet(&user, &100_0000000, &BetSide::Up),
+        Err(Ok(ContractError::AccessDenied))
+    );
+    assert_eq!(
+        client.try_mint_initial(&user),
+        Err(Ok(soroban_sdk::Error::from_contract_error(
+            ContractError::AccessDenied as u32
+        )))
+    );
+
+    client.remove_denylisted(&user);
+    assert_eq!(client.get_access_state(&user), AccessState::Open);
+
+    assert_eq!(client.mint_initial(&user), 1000_0000000);
+    client.place_bet(&user, &100_0000000, &BetSide::Up);
+    assert_eq!(client.balance(&user), 900_0000000);
+}
+
+/// #842: turning allowlist mode off does not clear denylist entries, so it is
+/// not a bypass for a banned address.
+#[test]
+fn test_disabling_allowlist_mode_does_not_bypass_denylist() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.set_access_control_enabled(&true);
+    client.add_denylisted(&user);
+    client.set_access_control_enabled(&false);
+
+    assert!(!client.is_access_control_enabled());
+    assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
+
+    client.create_round(&1_0000000, &None);
+    assert_eq!(
+        client.try_place_bet(&user, &10_0000000, &BetSide::Up),
+        Err(Ok(ContractError::AccessDenied))
+    );
+}
+
+/// #842: `add_allowlisted` is the second documented bypass — it clears the
+/// conflicting deny marker, so the address can participate again.
+#[test]
+fn test_add_allowlisted_clears_denylist_and_restores_access() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    client.create_round(&1_0000000, &None);
+    client.add_denylisted(&user);
+    assert_eq!(
+        client.try_place_bet(&user, &10_0000000, &BetSide::Up),
+        Err(Ok(ContractError::AccessDenied))
+    );
+
+    client.add_allowlisted(&user);
+    assert!(!client.is_denylisted(&user));
+    assert_eq!(client.get_access_state(&user), AccessState::Allowlisted);
+
+    client.mint_initial(&user);
+    client.place_bet(&user, &10_0000000, &BetSide::Up);
+    assert_eq!(client.balance(&user), 990_0000000);
+}

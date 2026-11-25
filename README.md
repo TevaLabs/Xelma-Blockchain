@@ -194,6 +194,20 @@ Recovery workflow:
 
 Use `is_paused()` to verify the current contract state before attempting recovery actions.
 
+### Participant Access Control
+
+Deployments are **open by default**: until an admin enables allowlist mode, any
+address may mint and bet. Two per-address lists refine admission:
+
+- **Allowlist mode** (`set_access_control_enabled(true)`) admits only allowlisted addresses.
+- **Denylist** blocks an address in **every** mode, including open mode. Disabling
+  allowlist mode does *not* unblock a denied address — an admin must call
+  `remove_denylisted` (or `add_allowlisted`, which clears the deny marker).
+
+`mint_initial` and every betting entrypoint share the same gate and return
+`AccessDenied` (79). See [docs/ACCESS_CONTROL.md](./docs/ACCESS_CONTROL.md) for
+the full policy matrix, events, and operator playbook.
+
 ### Precision Participant Cap
 
 Precision rounds enforce a configurable participant cap to keep storage growth and resolution cost predictable. The default cap is **1,000 participants** per Precision round. Admins can tune it with `set_max_precision_participants(max)` within the supported range of `1` to `10,000`; use `get_max_precision_participants()` to confirm the active value.
