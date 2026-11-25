@@ -99,6 +99,46 @@ The settlement engine deterministically executes the configured `OneSidedPolicy`
 
 A dedicated `("pool", "onesided")` event is published containing `round_id`, `policy_code`, `affected_side`, `refund_amount`, `carry_amount`, `pool_up`, and `pool_down`.
 
+## Dispute Window and Void-to-Refund
+
+When `dispute_ledgers > 0` (admin: `set_dispute_ledgers`; default `0` = disabled),
+`resolve_round` does not pay out immediately. It stages the oracle result in a
+pending-settlement entry with `deadline_ledger = resolved_at_ledger + dispute_ledgers`
+and emits `(round, pending)`.
+
+Until the deadline:
+
+- Anyone may call `void_round(round_id)` to refund every participant's exact
+  stake to `PendingWinnings` — no fees, no winner payouts — and archive the
+  round as `Voided` (`(round, voided)`).
+- Once the deadline is reached (`ledger >= deadline_ledger`), anyone may call
+  `finalize_round(round_id)` to run normal settlement and archive the round as
+  `Resolved` (`(round, finalized)`).
+
+### Error mapping
+
+| Call | Condition | Error |
+|---|---|---|
+| `void_round` | `ledger >= deadline_ledger` (window closed) | `DisputeWindowExpired` (91) |
+| `void_round` | no dispute window configured (`dispute_ledgers == 0`) | `DisputeWindowExpired` (91) |
+| `void_round` | no staged settlement for `round_id` (unknown, already finalized, already voided) | `RoundNotCancellable` (27) |
+| `finalize_round` | `ledger < deadline_ledger` (window still open) | `RoundNotEnded` (16) |
+| `finalize_round` | no staged settlement for `round_id` | `NoActiveRound` (7) |
+
+A rejected `void_round` performs no storage writes, so an expired window never
+blocks the later `finalize_round` payout. Use `get_dispute_ledgers()` to read the
+active window and `get_round_status(round_id)` to confirm whether a round is
+still awaiting finalization.
+
+### Operator guidance
+
+- The default is `0`: settlement is immediate and `void_round` is unavailable.
+  Configure a window **before** opening rounds if you want a dispute path.
+- Watch `(round, pending)` events — each carries `resolved_at_ledger` and
+  `deadline_ledger`, so monitoring can page before the window closes.
+- If a staged result is wrong, call `void_round` inside the window. After the
+  deadline only `finalize_round` can move the round.
+
 ## Claiming Winnings
 
 Users call `claim_winnings` any time after a round resolves. The pending amount

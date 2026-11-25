@@ -161,7 +161,7 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
 
     assert_eq!(
         client.try_void_round(&round_id),
-        Err(Ok(ContractError::RoundNotCancellable))
+        Err(Ok(ContractError::DisputeWindowExpired))
     );
 
     let treasury_before = client.get_protocol_fee_treasury();
@@ -182,4 +182,89 @@ fn finalize_after_window_settles_and_late_void_is_blocked() {
         &contract_id,
         symbol_short!("finalized")
     ));
+}
+
+/// #834: `void_round` at (or after) the dispute deadline must fail with the
+/// dedicated `DisputeWindowExpired` error, not the generic
+/// `RoundNotCancellable` used for rounds that were never cancellable.
+#[test]
+fn void_at_dispute_deadline_returns_dispute_window_expired() {
+    let env = Env::default();
+    let (client, _contract_id, _alice, _bob, round_id) = setup(&env);
+
+    // `setup` resolves at `end_ledger` with a 5-ledger dispute window, so the
+    // deadline is `end_ledger + 5`.
+    env.ledger().with_mut(|ledger| ledger.sequence_number += 5);
+
+    assert_eq!(
+        client.try_void_round(&round_id),
+        Err(Ok(ContractError::DisputeWindowExpired))
+    );
+    assert_eq!(ContractError::DisputeWindowExpired as u32, 91);
+
+    // The staged settlement survives the rejected void, so winners can still
+    // be paid out by finalizing at the deadline.
+    client.finalize_round(&round_id);
+    assert_eq!(
+        client.get_archived_round(&round_id).unwrap().status,
+        RoundArchiveStatus::Resolved
+    );
+}
+
+/// #834: with dispute windows disabled (`dispute_ledgers == 0`) settlement is
+/// immediate, so `void_round` reports the dedicated window error instead of
+/// pretending the round simply was not cancellable.
+#[test]
+fn void_with_dispute_window_disabled_returns_dispute_window_expired() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.set_dispute_ledgers(&0u32);
+    client.mint_initial(&alice);
+    client.mint_initial(&bob);
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &60i128, &BetSide::Up);
+    client.place_bet(&bob, &40i128, &BetSide::Down);
+
+    let round = client.get_active_round().unwrap();
+    let round_id = round.round_id;
+    env.ledger()
+        .with_mut(|ledger| ledger.sequence_number = round.end_ledger);
+    client.resolve_round(&OraclePayload {
+        price: 2_000,
+        timestamp: env.ledger().timestamp(),
+        round_id: round.start_ledger,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    assert_eq!(client.get_pending_winnings(&alice), 100);
+    assert_eq!(
+        client.try_void_round(&round_id),
+        Err(Ok(ContractError::DisputeWindowExpired))
+    );
+}
+
+/// A round id with no staged settlement still reports the generic
+/// `RoundNotCancellable` error when a dispute window is configured.
+#[test]
+fn void_unknown_round_returns_round_not_cancellable() {
+    let env = Env::default();
+    let (client, _contract_id, _alice, _bob, _round_id) = setup(&env);
+
+    assert_eq!(
+        client.try_void_round(&9_999u64),
+        Err(Ok(ContractError::RoundNotCancellable))
+    );
 }

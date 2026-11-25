@@ -1127,6 +1127,10 @@ impl VirtualTokenContract {
 
     /// Anyone may call `void_round` during the dispute window to refund all
     /// participants their full stakes (void-to-refund path).
+    ///
+    /// Rejected with `DisputeWindowExpired` (91) once the dispute window has
+    /// closed (or when no dispute window is configured), and with
+    /// `RoundNotCancellable` (27) when `round_id` has no staged settlement.
     pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         settlement::void_round(env, round_id)
     }
