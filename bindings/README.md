@@ -162,6 +162,32 @@ if (simulated) {
 }
 ```
 
+## `decodeRoundPhase`
+
+Turns the `RoundPhase` returned by `get_round_phase` (or its raw `u32`) into
+user-facing strings and flags for wallet UIs. Unknown values decode to
+`key: "Unknown"` rather than throwing.
+
+```ts
+import { decodeRoundPhase } from "@xelma/bindings/helpers"
+
+const { result } = await client.get_round_phase()
+const phase = decodeRoundPhase(result.unwrap())
+badge.textContent = phase.label      // "Betting open"
+betButton.disabled = !phase.canBet
+```
+
+| `RoundPhase` | `u32` | `label`             | Flag set             | Contract window                         |
+|--------------|-------|---------------------|----------------------|-----------------------------------------|
+| `Betting`    | 1     | Betting open        | `canBet`             | `ledger < bet_end_ledger`               |
+| `Running`    | 2     | Round in progress   | `canCashOut`         | `bet_end_ledger <= ledger < end_ledger` |
+| `Resolvable` | 3     | Awaiting result     | `awaitingResolution` | `ledger >= end_ledger`                  |
+| other        | —     | Unknown phase       | none                 | not a known phase                       |
+
+`canCashOut` reflects the phase only; early cash-out also requires an UpDown
+round. `parseRoundPhase` accepts the enum, a number, bigint, numeric string or
+variant name, and `ROUND_PHASE_LABELS` exposes the label map.
+
 ## Error reference
 
 | Exception                  | Contract code | Meaning                          |

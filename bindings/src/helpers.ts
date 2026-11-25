@@ -7,6 +7,7 @@ import type { i128 } from "@stellar/stellar-sdk/contract";
 
 // Re-export BetSide from the generated client for convenience
 import type { BetSide } from "./index.js";
+import { RoundPhase } from "./index.js";
 
 // ─── Typed Exceptions ──────────────────────────────────────────
 
@@ -272,6 +273,132 @@ export async function simulateBet(
       error: wrapContractError(err),
     };
   }
+}
+
+// ─── Round Phase Decoding ──────────────────────────────────────
+
+/** Variant name of a `RoundPhase`, or `"Unknown"` for a value this version does not recognise. */
+export type RoundPhaseKey = keyof typeof RoundPhase | "Unknown";
+
+export interface RoundPhaseInfo {
+  /** The decoded phase, or `undefined` when the value is not a known `RoundPhase`. */
+  phase: RoundPhase | undefined;
+  /** Variant name, e.g. `"Betting"`. */
+  key: RoundPhaseKey;
+  /** Short user-facing label for wallet UIs. */
+  label: string;
+  /** One-line user-facing explanation of what the user can do now. */
+  description: string;
+  /** Whether new bets are accepted (`Betting` only). */
+  canBet: boolean;
+  /** Whether early cash-out may be offered (`Running` only; UpDown rounds). */
+  canCashOut: boolean;
+  /** Whether the round is waiting for the oracle to resolve it (`Resolvable` only). */
+  awaitingResolution: boolean;
+}
+
+/**
+ * User-facing strings for each `RoundPhase`, keyed by the contract's `u32`
+ * discriminant. The boundaries mirror `get_round_phase` / `_derive_round_phase`:
+ *   - `Betting`    while `ledger < bet_end_ledger`
+ *   - `Running`    while `bet_end_ledger <= ledger < end_ledger`
+ *   - `Resolvable` when  `ledger >= end_ledger`
+ */
+export const ROUND_PHASE_LABELS: Readonly<
+  Record<RoundPhase, { key: keyof typeof RoundPhase; label: string; description: string }>
+> = Object.freeze({
+  [RoundPhase.Betting]: {
+    key: "Betting",
+    label: "Betting open",
+    description: "Bets are open for this round.",
+  },
+  [RoundPhase.Running]: {
+    key: "Running",
+    label: "Round in progress",
+    description: "Betting is closed. The round is running until its end ledger.",
+  },
+  [RoundPhase.Resolvable]: {
+    key: "Resolvable",
+    label: "Awaiting result",
+    description: "The round has ended and is waiting for the oracle to resolve it.",
+  },
+});
+
+const UNKNOWN_PHASE_LABEL = "Unknown phase";
+const UNKNOWN_PHASE_DESCRIPTION =
+  "This round phase is not recognised by this version of the bindings.";
+
+/**
+ * Normalises a phase as it may arrive in a wallet: the generated `RoundPhase`
+ * enum, its raw `u32` discriminant (number, bigint, or numeric string), or its
+ * variant name (case-insensitive). Returns `undefined` for anything else.
+ */
+export function parseRoundPhase(value: unknown): RoundPhase | undefined {
+  let n: number | undefined;
+  if (typeof value === "number") {
+    n = value;
+  } else if (typeof value === "bigint") {
+    n = value <= 0xffffffffn && value >= 0n ? Number(value) : undefined;
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\d+$/.test(trimmed)) {
+      n = Number(trimmed);
+    } else {
+      const match = (Object.keys(ROUND_PHASE_LABELS) as unknown as string[])
+        .map(Number)
+        .find(
+          (k) =>
+            ROUND_PHASE_LABELS[k as RoundPhase].key.toLowerCase() === trimmed.toLowerCase(),
+        );
+      n = match;
+    }
+  }
+  if (n === undefined || !Number.isInteger(n)) return undefined;
+  return Object.prototype.hasOwnProperty.call(ROUND_PHASE_LABELS, n)
+    ? (n as RoundPhase)
+    : undefined;
+}
+
+/**
+ * Decodes a `RoundPhase` (from `client.get_round_phase()` or a raw `u32`) into
+ * user-facing strings and capability flags for wallets. Unknown values never
+ * throw: they decode to `key: "Unknown"` so a UI can still render something
+ * when the contract adds a phase the bindings do not know yet.
+ *
+ * @example
+ * const { result } = await client.get_round_phase()
+ * const info = decodeRoundPhase(result.unwrap())
+ * badge.textContent = info.label        // "Betting open"
+ * betButton.disabled = !info.canBet
+ */
+export function decodeRoundPhase(value: unknown): RoundPhaseInfo {
+  const phase = parseRoundPhase(value);
+  if (phase === undefined) {
+    return {
+      phase: undefined,
+      key: "Unknown",
+      label: UNKNOWN_PHASE_LABEL,
+      description: UNKNOWN_PHASE_DESCRIPTION,
+      canBet: false,
+      canCashOut: false,
+      awaitingResolution: false,
+    };
+  }
+  const { key, label, description } = ROUND_PHASE_LABELS[phase];
+  return {
+    phase,
+    key,
+    label,
+    description,
+    canBet: phase === RoundPhase.Betting,
+    canCashOut: phase === RoundPhase.Running,
+    awaitingResolution: phase === RoundPhase.Resolvable,
+  };
+}
+
+/** Shorthand for `decodeRoundPhase(value).label`. */
+export function roundPhaseLabel(value: unknown): string {
+  return decodeRoundPhase(value).label;
 }
 
 // ─── Access Policy Preflight (#841) ────────────────────────────
