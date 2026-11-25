@@ -401,7 +401,11 @@ impl VirtualTokenContract {
     ///
     /// The proposal must be accepted via [`Self::accept_oracle_rotation`] before
     /// `expires_in_seconds` elapses, otherwise acceptance is rejected.
-    /// Minimum expiry is 60 seconds.
+    ///
+    /// `expires_in_seconds` must be at least `MIN_ROTATION_DELAY_SECONDS`
+    /// (1 hour); shorter values return `InvalidDuration`. Acceptance is
+    /// rejected with `RotationDelayNotElapsed` until the mandatory delay has
+    /// passed.
     ///
     /// Emits `("oracle", "propose")`.
     pub fn propose_oracle_rotation(
