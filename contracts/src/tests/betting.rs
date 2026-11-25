@@ -4,7 +4,7 @@
 use super::config_helpers::{apply_max_stake, apply_max_user_exposure};
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::BetSide;
+use crate::types::{BetSide, DataKeyCore};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -389,6 +389,58 @@ fn test_get_round_pool_stats_no_active_round() {
     let client = VirtualTokenContractClient::new(&env, &contract_id);
 
     assert_eq!(client.get_round_pool_stats(), None);
+}
+
+/// #831: an early cash-out removes the stake and the participant from the
+/// live pool, so `get_round_pool_stats` reflects it immediately.
+#[test]
+fn test_get_round_pool_stats_updates_after_early_cashout() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    for u in [&alice, &bob, &carol] {
+        client.mint_initial(u);
+    }
+    client.create_round(&1_000u128, &None);
+    client.place_bet(&alice, &100, &BetSide::Up);
+    client.place_bet(&bob, &100, &BetSide::Up);
+    client.place_bet(&carol, &200, &BetSide::Down);
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKeyCore::EarlyCashoutBps, &1_000u32);
+    });
+
+    let before = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(before.total_up_stake, 200);
+    assert_eq!(before.total_down_stake, 200);
+    assert_eq!(before.up_participant_count, 2);
+    assert_eq!(before.down_participant_count, 1);
+    assert_eq!(before.up_stake_ratio_bps, 5_000);
+    assert_eq!(before.down_stake_ratio_bps, 5_000);
+
+    // Advance into the Running phase where cash-out is allowed.
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+    client.cash_out_early(&alice);
+
+    let after = client.get_round_pool_stats().expect("active round stats");
+    assert_eq!(after.round_id, before.round_id);
+    assert_eq!(after.total_up_stake, 100, "full stake leaves the pool");
+    assert_eq!(after.total_down_stake, 200);
+    assert_eq!(after.up_participant_count, 1);
+    assert_eq!(after.down_participant_count, 1);
+    assert_eq!(after.up_stake_ratio_bps, 3_333);
+    assert_eq!(after.down_stake_ratio_bps, 6_666);
 }
 
 #[test]

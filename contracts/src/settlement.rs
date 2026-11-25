@@ -1395,7 +1395,9 @@ fn _complete_settlement(
 
 /// Permissionlessly voids a resolved round while its dispute window is open.
 /// Payouts and fees remain deferred, so each participant receives exactly the
-/// stake recorded for this round.
+/// stake recorded for this round. All storage effects (pending refunds, archive,
+/// storage cleanup, and pending-dispute removal) complete before emitting the
+/// `(round, voided)` event.
 pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     _ensure_not_paused(&env)?;
