@@ -6,7 +6,7 @@
 //! rely on a single endpoint instead of stitching together multiple flags.
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::{BetSide, OraclePayload, ProtocolStatus, RoundStatus};
+use crate::types::{BetSide, OraclePayload, ProtocolHealthStatus, ProtocolStatus, RoundStatus};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, Env,
@@ -27,6 +27,25 @@ fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Addres
 
     (client, admin, oracle)
 }
+
+const HEALTH_HEALTHY: u32 = 0;
+const HEALTH_PAUSED: u32 = 1;
+const HEALTH_ORACLE_STALE: u32 = 2;
+const HEALTH_ROUND_STALE: u32 = 3;
+const HEALTH_NO_ACTIVE_ROUND: u32 = 4;
+const HEALTH_MULTIPLE_ISSUES: u32 = 5;
+const HEALTH_CLAIMS_ONLY: u32 = 6;
+const HEALTH_ACCESS_RESTRICTED: u32 = 7;
+
+const ORACLE_ACTIVE: u32 = 0;
+const ORACLE_DEGRADED: u32 = 1;
+const ORACLE_OFFLINE: u32 = 2;
+const ORACLE_UNKNOWN: u32 = 3;
+
+const PHASE_NONE: u32 = 0;
+const PHASE_BETTING: u32 = 1;
+const PHASE_RUNNING: u32 = 2;
+const PHASE_RESOLVABLE: u32 = 3;
 
 // ─── ProtocolStatus tests ────────────────────────────────────────────────────
 
@@ -391,11 +410,11 @@ fn test_protocol_status_claims_only_mode_with_active_round() {
     assert_eq!(client.get_protocol_status(), ProtocolStatus::ClaimsOnly);
     // The round's own lifecycle phase is independent of RuntimeMode.
     assert_eq!(client.get_round_status(&1), RoundStatus::Betting);
-    assert_eq!(client.get_protocol_health().status_code, 6); // CLAIMS_ONLY
+    assert_eq!(client.get_protocol_health().status_code, HEALTH_CLAIMS_ONLY);
 
     client.set_runtime_mode(&0u32);
     assert_eq!(client.get_protocol_status(), ProtocolStatus::Active);
-    assert_eq!(client.get_protocol_health().status_code, 0); // HEALTHY
+    assert_eq!(client.get_protocol_health().status_code, HEALTH_HEALTHY);
 }
 
 /// `set_runtime_mode(2)` and `pause_contract()` are the same state and must
@@ -418,7 +437,7 @@ fn test_pause_contract_and_mode_two_are_indistinguishable() {
     let (ha, hb) = (a.get_protocol_health(), b.get_protocol_health());
     assert_eq!(ha.paused, hb.paused);
     assert_eq!(ha.status_code, hb.status_code);
-    assert_eq!(ha.status_code, 1); // PAUSED
+    assert_eq!(ha.status_code, HEALTH_PAUSED);
 }
 
 /// ClaimsOnly counts as one degradation: combined with a stale oracle it must
@@ -429,16 +448,400 @@ fn test_health_claims_only_does_not_mask_stale_oracle() {
     let (client, _admin, _oracle) = setup_contract(&env);
     client.create_round(&10_0000u128, &None);
     client.set_runtime_mode(&1u32);
-    assert_eq!(client.get_protocol_health().status_code, 6); // CLAIMS_ONLY alone
+    assert_eq!(client.get_protocol_health().status_code, HEALTH_CLAIMS_ONLY);
 
     // Push the ledger clock past the oracle stale threshold.
     let threshold = client.get_oracle_stale_threshold();
     env.ledger().with_mut(|li| li.timestamp += threshold + 1);
     let health = client.get_protocol_health();
     assert!(!health.oracle_live);
-    assert_eq!(health.status_code, 5); // MULTIPLE_ISSUES
+    assert_eq!(health.status_code, HEALTH_MULTIPLE_ISSUES);
 
     // Escalating to FullyPaused always wins.
     client.set_runtime_mode(&2u32);
-    assert_eq!(client.get_protocol_health().status_code, 1); // PAUSED
+    assert_eq!(client.get_protocol_health().status_code, HEALTH_PAUSED);
+}
+
+type HealthExpectation = (u32, bool, bool, u32, bool, u32);
+
+fn assert_health_snapshot(
+    env: &Env,
+    client: &VirtualTokenContractClient<'_>,
+    health: &ProtocolHealthStatus,
+    expected: HealthExpectation,
+) {
+    let (status_code, paused, oracle_live, oracle_status, has_active_round, active_round_phase) =
+        expected;
+    assert_eq!(health.status_code, status_code);
+    assert_eq!(health.paused, paused);
+    assert_eq!(client.is_paused(), paused);
+    assert_eq!(health.oracle_live, oracle_live);
+    assert_eq!(client.is_oracle_live(), oracle_live);
+    assert_eq!(health.oracle_status, oracle_status);
+    assert_eq!(health.has_active_round, has_active_round);
+    assert_eq!(health.active_round_phase, active_round_phase);
+    assert_eq!(health.schema_version, 3);
+    assert_eq!(health.ledger_sequence, env.ledger().sequence());
+    assert_eq!(health.ledger_timestamp, env.ledger().timestamp());
+}
+
+#[test]
+fn test_health_status_healthy_and_no_active_round_snapshot() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_NO_ACTIVE_ROUND,
+            false,
+            true,
+            ORACLE_ACTIVE,
+            false,
+            PHASE_NONE,
+        ),
+    );
+
+    client.create_round(&10_0000u128, &None);
+    env.ledger().with_mut(|li| li.sequence_number = 8);
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_HEALTHY,
+            false,
+            true,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_RUNNING,
+        ),
+    );
+}
+
+#[test]
+fn test_health_status_missing_heartbeat_reports_unknown_oracle() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    client.create_round(&10_0000u128, &None);
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_ORACLE_STALE,
+            false,
+            false,
+            ORACLE_UNKNOWN,
+            true,
+            PHASE_BETTING,
+        ),
+    );
+}
+
+#[test]
+fn test_health_status_degraded_oracle_heartbeat_remains_live() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+
+    client.create_round(&10_0000u128, &None);
+    client.update_oracle_heartbeat(&1u32);
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_HEALTHY,
+            false,
+            true,
+            ORACLE_DEGRADED,
+            true,
+            PHASE_BETTING,
+        ),
+    );
+
+    let threshold = client.get_oracle_stale_threshold();
+    env.ledger().with_mut(|li| li.timestamp = threshold);
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_HEALTHY,
+            false,
+            true,
+            ORACLE_DEGRADED,
+            true,
+            PHASE_BETTING,
+        ),
+    );
+
+    env.ledger()
+        .with_mut(|li| li.timestamp = threshold.saturating_add(1));
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_ORACLE_STALE,
+            false,
+            false,
+            ORACLE_DEGRADED,
+            true,
+            PHASE_BETTING,
+        ),
+    );
+}
+
+#[test]
+fn test_health_status_offline_oracle_reports_oracle_stale() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+
+    client.create_round(&10_0000u128, &None);
+    client.update_oracle_heartbeat(&2u32);
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_ORACLE_STALE,
+            false,
+            false,
+            ORACLE_OFFLINE,
+            true,
+            PHASE_BETTING,
+        ),
+    );
+}
+
+#[test]
+fn test_health_status_round_stale_when_resolvable() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+
+    client.create_round(&10_0000u128, &None);
+    env.ledger().with_mut(|li| li.sequence_number = 20);
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_ROUND_STALE,
+            false,
+            true,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_RESOLVABLE,
+        ),
+    );
+}
+
+#[test]
+fn test_health_status_degradation_combinations_escalate_to_multiple_issues() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+
+    client.create_round(&10_0000u128, &None);
+    env.ledger().with_mut(|li| li.sequence_number = 20);
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_ROUND_STALE,
+            false,
+            true,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_RESOLVABLE,
+        ),
+    );
+
+    client.set_runtime_mode(&1u32);
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_MULTIPLE_ISSUES,
+            false,
+            true,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_RESOLVABLE,
+        ),
+    );
+
+    client.set_runtime_mode(&0u32);
+    let threshold = client.get_oracle_stale_threshold();
+    env.ledger()
+        .with_mut(|li| li.timestamp = threshold.saturating_add(1));
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_MULTIPLE_ISSUES,
+            false,
+            false,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_RESOLVABLE,
+        ),
+    );
+
+    client.set_runtime_mode(&1u32);
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_MULTIPLE_ISSUES,
+            false,
+            false,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_RESOLVABLE,
+        ),
+    );
+
+    client.set_runtime_mode(&2u32);
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_PAUSED,
+            true,
+            false,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_RESOLVABLE,
+        ),
+    );
+}
+
+#[test]
+fn test_health_status_access_restricted_yields_to_higher_precedence() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup_contract(&env);
+
+    client.create_round(&10_0000u128, &None);
+    client.set_access_control_enabled(&true);
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_ACCESS_RESTRICTED,
+            false,
+            true,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_BETTING,
+        ),
+    );
+
+    client.set_runtime_mode(&1u32);
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_CLAIMS_ONLY,
+            false,
+            true,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_BETTING,
+        ),
+    );
+
+    client.set_runtime_mode(&2u32);
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_PAUSED,
+            true,
+            true,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_BETTING,
+        ),
+    );
+
+    client.set_runtime_mode(&0u32);
+    let threshold = client.get_oracle_stale_threshold();
+    env.ledger()
+        .with_mut(|li| li.timestamp = threshold.saturating_add(1));
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_ORACLE_STALE,
+            false,
+            false,
+            ORACLE_ACTIVE,
+            true,
+            PHASE_BETTING,
+        ),
+    );
+
+    client.update_oracle_heartbeat(&0u32);
+    client.cancel_round(&1);
+
+    let health = client.get_protocol_health();
+    assert_health_snapshot(
+        &env,
+        &client,
+        &health,
+        (
+            HEALTH_NO_ACTIVE_ROUND,
+            false,
+            true,
+            ORACLE_ACTIVE,
+            false,
+            PHASE_NONE,
+        ),
+    );
 }
