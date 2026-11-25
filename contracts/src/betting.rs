@@ -293,6 +293,20 @@ pub fn create_next_from_template(env: Env) -> Result<u64, ContractError> {
     Ok(round_id)
 }
 
+/// Places an Up/Down bet for `user` in the active round.
+///
+/// # Access control (Issues #274, #839)
+///
+/// Uses the same `_enforce_access_control` gate as [`mint_initial`] and every
+/// other participant entrypoint, after the schema/pause checks and before any
+/// balance or pool write:
+///
+/// | Allowlist mode | Allowlisted | Denylisted | Result              |
+/// |:--------------:|:-----------:|:----------:|---------------------|
+/// | any            | any         | yes        | `AccessDenied` (79) |
+/// | off (open)     | any         | no         | bet accepted        |
+/// | on             | yes         | no         | bet accepted        |
+/// | on             | no          | no         | `AccessDenied` (79) |
 pub fn place_bet(
     env: Env,
     user: Address,
@@ -931,7 +945,25 @@ pub fn cash_out_early(env: Env, user: Address) -> Result<(), ContractError> {
     Ok(())
 }
 
-/// Mints 1000 vXLM for new users (one-time only)
+/// Mints 1000 vXLM for new users (one-time only).
+///
+/// # Access control (Issues #274, #839)
+///
+/// Minting is a participant-facing entrypoint and is gated by the **same**
+/// admission policy as [`place_bet`], `place_precision_prediction`,
+/// `commit_prediction`, `reveal_prediction`, and `cash_out_early`:
+///
+/// | Allowlist mode | Allowlisted | Denylisted | Result              |
+/// |:--------------:|:-----------:|:----------:|---------------------|
+/// | any            | any         | yes        | `AccessDenied` (79) |
+/// | off (open)     | any         | no         | mint succeeds       |
+/// | on             | yes         | no         | mint succeeds       |
+/// | on             | no          | no         | `AccessDenied` (79) |
+///
+/// The gate runs after the schema/pause checks and before any balance or
+/// counter write, so a rejected mint leaves storage untouched. Open mode never
+/// bypasses a denylist entry — an admin must clear it with
+/// `remove_denylisted` (or `add_allowlisted`).
 pub fn mint_initial(env: Env, user: Address) -> i128 {
     user.require_auth();
     if let Err(e) = _require_supported_schema(&env) {

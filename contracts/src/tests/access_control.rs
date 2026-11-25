@@ -429,3 +429,69 @@ fn test_add_allowlisted_clears_denylist_and_restores_access() {
     client.place_bet(&user, &10_0000000, &BetSide::Up);
     assert_eq!(client.balance(&user), 990_0000000);
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// #839: mint and bet apply the identical admission matrix.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// `mint_initial` and `place_bet` must reach the same verdict for every
+/// combination of allowlist mode and per-address markers.
+#[test]
+fn test_mint_and_bet_share_access_matrix() {
+    let (env, client, _admin, _oracle) = setup();
+    client.create_round(&1_0000000, &None);
+
+    // (allowlist_mode, allowlisted, denylisted) -> admitted
+    let cases = [
+        (false, false, false, true),
+        (false, true, false, true),
+        (false, false, true, false),
+        (false, true, true, false),
+        (true, false, false, false),
+        (true, true, false, true),
+        (true, false, true, false),
+        (true, true, true, false),
+    ];
+
+    for (mode, allowlisted, denylisted, admitted) in cases {
+        let user = Address::generate(&env);
+        client.set_access_control_enabled(&mode);
+
+        // Write markers directly so the "both lists" rows are exercised; the
+        // admin setters deliberately reconcile conflicting markers away.
+        env.as_contract(&client.address, || {
+            let storage = env.storage().persistent();
+            if allowlisted {
+                storage.set(&DataKeyScoped::Allowlisted(user.clone()), &true);
+            }
+            if denylisted {
+                storage.set(&DataKeyScoped::Denylisted(user.clone()), &true);
+            }
+        });
+
+        let mint = client.try_mint_initial(&user);
+        let bet = client.try_place_bet(&user, &10_0000000, &BetSide::Up);
+
+        if admitted {
+            assert_eq!(
+                mint,
+                Ok(1000_0000000),
+                "mint denied: {mode} {allowlisted} {denylisted}"
+            );
+            assert_eq!(bet, Ok(()), "bet denied: {mode} {allowlisted} {denylisted}");
+        } else {
+            assert_eq!(
+                mint,
+                Err(Ok(soroban_sdk::Error::from_contract_error(
+                    ContractError::AccessDenied as u32
+                ))),
+                "mint admitted: {mode} {allowlisted} {denylisted}"
+            );
+            assert_eq!(
+                bet,
+                Err(Ok(ContractError::AccessDenied)),
+                "bet admitted: {mode} {allowlisted} {denylisted}"
+            );
+        }
+    }
+}
