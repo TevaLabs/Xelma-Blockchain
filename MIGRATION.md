@@ -1,5 +1,11 @@
 # Migration Notes
 
+> **Operator procedure:** [`docs/OPERATOR_MIGRATION_PLAYBOOK.md`](./docs/OPERATOR_MIGRATION_PLAYBOOK.md)
+> is the dry-run-first, testnet-to-mainnet checklist for executing the migrations
+> described here. **Indexer guide:**
+> [`docs/indexer_guide_user_round_outcome.md`](./docs/indexer_guide_user_round_outcome.md)
+> covers querying the schema v3 archive records.
+
 ## Dry-run mode (Schema v3+)
 
 **Introduced in:** `feat/292-upgradeability-migration-dry-run-next-schema-template`

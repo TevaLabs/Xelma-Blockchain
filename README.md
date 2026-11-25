@@ -848,6 +848,8 @@ Check issues labeled [`good-first-issue`](https://github.com/TevaLabs/Xelma-Bloc
 - **[Protocol Spec](./PROTOCOL_SPEC.md)** - Formal invariants, threat model, and test traceability
 - **[Security Review](./SECURITY_REVIEW.md)** - Security analysis and best practices
 - **[Event Schema](./docs/EVENT_SCHEMA.md)** — Canonical on-chain event schema for indexers
+- **[Archived UserRoundOutcome Indexer Guide](./docs/indexer_guide_user_round_outcome.md)** — Schema v3 query guide for archived per-user outcomes
+- **[Operator Migration Playbook](./docs/OPERATOR_MIGRATION_PLAYBOOK.md)** — Dry-run-first migration checklist for testnet and mainnet
 - **[Storage Lifecycle](./docs/storage_lifecycle.md)** — TTL/rent policy for persistent keys
 - **[Bindings Guide](./bindings/README.md)** - TypeScript integration guide
 - **[Wallet Error Guide](./docs/WALLET_ERROR_GUIDE.md)** - Mapping of contract error codes to UI messages
@@ -901,19 +903,27 @@ When making contract changes, update the following to keep this README in sync:
 
 The contract tracks an on-chain **storage schema version** to make upgrades auditable and migration-safe.
 
-- New deployments set `SchemaVersion = 2` deterministically during `initialize`.
+- New deployments set `SchemaVersion = 3` deterministically during `initialize`.
 - If `SchemaVersion` is missing, the contract treats it as legacy **version 1** for compatibility.
 - If `SchemaVersion` is unknown or greater than what the contract supports, mutating entrypoints fail with `UnsupportedSchemaVersion`.
 
-### Migration (v1 → v2)
+### Migrations
 
-For legacy deployments (no schema version set), operators can run:
+Every migration accepts a `dry_run` boolean that runs all validation without writing
+storage or emitting events. The default-off early cash-out entrypoint and the archived
+`UserRoundOutcome` records are part of schema v3.
 
-- `migrate_schema_v1_to_v2()`
+- `migrate_schema_v1_to_v2(dry_run)` — legacy deployments (no schema version set).
+- `migrate_schema_v2_to_v3(dry_run)` — existing v2 deployments; adds archived per-user
+  outcome records and sets `MigratedToV3`.
 
 Guards:
-- Migration is blocked while a round is active (prevents partial state interpretation changes).
+- Migration is blocked while a round is active (prevents partial state interpretation changes), in dry-run too.
 - The migration emits `("schema","migrated")` with `(from_version, to_version)` for indexers.
+
+See [`docs/OPERATOR_MIGRATION_PLAYBOOK.md`](./docs/OPERATOR_MIGRATION_PLAYBOOK.md) for the
+dry-run-first testnet and mainnet procedure, and [`MIGRATION.md`](./MIGRATION.md) for the
+schema diffs.
 
 ---
 
