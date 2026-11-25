@@ -12,6 +12,10 @@
 //!   mode**. This is an emergency block / ban that works on open deployments
 //!   too, and always takes precedence over the allowlist. An address carrying
 //!   both markers is blocked (#838).
+//! - **Allowlist unblocks / clears denylist**: adding an address to the allowlist
+//!   via [`add_allowlisted`] actively clears any existing denylist marker,
+//!   ensuring an unbanned participant is not stuck in a denied state and
+//!   transitions immediately to [`AccessState::Allowlisted`] (#840).
 //! - **Allowlist mode**: when enabled via
 //!   [`set_access_control_enabled(true)`], only addresses that are explicitly
 //!   allowlisted are admitted. The admin signal (`DataKeyCore::AccessControlEnabled`)
@@ -70,10 +74,11 @@ pub fn is_access_control_enabled(env: Env) -> bool {
         .unwrap_or(false)
 }
 
-/// Adds `user` to the allowlist and clears any stale denylist entry (admin only).
+/// Adds `user` to the allowlist and clears any stale denylist entry (admin only) (#840).
 ///
 /// Removing an address from the denylist when it is allowlisted guarantees the
-/// two markers never conflict (denylist would otherwise silently win).
+/// two markers never conflict (denylist would otherwise silently win, causing a
+/// "stuck deny" state). The address transitions to [`AccessState::Allowlisted`].
 pub fn add_allowlisted(env: Env, user: Address) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     let admin: Address = env

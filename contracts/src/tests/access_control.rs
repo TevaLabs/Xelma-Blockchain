@@ -141,6 +141,50 @@ fn test_denylist_wins_over_allowlist() {
     assert_eq!(result, Err(Ok(ContractError::AccessDenied)));
 }
 
+/// #840: Calling `add_allowlisted` clears any existing denylist marker,
+/// ensuring the user is not stuck in a denied state. `get_access_state`
+/// transitions to `AccessState::Allowlisted`, `is_denylisted` becomes false,
+/// and the user is permitted to place bets.
+#[test]
+fn test_add_allowlisted_clears_denylist_marker() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+
+    // Mint while open.
+    client.mint_initial(&user);
+    assert_eq!(client.get_access_state(&user), AccessState::Open);
+
+    // Initially denylist the user.
+    client.add_denylisted(&user);
+    assert!(client.is_denylisted(&user));
+    assert!(!client.is_allowlisted(&user));
+    assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
+
+    // Verify betting is blocked while denylisted (both in open mode and allowlist mode).
+    client.create_round(&1_0000000, &None);
+    let blocked_bet = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
+    assert_eq!(blocked_bet, Err(Ok(ContractError::AccessDenied)));
+
+    // Enable access control mode as well to verify transition under active allowlist enforcement.
+    client.set_access_control_enabled(&true);
+
+    // Admin calls add_allowlisted to un-ban and allowlist the user (Issue #840).
+    client.add_allowlisted(&user);
+
+    // Verify denylist marker is cleared and access state transitions to Allowlisted.
+    assert!(
+        !client.is_denylisted(&user),
+        "conflicting denylist marker cleared"
+    );
+    assert!(client.is_allowlisted(&user));
+    assert_eq!(client.get_access_state(&user), AccessState::Allowlisted);
+
+    // Verify user can now participate successfully without stuck deny.
+    let bet_result = client.try_place_bet(&user, &100_0000000, &BetSide::Up);
+    assert!(bet_result.is_ok(), "user should be able to bet after allowlisting");
+    assert_eq!(client.balance(&user), 900_0000000);
+}
+
 /// #838: if both markers exist in storage (e.g. legacy data written before
 /// the admin setters cleared the opposite list), the denylist still wins and
 /// the bet is blocked — in allowlist mode and in open mode.
