@@ -37,22 +37,48 @@ if (!tsMapMatch) {
 }
 
 const tsCodes = new Map();
-const tsEntryRegex = /^\s*(\d+)\s*:\s*\{message:"[^"]+"\}/gm;
+const tsEntries = [];
+const tsEntryRegex = /^\s*(\d+)\s*:\s*\{message:"([^"]+)"\}/gm;
 let entry;
 while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
-  tsCodes.set(parseInt(entry[1], 10), entry[2]);
+  const code = parseInt(entry[1], 10);
+  tsEntries.push({ name: entry[2], code });
+  tsCodes.set(code, entry[2]);
 }
 
 const rustCodes = new Map(rustVariants.map(v => [v.code, v.name]));
 
 // --- Docs: parse the markdown registry table ---
+const docsEntries = [];
 const docsCodes = new Map();
 for (const line of docsCode.split("\n")) {
   const match = line.match(/^\|\s*(\d+)\s*\|\s*`?(\w+)`?\s*\|/);
   if (match) {
-    docsCodes.set(parseInt(match[1], 10), match[2]);
+    const code = parseInt(match[1], 10);
+    docsEntries.push({ name: match[2], code });
+    docsCodes.set(code, match[2]);
   }
 }
+
+// Maps keyed by code collapse duplicates silently, so collisions are
+// detected on the raw entry lists (Issue #861).
+function findDuplicates(entries, key) {
+  const seen = new Map();
+  for (const e of entries) {
+    const k = e[key];
+    if (!seen.has(k)) seen.set(k, []);
+    seen.get(k).push(key === "code" ? e.name : e.code);
+  }
+  return [...seen.entries()]
+    .filter(([, values]) => values.length > 1)
+    .map(([k, values]) => `${key} ${k} used by ${values.join(", ")}`);
+}
+
+const sources = [
+  ["Rust (contracts/src/errors.rs)", rustVariants],
+  ["TypeScript (bindings/src/index.ts)", tsEntries],
+  ["Docs (docs/CONTRACT_ERRORS.md)", docsEntries],
+];
 
 function formatMismatches(label, mismatches) {
   if (mismatches.length === 0) return "";
@@ -60,6 +86,36 @@ function formatMismatches(label, mismatches) {
 }
 
 describe("Contract Error Parity", () => {
+  it("parses every source", () => {
+    expect(rustVariants.length).toBeGreaterThan(0);
+    expect(tsEntries.length).toBe(rustVariants.length);
+    expect(docsEntries.length).toBe(rustVariants.length);
+    expect(tsEntries.every(e => typeof e.name === "string" && e.name.length > 0)).toBe(true);
+  });
+
+  for (const [label, entries] of sources) {
+    it(`has unique error codes in ${label}`, () => {
+      const dups = findDuplicates(entries, "code");
+      expect(dups, formatMismatches(`Duplicate codes in ${label}`, dups)).toEqual([]);
+    });
+
+    it(`has unique variant names in ${label}`, () => {
+      const dups = findDuplicates(entries, "name");
+      expect(dups, formatMismatches(`Duplicate names in ${label}`, dups)).toEqual([]);
+    });
+  }
+
+  it("detects colliding codes (self-check)", () => {
+    const sample = [
+      { name: "A", code: 1 },
+      { name: "B", code: 1 },
+      { name: "C", code: 2 },
+      { name: "C", code: 3 },
+    ];
+    expect(findDuplicates(sample, "code")).toEqual(["code 1 used by A, B"]);
+    expect(findDuplicates(sample, "name")).toEqual(["name C used by 2, 3"]);
+  });
+
   it("maps AccessDenied to its stable contract code", () => {
     expect(rustCodes.get(79)).toBe("AccessDenied");
     expect(tsCodes.get(79)).toBe("AccessDenied");

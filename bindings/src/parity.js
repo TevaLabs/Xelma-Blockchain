@@ -148,6 +148,20 @@ for (const [name, val] of Object.entries(bindingsErrors)) {
     }
 }
 
+// Each code must belong to exactly one variant in every source (Issue #861).
+// The maps above are keyed by name, so a reused code would otherwise pass.
+for (const [label, map] of [['contract', errorVariants], ['bindings error map', bindingsErrors], ['docs', documentedErrors]]) {
+    const byCode = {};
+    for (const [name, val] of Object.entries(map)) {
+        (byCode[val] = byCode[val] || []).push(name);
+    }
+    for (const [code, names] of Object.entries(byCode)) {
+        if (names.length > 1) {
+            errorsDrift.push(`Error code ${code} is used by more than one variant in ${label}: ${names.join(', ')}.`);
+        }
+    }
+}
+
 let failed = false;
 
 if (missingInBindings.length > 0 || missingInContract.length > 0) {
