@@ -401,7 +401,11 @@ impl VirtualTokenContract {
     ///
     /// The proposal must be accepted via [`Self::accept_oracle_rotation`] before
     /// `expires_in_seconds` elapses, otherwise acceptance is rejected.
-    /// Minimum expiry is 60 seconds.
+    ///
+    /// `expires_in_seconds` must be at least `MIN_ROTATION_DELAY_SECONDS`
+    /// (1 hour); shorter values return `InvalidDuration`. Acceptance is
+    /// rejected with `RotationDelayNotElapsed` until the mandatory delay has
+    /// passed.
     ///
     /// Emits `("oracle", "propose")`.
     pub fn propose_oracle_rotation(
@@ -1127,6 +1131,10 @@ impl VirtualTokenContract {
 
     /// Anyone may call `void_round` during the dispute window to refund all
     /// participants their full stakes (void-to-refund path).
+    ///
+    /// Rejected with `DisputeWindowExpired` (91) once the dispute window has
+    /// closed (or when no dispute window is configured), and with
+    /// `RoundNotCancellable` (27) when `round_id` has no staged settlement.
     pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         settlement::void_round(env, round_id)
     }

@@ -1398,14 +1398,37 @@ fn _complete_settlement(
 /// stake recorded for this round. All storage effects (pending refunds, archive,
 /// storage cleanup, and pending-dispute removal) complete before emitting the
 /// `(round, voided)` event.
+///
+/// # Errors
+///
+/// - [`ContractError::DisputeWindowExpired`] (91) — the round has a staged
+///   settlement but the dispute window has already closed
+///   (`ledger >= deadline_ledger`), or dispute windows are disabled
+///   (`dispute_ledgers == 0`), so no window ever opened.
+/// - [`ContractError::RoundNotCancellable`] (27) — there is no staged
+///   settlement for `round_id` (unknown round, already finalized, or already
+///   voided).
+///
+/// A rejected call performs no writes, so an expired window leaves the staged
+/// settlement intact for [`finalize_round`] to pay out winners.
 pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     _ensure_not_paused(&env)?;
 
-    let pending =
-        _read_pending_dispute(&env, round_id).ok_or(ContractError::RoundNotCancellable)?;
+    let pending = match _read_pending_dispute(&env, round_id) {
+        Some(pending) => pending,
+        None => {
+            // Distinguish "no window exists" from "no cancellable round" so
+            // operators get an actionable error instead of the generic one.
+            return Err(if crate::config::get_dispute_ledgers(&env) == 0 {
+                ContractError::DisputeWindowExpired
+            } else {
+                ContractError::RoundNotCancellable
+            });
+        }
+    };
     if env.ledger().sequence() >= pending.deadline_ledger {
-        return Err(ContractError::RoundNotCancellable);
+        return Err(ContractError::DisputeWindowExpired);
     }
 
     let participants: Vec<Address> = env

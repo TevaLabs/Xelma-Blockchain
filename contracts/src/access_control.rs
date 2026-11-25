@@ -23,6 +23,12 @@
 //!   addresses nor toggle the mode.
 //! - **List update events**: each mutation emits a structured event so indexers
 //!   and dashboards can track membership changes without replaying storage.
+//! - **Open mode is not a denylist bypass**: turning allowlist mode off (or
+//!   never enabling it) admits unlisted addresses, but a denylisted address
+//!   stays blocked. The only way to restore access is an admin list mutation:
+//!   [`remove_denylisted`], or [`add_allowlisted`], which clears the
+//!   conflicting deny marker. The full matrix lives on
+//!   `_enforce_access_control`.
 
 use crate::admin::{_ensure_not_paused, _require_supported_schema};
 use crate::common::_emit_action_rejected;
@@ -223,13 +229,28 @@ pub fn get_access_policy(env: Env, user: Address) -> (bool, AccessState) {
     (enabled, get_access_state(env, user))
 }
 
-/// The single admission gate called by betting entrypoints (Issue #274).
+/// The single admission gate called by every participant entrypoint —
+/// `mint_initial`, `place_bet`, `place_precision_prediction`,
+/// `commit_prediction`, `reveal_prediction`, and `cash_out_early`
+/// (Issues #274, #839).
 ///
 /// Rules (applied in this order):
 /// 1. A denylisted `user` is always rejected — this is an emergency block and
 ///    must win even on open deployments.
 /// 2. If allowlist mode is enabled, an `user` that is not allowlisted is rejected.
 /// 3. Otherwise, the call proceeds (default open).
+///
+/// # Admission matrix
+///
+/// | Allowlist mode | Allowlisted | Denylisted | Result              |
+/// |:--------------:|:-----------:|:----------:|---------------------|
+/// | any            | any         | yes        | `Err(AccessDenied)` |
+/// | off (open)     | any         | no         | `Ok(())`            |
+/// | on             | yes         | no         | `Ok(())`            |
+/// | on             | no          | no         | `Err(AccessDenied)` |
+///
+/// Open mode therefore never bypasses a denylist entry; only the admin list
+/// mutators (`remove_denylisted`, `add_allowlisted`) can restore access.
 ///
 /// Both rejection paths return the stable, dedicated
 /// [`ContractError::AccessDenied`] error (code `79`).

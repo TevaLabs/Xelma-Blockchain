@@ -50,17 +50,18 @@ fn test_propose_and_accept_before_expiry_succeeds() {
         li.timestamp = 1000;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &3600);
+    client.propose_oracle_rotation(&new_oracle, &7200);
 
     let proposal = client
         .get_oracle_rotation_proposal()
         .expect("proposal should exist");
     assert_eq!(proposal.new_oracle, new_oracle);
     assert_eq!(proposal.proposed_at, 1000);
-    assert_eq!(proposal.expires_at, 4600);
+    assert_eq!(proposal.expires_at, 8200);
 
+    // Accept exactly when the mandatory 1-hour delay elapses, before expiry.
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        li.timestamp = 1000 + 3_600;
     });
 
     client.accept_oracle_rotation();
@@ -86,10 +87,12 @@ fn test_accept_after_expiry_fails() {
         li.timestamp = 500;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    // Expiry (3 600 s) equals the mandatory delay, so the proposal expires at
+    // the same instant it becomes acceptable; advancing past it expires it.
+    client.propose_oracle_rotation(&new_oracle, &3600);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 1000 + 3_600 + 1;
     });
 
     let result = client.try_accept_oracle_rotation();
@@ -206,7 +209,7 @@ fn test_propose_and_accept_emits_events() {
         li.timestamp = 1000;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &3600);
+    client.propose_oracle_rotation(&new_oracle, &7200);
 
     let events = env.events().all();
     assert!(
@@ -215,7 +218,7 @@ fn test_propose_and_accept_emits_events() {
     );
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 2000;
+        li.timestamp = 1000 + 3_600;
     });
 
     client.accept_oracle_rotation();
@@ -239,10 +242,10 @@ fn test_accept_after_expiry_emits_expired_event() {
         li.timestamp = 500;
     });
 
-    client.propose_oracle_rotation(&new_oracle, &300);
+    client.propose_oracle_rotation(&new_oracle, &3600);
 
     env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
+        li.timestamp = 1000 + 3_600 + 1;
     });
 
     let _ = client.try_accept_oracle_rotation();
@@ -289,6 +292,43 @@ fn test_propose_requires_admin_auth() {
 // ────────────────────────────────────────────────────────────────────────────
 // Early-accept / delay tests (Issue #273)
 // ────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_accept_one_second_before_delay_fails() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let (_admin, oracle, new_oracle) = init(&env, &client);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1_000;
+    });
+    client.propose_oracle_rotation(&new_oracle, &7_200);
+
+    // One second short of the mandatory 1-hour delay.
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1_000 + 3_599;
+    });
+
+    let result = client.try_accept_oracle_rotation();
+    assert_eq!(result, Err(Ok(ContractError::RotationDelayNotElapsed)));
+    assert_eq!(ContractError::RotationDelayNotElapsed as u32, 55);
+
+    // The early attempt must not rotate the oracle or consume the proposal.
+    assert_eq!(client.get_oracle().unwrap(), oracle);
+    assert!(
+        client.get_oracle_rotation_proposal().is_some(),
+        "early accept must not consume the proposal"
+    );
+
+    // One second later the delay has elapsed and acceptance succeeds.
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1_000 + 3_600;
+    });
+    client.accept_oracle_rotation();
+    assert_eq!(client.get_oracle().unwrap(), new_oracle);
+}
 
 #[test]
 fn test_accept_before_min_delay_fails() {
