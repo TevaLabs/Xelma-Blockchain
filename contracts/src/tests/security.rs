@@ -152,6 +152,63 @@ fn test_resolve_round_future_timestamp() {
     assert_eq!(result, Err(Ok(ContractError::FutureOracleData)));
 }
 
+#[test]
+fn test_resolve_round_future_timestamp_boundary_and_recovery() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    env.ledger().with_mut(|li| {
+        li.timestamp = 940;
+    });
+    client.update_oracle_heartbeat(&0u32);
+    client.create_round(&1_0000000, &None);
+
+    // Current ledger time is 1000
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+        li.sequence_number = 12;
+    });
+
+    // Future timestamps (both +1s and u64::MAX) must be rejected with FutureOracleData
+    // without resolving the round or consuming the nonce.
+    for future_ts in [1001u64, u64::MAX] {
+        let future_payload = OraclePayload {
+            price: 1_5000000,
+            timestamp: future_ts,
+            round_id: 0,
+            nonce: 1u64,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            confidence: None,
+            attestation: None,
+        };
+        assert_eq!(
+            client.try_resolve_round(&future_payload),
+            Err(Ok(ContractError::FutureOracleData))
+        );
+    }
+
+    // Exact boundary timestamp == current ledger timestamp (1000) must succeed
+    // with the same nonce, proving the rejected future attempts did not consume it.
+    let valid_payload = OraclePayload {
+        price: 1_5000000,
+        timestamp: 1000,
+        round_id: 0,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    };
+    assert_eq!(client.try_resolve_round(&valid_payload), Ok(Ok(())));
+}
+
 // ─── Cancel-round security tests (Issue #111) ────────────────────────────────
 
 #[test]
