@@ -1207,6 +1207,241 @@ fn test_oracle_deviation_override_allows_over_threshold_and_emits_event() {
     });
 }
 
+/// Issue #815: One-shot deviation override succeeds once and then fails on the
+/// next over-threshold settlement unless explicitly re-armed.
+#[test]
+fn test_oracle_deviation_override_succeeds_once_then_fails() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    apply_oracle_max_deviation_bps(&env, &client, Some(500u32)); // 5%
+
+    // Round 1: arm one-shot override, then resolve with a 100% jump -> succeeds.
+    client.create_round(&1_0000000u128, &None);
+    let round1 = client.get_active_round().unwrap();
+    client.arm_oracle_deviation_override();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round1.end_ledger;
+        li.timestamp = round1.start_timestamp + 60;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000u128,
+        timestamp: env.ledger().timestamp(),
+        round_id: round1.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(client.get_active_round(), None);
+
+    // Round 2: without re-arming, another over-threshold price MUST fail.
+    client.create_round(&1_0000000u128, &None);
+    let round2 = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round2.end_ledger;
+        li.timestamp = round2.start_timestamp + 60;
+    });
+
+    let second = client.try_resolve_round(&OraclePayload {
+        price: 2_0000000u128,
+        timestamp: env.ledger().timestamp(),
+        round_id: round2.start_ledger,
+        nonce: 2u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(second, Err(Ok(ContractError::OracleDeviationExceeded)));
+    assert!(
+        client.get_active_round().is_some(),
+        "round 2 must remain active after rejected over-deviation settlement"
+    );
+
+    // Explicitly re-arming allows round 2 to settle.
+    client.arm_oracle_deviation_override();
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000u128,
+        timestamp: env.ledger().timestamp(),
+        round_id: round2.start_ledger,
+        nonce: 3u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(client.get_active_round(), None);
+}
+
+/// Issue #815: An armed deviation override must not remain sticky when the next
+/// settlement is within the deviation threshold.
+#[test]
+fn test_oracle_deviation_override_not_sticky_after_in_range_settlement() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    apply_oracle_max_deviation_bps(&env, &client, Some(500u32)); // 5%
+
+    // Round 1: arm override, but settle within the 5% deviation bound (1% move).
+    client.create_round(&1_0000000u128, &None);
+    let round1 = client.get_active_round().unwrap();
+    client.arm_oracle_deviation_override();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round1.end_ledger;
+        li.timestamp = round1.start_timestamp + 60;
+    });
+
+    client.resolve_round(&OraclePayload {
+        price: 1_0100000u128, // 1% <= 5%
+        timestamp: env.ledger().timestamp(),
+        round_id: round1.start_ledger,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(client.get_active_round(), None);
+
+    // No override event should have been emitted because deviation was within bounds.
+    let events = env.events().all();
+    let override_event = events.iter().find(|e| {
+        let (_contract, topics, _data) = e;
+        topics.len() == 2
+            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("oracle"))
+            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("override"))
+    });
+    assert!(
+        override_event.is_none(),
+        "override event must not be emitted when price is within deviation threshold"
+    );
+
+    // Storage flag must have been consumed by round 1.
+    env.as_contract(&contract_id, || {
+        let armed: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKeyCore::OracleDeviationOverrideArmed)
+            .unwrap_or(false);
+        assert!(
+            !armed,
+            "override must be cleared after settlement even when within threshold"
+        );
+    });
+
+    // Round 2: an over-threshold price without re-arming MUST fail.
+    client.create_round(&1_0000000u128, &None);
+    let round2 = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round2.end_ledger;
+        li.timestamp = round2.start_timestamp + 60;
+    });
+
+    let second = client.try_resolve_round(&OraclePayload {
+        price: 2_0000000u128, // 100% > 5%
+        timestamp: env.ledger().timestamp(),
+        round_id: round2.start_ledger,
+        nonce: 2u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id.clone(),
+        confidence: None,
+        attestation: None,
+    });
+    assert_eq!(second, Err(Ok(ContractError::OracleDeviationExceeded)));
+}
+
+/// Issue #815: Multi-feed settlement (`resolve_round_multi`) also consumes the
+/// one-shot deviation override once and rejects subsequent over-threshold rounds.
+#[test]
+fn test_oracle_deviation_override_multi_feed_succeeds_once_then_fails() {
+    use crate::types::{MultiFeedPayload, OracleQuorumConfig};
+    use soroban_sdk::Vec;
+
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.set_oracle_quorum_config(&Some(OracleQuorumConfig {
+        min_observations: 3,
+        quorum_threshold: 2,
+        outlier_threshold_bps: 500,
+    }));
+    apply_oracle_max_deviation_bps(&env, &client, Some(500u32)); // 5%
+
+    let make_payload = |round_id: u32, nonce: u64, price: u128| -> MultiFeedPayload {
+        let mut prices = Vec::new(&env);
+        prices.push_back(price);
+        prices.push_back(price);
+        prices.push_back(price);
+        let mut sources = Vec::new(&env);
+        sources.push_back(1u32);
+        sources.push_back(2u32);
+        sources.push_back(3u32);
+        MultiFeedPayload {
+            prices,
+            sources,
+            round_id,
+            nonce,
+            network_id: env.ledger().network_id(),
+            contract_addr: contract_id.clone(),
+            timestamp: env.ledger().timestamp(),
+        }
+    };
+
+    // Round 1: arm override, resolve with 100% jump -> succeeds.
+    client.create_round(&1_0000000u128, &None);
+    let round1 = client.get_active_round().unwrap();
+    client.arm_oracle_deviation_override();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round1.end_ledger;
+        li.timestamp = round1.start_timestamp + 60;
+    });
+
+    client.resolve_round_multi(&make_payload(round1.start_ledger, 1, 2_0000000u128));
+    assert_eq!(client.get_active_round(), None);
+
+    // Round 2: without re-arming, over-threshold multi-feed settlement MUST fail.
+    client.create_round(&1_0000000u128, &None);
+    let round2 = client.get_active_round().unwrap();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round2.end_ledger;
+        li.timestamp = round2.start_timestamp + 60;
+    });
+
+    let second =
+        client.try_resolve_round_multi(&make_payload(round2.start_ledger, 2, 2_0000000u128));
+    assert_eq!(second, Err(Ok(ContractError::OracleDeviationExceeded)));
+}
+
 #[test]
 fn test_oracle_liveness_custom_threshold() {
     let env = Env::default();

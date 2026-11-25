@@ -353,6 +353,10 @@ pub fn get_oracle_max_deviation_bps(env: Env) -> Option<u32> {
 }
 
 /// Arms a one-shot override to bypass deviation checks for the next settlement (admin only).
+///
+/// Consumed automatically on the next successful settlement (`resolve_round` or
+/// `resolve_round_multi`) regardless of whether the settled price exceeded
+/// `OracleMaxDeviationBps`, so an armed override never remains sticky across rounds.
 pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
     let admin_key = DataKeyCore::Admin;
     _extend_persistent_ttl(&env, &admin_key);
@@ -370,6 +374,23 @@ pub fn arm_oracle_deviation_override(env: Env) -> Result<(), ContractError> {
     env.storage().persistent().set(&override_key, &true);
     _extend_persistent_ttl(&env, &override_key);
     Ok(())
+}
+
+/// Consumes the one-shot oracle deviation override if armed (called from settlement).
+///
+/// Clears `OracleDeviationOverrideArmed` whenever it is set so the override
+/// cannot stay sticky across subsequent rounds, and returns `true` iff it was armed.
+pub fn _consume_oracle_deviation_override(env: &Env) -> bool {
+    let override_key = DataKeyCore::OracleDeviationOverrideArmed;
+    let armed: bool = env
+        .storage()
+        .persistent()
+        .get(&override_key)
+        .unwrap_or(false);
+    if armed {
+        env.storage().persistent().remove(&override_key);
+    }
+    armed
 }
 
 /// Loads the deviation guardrail config, returning the `StartPrice` default if unset (Issue #266).
