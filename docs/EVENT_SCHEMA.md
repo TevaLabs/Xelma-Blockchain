@@ -722,6 +722,55 @@ ended season are never deleted and remain independently queryable.
 
 ---
 
+## `("archive", "retention")` — Archive retention limit changed
+
+Emitted by `set_archive_retention` when the admin writes a new limit. Lowering
+the limit deletes nothing by itself; the next archive write prunes the backlog
+(see `("archive", "pruned")`). The same change is also published on the
+generic `("config", "updated")` stream with kind `ArchiveRetention`.
+A rejected call (out of range, paused) emits no `archive` event.
+
+| Position | Field   | Type  | Description                                  |
+|----------|---------|-------|----------------------------------------------|
+| 0        | `limit` | `u32` | New retention limit (`1..=10000`).           |
+
+**Topics**: `("archive", "retention")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: `set_archive_retention`.
+
+---
+
+## `("archive", "pruned")` — Archived round deleted by retention
+
+Archive pruning is never silent. Whenever an archive write (resolve, cancel,
+fallback refund or void) leaves more than `archive_retention` ids in the
+archive index, the oldest ids are removed one at a time. For each one the
+contract deletes `ArchivedRound(round_id)` and any `CancelledRound(round_id)`
+marker, then emits exactly one `("archive", "pruned")` event.
+
+- Events are emitted oldest first, in the same invocation as the deletion.
+- They follow the triggering round's `("round", "summary")` event.
+- After a retention decrease, the next archive write emits one event per
+  backlog round, all carrying the new limit.
+- No event is emitted while the archive is within retention.
+
+| Position | Field             | Type  | Description                                              |
+|----------|-------------------|-------|----------------------------------------------------------|
+| 0        | `round_id`        | `u64` | Round whose archived summary was deleted.                |
+| 1        | `retention_limit` | `u32` | Retention limit in force when the prune ran.             |
+
+Indexers should capture `("round", "summary")` before a round is pruned; after
+this event the chain no longer answers `get_archived_round(round_id)`.
+
+**Topics**: `("archive", "pruned")`
+**Source contracts**: `VirtualTokenContract`
+**Emitted by**: the archive write inside `resolve_round`, `resolve_round_multi`,
+`cancel_round`, min-participants fallback and void paths.
+**Tests**: `tests::archive_retention` (payload, FIFO order, backlog,
+one event per deleted round).
+
+---
+
 ## Governance events (dual approval, Issue #272)
 
 All governance events use topic0 `"gov"`. Payload fields are positional and
