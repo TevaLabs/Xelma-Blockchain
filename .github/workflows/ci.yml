@@ -214,6 +214,14 @@ jobs:
           WASM_PATH: ${{ github.workspace }}/target/wasm32v1-none/release/xelma_contract.wasm
         run: npm run test:wasm
 
+      # Issue #865: exercise the cash_out_early ABI and accounting rules against
+      # the same-commit WASM artifact (spec parsing + conservation invariants).
+      - name: Run WASM cash_out_early simulation suite (Issue #865)
+        working-directory: bindings
+        env:
+          WASM_PATH: ${{ github.workspace }}/target/wasm32v1-none/release/xelma_contract.wasm
+        run: npm run test:cashout
+
   bindings-build:
     name: Bindings Build
     runs-on: ubuntu-latest

@@ -902,19 +902,27 @@ When making contract changes, update the following to keep this README in sync:
 
 The contract tracks an on-chain **storage schema version** to make upgrades auditable and migration-safe.
 
-- New deployments set `SchemaVersion = 2` deterministically during `initialize`.
+- New deployments set `SchemaVersion = 3` deterministically during `initialize`.
 - If `SchemaVersion` is missing, the contract treats it as legacy **version 1** for compatibility.
 - If `SchemaVersion` is unknown or greater than what the contract supports, mutating entrypoints fail with `UnsupportedSchemaVersion`.
 
-### Migration (v1 → v2)
+### Migrations
 
-For legacy deployments (no schema version set), operators can run:
+Every migration accepts a `dry_run` boolean that runs all validation without writing
+storage or emitting events. The default-off early cash-out entrypoint and the archived
+`UserRoundOutcome` records are part of schema v3.
 
-- `migrate_schema_v1_to_v2()`
+- `migrate_schema_v1_to_v2(dry_run)` — legacy deployments (no schema version set).
+- `migrate_schema_v2_to_v3(dry_run)` — existing v2 deployments; adds archived per-user
+  outcome records and sets `MigratedToV3`.
 
 Guards:
-- Migration is blocked while a round is active (prevents partial state interpretation changes).
+- Migration is blocked while a round is active (prevents partial state interpretation changes), in dry-run too.
 - The migration emits `("schema","migrated")` with `(from_version, to_version)` for indexers.
+
+See [`docs/OPERATOR_MIGRATION_PLAYBOOK.md`](./docs/OPERATOR_MIGRATION_PLAYBOOK.md) for the
+dry-run-first testnet and mainnet procedure, and [`MIGRATION.md`](./MIGRATION.md) for the
+schema diffs.
 
 ---
 

@@ -102,6 +102,7 @@ const EXPECTED_CONTRACT_METHODS = [
   'predict_price',
   'commit_prediction',
   'reveal_prediction',
+  'cash_out_early',
   'mint_initial',
   'resolve_round',
   'cancel_round',

@@ -20,6 +20,7 @@
     "test:parity": "node src/parity.js",
     "test:errors": "vitest run tests/contract-error-parity.test.js",
     "test:wasm": "vitest run tests/wasm-parity.test.js",
+    "test:cashout": "vitest run tests/cash-out-early.wasm.test.ts",
     "test:vitest": "vitest run",
     "test:integration": "vitest run tests/integration.test.ts",
     "prepublishOnly": "npm run build && npm run test:parity && npm run test:errors"
