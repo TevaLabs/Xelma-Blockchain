@@ -62,6 +62,13 @@ via `--json` output instead of treating the exit code as authoritative.
   "network": "local",
   "source": "health-probe-12345",
   "paused": false,
+  "policy": {
+    "code": 0,
+    "label": "normal"
+  },
+  "dispute": {
+    "window_ledgers": 0
+  },
   "oracle": {
     "live": true,
     "status_code": 0,
@@ -91,6 +98,9 @@ via `--json` output instead of treating the exit code as authoritative.
 | `health.label`                 | string  | Human-readable label (HEALTHY, PAUSED, etc.)         |
 | `health.severity`              | string  | OK / WARN / CRIT / UNKNOWN                           |
 | `paused`                       | bool    | Contract emergency-pause state                       |
+| `policy.code`                  | u32     | Runtime mode: 0=normal, 1=claims_only, 2=fully_paused|
+| `policy.label`                 | string  | Human-readable runtime mode label                    |
+| `dispute.window_ledgers`       | u32     | Configured dispute window in ledgers (0 = disabled)  |
 | `oracle.live`                  | bool    | Oracle heartbeat is non-stale and not offline        |
 | `oracle.status_code`           | u32     | Raw oracle status: 0=active, 1=degraded, 2=offline, 3=unknown |
 | `round.active`                 | bool    | Whether a round is currently active                  |
