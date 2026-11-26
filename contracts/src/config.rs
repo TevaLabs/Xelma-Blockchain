@@ -1068,7 +1068,7 @@ pub fn _collect_protocol_fee(
     #[allow(deprecated)]
     env.events().publish(
         (symbol_short!("protocol"), symbol_short!("fee_coll")),
-        (round_id, fee_amount, new_treasury, bps_value, model_value),
+        (round_id, ops_amount, new_treasury, bps_value, model_value),
     );
 
     Ok(())
