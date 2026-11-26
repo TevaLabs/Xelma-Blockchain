@@ -288,7 +288,8 @@ payload meanings must remain stable. Additive events are allowed when documented
 in `docs/EVENT_SCHEMA.md`.
 
 Canonical event classes:
-- Round lifecycle: `("round", "created")`, `("round", "summary")`.
+- Round lifecycle: `("round", "created")`, `("round", "summary")`,
+  `("round", "pending")`, `("round", "voided")`, `("round", "finalized")`.
 - User actions: `("mint", "initial")`, `("bet", "placed")`,
   `("predict", "price")`, `("claim", "winnings")`,
   `("cashout", "early")`.
@@ -298,7 +299,7 @@ Canonical event classes:
 Evidence:
 - Code: event publishing calls in `contract.rs`.
 - Tests: `lifecycle.rs`, `mode_tests.rs`, `resolution.rs`, `security.rs`,
-  `conservation.rs`.
+  `conservation.rs`, `dispute_window.rs`.
 - Docs: `docs/EVENT_SCHEMA.md`.
 
 ### I14. Early Cash-Out
@@ -326,6 +327,54 @@ Evidence:
 - Code: `cash_out_early` in `betting.rs`, `set_early_cashout_bps` in `config.rs`, `errors.rs`.
 - Tests: `conservation.rs`.
 - Docs: `PROTOCOL_SPEC.md` (this section), `docs/WALLET_ERROR_GUIDE.md`.
+
+### I15. Dispute Window Settlement Lifecycle
+
+To protect against faulty or disputed oracle reports, the protocol supports an optional post-resolution challenge window before final payouts and fees are distributed.
+
+#### Configuration & Window Mechanics
+- **Configuration**: Controlled by `set_dispute_ledgers(env, ledgers)` (admin only) and read via `get_dispute_ledgers(&env)`.
+- **Default & Bounds**: Defaults to `DEFAULT_DISPUTE_LEDGERS = 0` (immediate settlement). Upper bound enforced at `MAX_DISPUTE_LEDGERS = 120_960` ledgers (~7 days on Stellar mainnet).
+- **Immediate Settlement (`dispute_ledgers == 0`)**: When configured to 0, `resolve_round` completes settlement immediately via `_complete_settlement`, distributing winner payouts, collecting protocol fees, and emitting `("round", "resolved")`.
+- **Staged Settlement (`dispute_ledgers > 0`)**: When configured to a positive value:
+  - `resolve_round` calculates `deadline_ledger = resolved_at_ledger + dispute_ledgers` and writes a `PendingDisputeSettlement` entry keyed by `round_id` in `PendingDisputes`.
+  - `DataKeyCore::ActiveRound` is cleared immediately so new rounds can be created without blocking on pending dispute settlements.
+  - Payouts and fees are deferred.
+  - Emits event `("round", "pending")` with `(round_id, final_price, resolved_at_ledger, deadline_ledger)`.
+
+#### Void vs. Finalize Execution
+Once staged, the round proceeds through either a challenge cancellation (`void_round`) or final settlement (`finalize_round`):
+
+1. **`void_round(round_id)` (Challenge / Void)**:
+   - Callable permissionlessly while the dispute window remains open (`ledger.sequence() < deadline_ledger`).
+   - If the window has already expired (`ledger.sequence() >= deadline_ledger`), or if the round is not found in `PendingDisputes`, rejects with `ContractError::RoundNotCancellable`.
+   - Refunds 100% of participant stakes to `PendingWinnings` (`UserOutcomeType::Void`) across both UpDown positions and Precision positions/commitments.
+   - Collects **0 protocol fees** (the fee treasury is unaltered: $\Delta\text{treasury} = 0$).
+   - Archives the round with status `RoundArchiveStatus::Voided`.
+   - Clears participant storage via `_clear_dispute_round_storage` and removes the pending dispute entry.
+   - Emits event `("round", "voided")` with `(round_id, participant_count, total_refund)`.
+   - Subsequent calls are blocked with `RoundNotCancellable`.
+
+2. **`finalize_round(round_id)` (Finalization)**:
+   - Callable permissionlessly once the dispute window has elapsed (`ledger.sequence() >= deadline_ledger`). Calling at the exact deadline ledger is allowed.
+   - If called prematurely (`ledger.sequence() < deadline_ledger`), rejects with `ContractError::RoundNotEnded`.
+   - If the round is not found in `PendingDisputes`, rejects with `ContractError::NoActiveRound`.
+   - Executes `_complete_settlement`, distributing payouts to winners, transferring protocol fees to the treasury, archiving with status `RoundArchiveStatus::Resolved`, and cleaning round storage.
+   - Removes the pending dispute entry.
+   - Emits event `("round", "finalized")` with `(round_id, final_price, participant_count, fee_amount)`.
+
+#### Invariant Conservation
+Exact balance conservation holds across all terminal branches:
+- **Void branch (`void_round`)**:
+  $$\sum \text{refunds} = \text{total\_pot}, \quad \Delta\text{treasury} = 0$$
+  Every participant receives their exact deposited stake back into pending winnings.
+- **Finalize branch (`finalize_round`)**:
+  $$\sum \text{payouts} + \text{protocol\_fee} = \text{total\_pot}$$
+  Identical conservation to immediate settlement.
+
+Evidence:
+- Code: `void_round`, `finalize_round`, `_write_pending_dispute`, `_complete_settlement` in `contracts/src/settlement.rs`; `set_dispute_ledgers`, `get_dispute_ledgers` in `contracts/src/config.rs`.
+- Tests: `contracts/src/tests/dispute_window.rs`.
 
 ## Threat Model
 
@@ -391,6 +440,7 @@ Evidence:
 | I12 | Storage cleanup/migration | indexed cleanup and legacy fallbacks | `storage_benchmarks.rs` | Covered |
 | I13 | Event semantics | event publishing calls | `lifecycle.rs`, `mode_tests.rs`, `resolution.rs`, `security.rs` | Covered; canonical schema in `docs/EVENT_SCHEMA.md` |
 | I14 | Early cash-out | `cash_out_early`, `set_early_cashout_bps` | `conservation.rs` | Covered |
+| I15 | Dispute window settlement lifecycle | `void_round`, `finalize_round`, `set_dispute_ledgers`, `_complete_settlement` | `dispute_window.rs` | Covered |
 
 ## Contributor Checklist
 
