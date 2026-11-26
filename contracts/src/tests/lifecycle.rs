@@ -1167,19 +1167,41 @@ fn test_create_next_from_template_after_settle() {
             && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("round"))
             && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("created"))
     });
-    let applied_event = events.iter().any(|e| {
-        let (_c, topics, _d) = e;
-        topics.len() == 2
-            && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("template"))
-            && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("applied"))
-    });
     assert!(
         created_event,
         "create_next_from_template must emit round/created"
     );
-    assert!(
-        applied_event,
-        "create_next_from_template must emit template/applied"
+
+    // `("template", "applied")` must carry the full payload, not just the
+    // topic pair: the applied round id, the template `start_price` and the
+    // template `mode` (with `None` encoded as 0). Asserting only the topics
+    // would let a template that was stored with the wrong price/mode slip
+    // through unnoticed.
+    let applied_event = events
+        .iter()
+        .find(|e| {
+            let (_c, topics, _d) = e;
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("template"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("applied"))
+        })
+        .expect("create_next_from_template must emit template/applied");
+    let applied_payload: (u64, u128, u32) = applied_event
+        .2
+        .clone()
+        .try_into_val(&env)
+        .expect("template/applied payload must decode as (round_id, start_price, mode)");
+    assert_eq!(
+        applied_payload.0, next_round_id,
+        "template/applied must report the round it created"
+    );
+    assert_eq!(
+        applied_payload.1, 2_5000000u128,
+        "template/applied must report the configured template start price"
+    );
+    assert_eq!(
+        applied_payload.2, 1u32,
+        "template/applied must report the configured template mode (Precision = 1)"
     );
 
     assert_eq!(next_round_id, round1.round_id + 1);
