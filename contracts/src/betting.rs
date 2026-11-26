@@ -108,7 +108,17 @@ fn _enforce_user_round_exposure(
     Ok(())
 }
 
-/// Creates a new prediction round (admin only)
+/// Creates a new prediction round (admin only).
+///
+/// # Clean-slate Precision storage (Issue #802)
+///
+/// Every new round receives a strictly monotonic `round_id`, isolating
+/// per-round keys (`PrecisionCommitment(round_id, user)`,
+/// `PrecisionPosition(round_id, user)`, and `RoundParticipants(round_id)`).
+/// For Precision rounds, `create_round` additionally clears any stale legacy
+/// `DataKeyCore::PrecisionPositions` entry or pre-existing
+/// `RoundParticipants(round_id)` key so commitment and prediction getters are
+/// guaranteed to start empty.
 pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     if start_price < MIN_START_PRICE {
@@ -229,6 +239,25 @@ pub fn create_round(env: Env, start_price: u128, mode: Option<u32>) -> Result<()
     let start_ledger_key = DataKeyScoped::RoundStartLedger(start_ledger);
     env.storage().persistent().set(&start_ledger_key, &round_id);
     _extend_persistent_ttl(&env, &start_ledger_key);
+
+    // Ensure every new Precision round starts with an empty commit/prediction
+    // map, purging any stale legacy `PrecisionPositions` or participant index
+    // entry that could otherwise leak into read getters (Issue #802).
+    if round_mode == RoundMode::Precision {
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKeyCore::PrecisionPositions)
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKeyCore::PrecisionPositions);
+        }
+        let participants_key = DataKeyScoped::RoundParticipants(round_id);
+        if env.storage().persistent().has(&participants_key) {
+            env.storage().persistent().remove(&participants_key);
+        }
+    }
 
     #[allow(deprecated)]
     env.events().publish(
