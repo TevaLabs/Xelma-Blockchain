@@ -911,10 +911,8 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
         attestation: None,
     });
 
-    let total_pot = ALICE_BET + BOB_BET;
-    assert_eq!(client.get_pending_winnings(&alice), total_pot);
-    assert_eq!(client.get_pending_winnings(&bob), 0);
-
+    // `events().all()` only holds the last invocation, so read the forfeit
+    // events immediately after `resolve_round`, before any other client call.
     let forfeits = env.events().all().iter().filter(|(_, topics, data)| {
         topics.len() == 2
             && topics
@@ -932,6 +930,10 @@ fn test_commit_reveal_e2e_mixed_reveal_forfeits_unrevealed_to_pot() {
         1,
         "Bob must emit exactly one forfeit event"
     );
+
+    let total_pot = ALICE_BET + BOB_BET;
+    assert_eq!(client.get_pending_winnings(&alice), total_pot);
+    assert_eq!(client.get_pending_winnings(&bob), 0);
 
     client.claim_winnings(&alice);
     assert_eq!(
