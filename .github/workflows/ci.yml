@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
   pull_request:
     branches: ["**"]
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -441,4 +444,58 @@ jobs:
           name: coverage-lcov
           path: lcov.info
           retention-days: 7
+          if-no-files-found: ignore
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version ${{ env.CARGO_AUDIT_VERSION }} --locked
+
+      - name: Run security audit
+        run: cargo audit
+
+  # Runs the extended fuzz suite nightly and on manual workflow dispatch.
+  fuzz-extended:
+    name: Nightly Extended Fuzz (FUZZ_MODE=extended)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-fuzz-
+            ${{ runner.os }}-cargo-
+
+      - name: Run extended fuzz suite
+        run: FUZZ_MODE=extended cargo test --package xelma-contract --lib tests::fuzz_lifecycle -- --nocapture
+
+      - name: Archive fuzz logs and artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-extended-logs-ci
+          path: |
+            target/fuzz_*.log
+            target/debug/deps/fuzz_*
           if-no-files-found: ignore
