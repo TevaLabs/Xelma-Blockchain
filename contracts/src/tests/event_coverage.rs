@@ -1255,3 +1255,66 @@ fn test_event_coverage_fee_collected_splits_with_insurance_fund() {
     assert_eq!(treasury_balance, treasury_before + treasury_delta);
     assert_eq!(fee_collected, treasury_delta);
 }
+
+#[test]
+fn test_event_coverage_early_cashout_emits_user_exit_event() {
+    let (env, _, _, _, client) = setup();
+
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+
+    // Configure 10% (1000 bps) early cashout penalty
+    client.set_early_cashout_bps(&Some(1_000));
+
+    // Create round
+    client.create_round(&1_0000000, &None);
+    let round = client.get_active_round().unwrap();
+
+    // Place bet of 100 vXLM on Up
+    client.place_bet(&user, &100_0000000, &BetSide::Up);
+
+    // Advance ledger to running phase (between bet_end_ledger and end_ledger)
+    env.ledger().with_mut(|li| {
+        li.sequence_number = round.bet_end_ledger + 1;
+    });
+
+    // Cash out early
+    client.cash_out_early(&user);
+
+    // Assert ("cashout", "early") event was emitted
+    let events = env.events().all();
+    let (_, topics, data) = events
+        .iter()
+        .rev()
+        .find(|(_, topics, _)| {
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("cashout"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("early"))
+        })
+        .expect("cashout early event should be emitted");
+
+    assert_eq!(
+        topics.get(0).unwrap().try_into_val(&env),
+        Ok(symbol_short!("cashout"))
+    );
+    assert_eq!(
+        topics.get(1).unwrap().try_into_val(&env),
+        Ok(symbol_short!("early"))
+    );
+
+    let (event_user, event_round_id, event_side, event_stake, event_cashout, event_forfeit): (
+        Address,
+        u64,
+        u32,
+        i128,
+        i128,
+        i128,
+    ) = data.try_into_val(&env).unwrap();
+
+    assert_eq!(event_user, user);
+    assert_eq!(event_round_id, round.round_id);
+    assert_eq!(event_side, 0u32); // 0 = Up
+    assert_eq!(event_stake, 100_0000000i128);
+    assert_eq!(event_cashout, 90_0000000i128); // 90%
+    assert_eq!(event_forfeit, 10_0000000i128); // 10% penalty
+}

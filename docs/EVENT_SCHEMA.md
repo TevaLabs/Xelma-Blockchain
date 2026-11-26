@@ -344,6 +344,21 @@ Emitted when a user successfully claims pending winnings.
 
 ---
 
+### `("cashout", "early")`
+
+Emitted when a user exits an active Up/Down position before round resolution via early cash-out.
+
+| Position | Field      | Type      | Description                                                    |
+|----------|------------|-----------|----------------------------------------------------------------|
+| 0        | `user`     | `Address` | Address of the user exiting early                              |
+| 1        | `round_id` | `u64`     | Round identifier from which the user exited                    |
+| 2        | `side`     | `u32`     | Position side: `0` = Up, `1` = Down                            |
+| 3        | `stake`    | `i128`    | Original stake amount in stroops                               |
+| 4        | `cashout`  | `i128`    | Amount refunded to pending winnings in stroops                 |
+| 5        | `forfeit`  | `i128`    | Forfeited exit penalty collected into protocol fees in stroops |
+
+---
+
 ### `("mint", "initial")`
 
 Emitted when a new user mints their one-time initial vXLM allocation.
