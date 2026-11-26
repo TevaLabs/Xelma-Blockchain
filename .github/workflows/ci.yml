@@ -8,11 +8,6 @@ on:
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
-    inputs:
-      fuzz_mode:
-        description: 'Fuzz mode (normal or extended)'
-        required: false
-        default: 'normal'
 
 env:
   CARGO_TERM_COLOR: always
@@ -165,6 +160,27 @@ jobs:
           name: contract-wasm
           path: target/wasm32v1-none/release/xelma_contract.wasm
           retention-days: 7
+
+  wasm-size-gate:
+    name: WASM Size Gate
+    runs-on: ubuntu-latest
+    needs: contract-build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: contract-wasm
+          path: target/wasm32v1-none/release/
+
+      # Issue #872: fail the build when the release WASM grows past
+      # `.wasm-size-baseline` + 5% (the slack that absorbs compiler noise).
+      # The script prints a size report and an actionable bump procedure;
+      # policy lives in docs/wasm-size-budget.md.
+      - name: Check release WASM against size baseline
+        run: bash scripts/check_wasm_size.sh target/wasm32v1-none/release/xelma_contract.wasm
 
   bindings-test:
     name: Bindings Tests
@@ -385,7 +401,7 @@ jobs:
           node-version: "20"
 
       - name: Check Rust <> TypeScript <> docs error enum parity
-        run: node bindings/scripts/check-error-parity.mjs
+        run: node bindings/src/parity.js
 
   coverage:
     name: Code Coverage
@@ -412,15 +428,16 @@ jobs:
           key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-coverage-
-            ${{ runner.os }}-cargo-
 
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
 
-      - name: Run coverage
-        run: cargo llvm-cov --workspace --locked --lcov --output-path lcov.info
+      - name: Generate workspace coverage
+        run: cargo llvm-cov --all-features --workspace --locked --lcov --output-path lcov.info
 
-      - name: Upload coverage artifact
+      - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -442,10 +459,7 @@ jobs:
       - name: Run security audit
         run: cargo audit
 
-  # ── Nightly FUZZ_MODE=extended job (Issue #873) ──────────────────────────────
-  # Runs the extended fuzz suite on the nightly cron schedule and on
-  # manual workflow_dispatch. FUZZ_MODE=extended enables rare-path corpus
-  # expansion that is too slow for every PR.
+  # Runs the extended fuzz suite nightly and on manual workflow dispatch.
   fuzz-extended:
     name: Nightly Extended Fuzz (FUZZ_MODE=extended)
     runs-on: ubuntu-latest
