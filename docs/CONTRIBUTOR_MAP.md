@@ -46,6 +46,7 @@ Xelma-Blockchain/
 │   │       ├── mode_tests.rs      # UpDown vs Precision mode branching
 │   │       ├── overflow_tests.rs  # Checked arithmetic overflow
 │   │       ├── pause.rs           # Emergency pause/unpause
+│   │       ├── precision_reference_parity.rs # N-seed Precision closest-winner parity vs reference model
 │   │       ├── property_invariants.rs # Protocol invariant assertions
 │   │       ├── reference_model.rs # Simplified reference impl for invariants
 │   │       ├── resolution.rs      # Payout execution and settlement
@@ -465,6 +466,33 @@ cargo test --package xelma-contract invariant_harness -- --nocapture
 
 ---
 
+#### `contracts/src/tests/precision_reference_parity.rs`
+
+**Covers:** Differential parity for **Precision (closest-guess)** settlement
+(Issue #803). `reference_model.rs` exposes `ref_precision_resolve`, an
+independent straight-line reimplementation of the documented contract
+behaviour (address-ordered scan, closest *revealed* guess wins, exact ties
+share, unrevealed commitments forfeit to the pot, all-unrevealed rounds are
+refunded fee-free, fee per `FeeModel`, split per `PrecisionPayoutPolicy`,
+remainder to the first winner by address). The harness runs `N` seeds; each
+seed plays 1–3 randomized Precision rounds through the real contract and the
+reference and asserts exact agreement on the winner set, every
+`UserRoundOutcome` (type, stake, payout, recorded price), cumulative pending
+winnings, the treasury delta, and `Σ payouts + fee == pot`. A full run also
+asserts it actually exercised multi-winner ties, forfeits, all-unrevealed
+refunds, fee-charging rounds, stake-weighted splits and non-zero remainders.
+
+**Focused command:**
+```bash
+cargo test --package xelma-contract precision_reference_parity -- --nocapture
+# More seeds:
+PRECISION_PARITY_SEEDS=512 cargo test --package xelma-contract precision_reference_parity
+# Reproduce a failure (the seed is printed in the panic message):
+PRECISION_PARITY_SEED=<seed> cargo test --package xelma-contract precision_reference_parity
+```
+
+---
+
 #### `contracts/src/tests/chaos_recovery.rs`
 
 **Covers:** Operational resilience — pause mid-round, cancel and recreate,
@@ -673,6 +701,7 @@ cargo test --package xelma-contract resolution -- --nocapture
 cargo test --package xelma-contract security -- --nocapture
 cargo test --package xelma-contract property_invariants -- --nocapture
 cargo test --package xelma-contract invariant_harness -- --nocapture
+cargo test --package xelma-contract precision_reference_parity -- --nocapture
 cargo test --package xelma-contract chaos_recovery -- --nocapture
 cargo test --package xelma-contract overflow_tests -- --nocapture
 cargo test --package xelma-contract cost_benchmarks -- --nocapture

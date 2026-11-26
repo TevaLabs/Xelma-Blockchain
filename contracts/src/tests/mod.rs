@@ -48,6 +48,7 @@ mod pause_policy_matrix;
 mod pending_winnings_expiry;
 mod policy_gate;
 mod precision_payout_overflow;
+mod precision_reference_parity;
 mod precision_scoring;
 mod property_invariants;
 mod protocol_fee_bps_bounds;
