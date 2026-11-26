@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: MIT
 //! Exhaustive mode x action tests for the central PolicyGate (Issue #261).
+//!
+//! `cash_out_early` is `RoundMutation`-gated (`_ensure_normal_mode`), so the
+//! pause policy must block it in both `ClaimsOnly` and `FullyPaused` and let it
+//! through in `Normal` (Issue #832).
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
-use crate::types::PolicyAction;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use crate::errors::ContractError;
+use crate::types::{BetSide, PolicyAction};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger as _},
+    Address, Env,
+};
 
 fn setup(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Address) {
     let contract_id = env.register(VirtualTokenContract, ());
@@ -85,6 +93,94 @@ fn test_policy_gate_admin_config_still_allowed_in_claims_only() {
                                     // Admin can still reconfigure — e.g. pause_contract itself is AdminConfig-gated.
     client.pause_contract();
     assert!(client.is_paused());
+}
+
+/// Creates a round in the `Running` phase with one open position and early
+/// cash-out enabled, i.e. the policy gate is the only thing that can block the
+/// call. Returns the client and the bettor.
+fn setup_running_early_cashout(env: &Env) -> (VirtualTokenContractClient<'_>, Address) {
+    let (client, _admin, _oracle) = setup(env);
+    let user = Address::generate(env);
+
+    client.mint_initial(&user);
+    client.set_early_cashout_bps(&Some(500u32)); // 5% penalty
+    client.create_round(&1_000_0000000u128, &None);
+    client.place_bet(&user, &100i128, &BetSide::Up);
+
+    // Default windows: betting closes at ledger 6, the round ends at 12, so
+    // ledger 7 is the Running phase where cash-out is legal.
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+
+    (client, user)
+}
+
+/// Issue #832: the pause policy must block `cash_out_early` appropriately.
+///
+/// `cash_out_early` is classified as `RoundMutation`, so `ClaimsOnly` and
+/// `FullyPaused` must both reject it with `ContractPaused` before any state is
+/// touched, and `Normal` must let the very same call succeed.
+#[test]
+fn test_policy_gate_blocks_cash_out_early_in_claims_only_and_fully_paused() {
+    let env = Env::default();
+    let (client, user) = setup_running_early_cashout(&env);
+
+    let pending_before = client.get_pending_winnings(&user);
+
+    // ClaimsOnly: settlement and claims stay open, round mutation does not.
+    client.set_runtime_mode(&1u32);
+    assert!(!client.is_action_allowed(&PolicyAction::RoundMutation));
+    assert_eq!(
+        client.try_cash_out_early(&user),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert!(
+        client.get_user_position(&user).is_some(),
+        "a gated call must not consume the position"
+    );
+    assert_eq!(client.get_pending_winnings(&user), pending_before);
+
+    // FullyPaused: everything except the mode-transition controls is blocked.
+    client.pause_contract();
+    assert!(!client.is_action_allowed(&PolicyAction::RoundMutation));
+    assert_eq!(
+        client.try_cash_out_early(&user),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert!(client.get_user_position(&user).is_some());
+    assert_eq!(client.get_pending_winnings(&user), pending_before);
+
+    // Normal: the identical call now goes through, proving the gate (and not a
+    // missing precondition) was what blocked it above.
+    client.set_runtime_mode(&0u32);
+    assert!(client.is_action_allowed(&PolicyAction::RoundMutation));
+    client.cash_out_early(&user);
+    assert!(client.get_user_position(&user).is_none());
+    assert!(client.get_pending_winnings(&user) > pending_before);
+}
+
+/// The policy gate runs before the feature/precondition checks inside
+/// `cash_out_early`, so a paused protocol reports `ContractPaused` even when
+/// early cash-out was never configured — wallets must not mistake an
+/// operational pause for the feature being switched off.
+#[test]
+fn test_policy_gate_paused_outranks_early_cashout_configuration() {
+    let env = Env::default();
+    let (client, _admin, _oracle) = setup(&env);
+    let user = Address::generate(&env);
+
+    client.mint_initial(&user);
+    client.create_round(&1_000_0000000u128, &None);
+    client.place_bet(&user, &100i128, &BetSide::Up);
+    env.ledger().with_mut(|li| li.sequence_number = 7);
+
+    // Early cash-out is deliberately left unconfigured (`EarlyCashoutBps` unset).
+    assert_eq!(client.get_early_cashout_bps(), None);
+    client.pause_contract();
+
+    assert_eq!(
+        client.try_cash_out_early(&user),
+        Err(Ok(ContractError::ContractPaused))
+    );
 }
 
 #[test]

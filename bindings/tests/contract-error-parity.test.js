@@ -37,7 +37,7 @@ if (!tsMapMatch) {
 }
 
 const tsCodes = new Map();
-const tsEntryRegex = /^\s*(\d+)\s*:\s*\{message:"[^"]+"\}/gm;
+const tsEntryRegex = /^\s*(\d+)\s*:\s*\{message:"([^"]+)"\}/gm;
 let entry;
 while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
   tsCodes.set(parseInt(entry[1], 10), entry[2]);

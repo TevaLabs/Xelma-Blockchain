@@ -12,6 +12,9 @@ fn resolve_active_round(
 ) -> u64 {
     let round = client.get_active_round().unwrap();
     let round_id = round.round_id;
+    // The oracle heartbeat gate (Issue #264) blocks settlement when no live
+    // heartbeat is on record, so keep it fresh before resolving.
+    client.update_oracle_heartbeat(&0u32);
     env.ledger().with_mut(|li| {
         li.sequence_number = round.end_ledger;
     });

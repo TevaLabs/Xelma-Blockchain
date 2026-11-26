@@ -1773,6 +1773,7 @@ fn test_alternation_updown_after_precision_no_stale_data() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
     client.mint_initial(&bob);
 
@@ -1882,6 +1883,7 @@ fn test_alternation_precision_after_updown_no_stale_data() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
 
     // --- Step 1: Run an UpDown round ---
@@ -1956,6 +1958,7 @@ fn test_alternation_cancel_clears_both_modes() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
 
     // Run a Precision round then cancel it
@@ -1995,6 +1998,7 @@ fn test_alternation_three_round_cycle_no_stale_data() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     client.mint_initial(&alice);
 
     let mut round_ids: Vec<u64> = Vec::new(&env);

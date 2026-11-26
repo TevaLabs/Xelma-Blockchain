@@ -109,6 +109,7 @@ fn test_fifo_pruning_with_small_limit() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     // Set retention to 2
     client.set_archive_retention(&2);
@@ -288,6 +289,7 @@ fn test_user_archived_participation_returns_none_after_prune() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
     let user = Address::generate(&env);
 
     client.mint_initial(&user);
@@ -350,6 +352,7 @@ fn test_prune_cleans_cancelled_round_marker() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     client.set_archive_retention(&1);
 
@@ -400,6 +403,7 @@ fn test_prune_multiple_rounds_cleans_associated_data() {
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     // Create 3 rounds with retention 1 — each new round prunes the previous
     client.set_archive_retention(&1);

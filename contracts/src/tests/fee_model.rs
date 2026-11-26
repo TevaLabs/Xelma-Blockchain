@@ -26,6 +26,7 @@ fn setup_contract(env: &Env) -> (VirtualTokenContractClient<'_>, Address, Addres
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     (client, contract_id, admin, oracle)
 }
@@ -556,6 +557,7 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &None);
 
         let alice = Address::generate(&env);
@@ -634,6 +636,7 @@ proptest! {
         let oracle = Address::generate(&env);
         env.mock_all_auths();
         client.initialize(&admin, &oracle);
+        client.update_oracle_heartbeat(&0u32);
         client.create_round(&1_0000000u128, &Some(1));
 
         let alice = Address::generate(&env);
