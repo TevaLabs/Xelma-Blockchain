@@ -21,6 +21,7 @@ fn setup_test_env() -> (Env, VirtualTokenContractClient<'static>, Address, Addre
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     (env, client, admin, oracle)
 }
@@ -356,5 +357,185 @@ fn test_rounding_and_value_conservation() {
     assert_eq!(alice_refund, alice_stake);
     assert_eq!(bob_refund, bob_stake);
     assert_eq!(alice_refund + bob_refund, total_pool);
+    assert_eq!(client.get_protocol_fee_treasury(), 0);
+}
+
+// ─── Golden vectors: OneSidedPolicy treasury / carry accounting (#825) ───────
+
+/// `("pool", "onesided")` payload:
+/// (round_id, policy_code, affected_side, refund, carry, pool_up, pool_down)
+type OneSidedEvent = (u64, u32, u32, i128, i128, i128, i128);
+
+fn last_onesided_event(env: &Env) -> OneSidedEvent {
+    // Some paths also emit a shorter legacy `("pool", "onesided")` payload, so
+    // only accept the documented 7-field one. Call this before any other
+    // client call: `events().all()` only holds the last invocation.
+    env.events()
+        .all()
+        .iter()
+        .rev()
+        .filter(|(_, topics, _)| {
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(env) == Ok(symbol_short!("pool"))
+                && topics.get(1).unwrap().try_into_val(env) == Ok(symbol_short!("onesided"))
+        })
+        .find(|(_, _, data)| {
+            let fields: Result<soroban_sdk::Vec<soroban_sdk::Val>, _> = data.try_into_val(env);
+            fields.map(|f| f.len() == 7).unwrap_or(false)
+        })
+        .map(|(_, _, data)| data.try_into_val(env).unwrap())
+        .expect("7-field onesided event must be emitted")
+}
+
+/// Opens a round, places one-sided bets and applies `policy` directly.
+/// Returns the policy result, the event, and the bettors.
+fn apply_policy(
+    side: BetSide,
+    stakes: &[i128],
+    policy: OneSidedPolicy,
+) -> (
+    Env,
+    VirtualTokenContractClient<'static>,
+    Result<i128, ContractError>,
+    OneSidedEvent,
+    soroban_sdk::Vec<Address>,
+) {
+    let (env, client, _admin, _oracle) = setup_test_env();
+    client.create_round(&1_0000000, &None);
+    let mut users = soroban_sdk::Vec::new(&env);
+    for stake in stakes {
+        let user = Address::generate(&env);
+        client.mint_initial(&user);
+        client.place_bet(&user, stake, &side);
+        users.push_back(user);
+    }
+    let round = client.get_active_round().unwrap();
+    let result = env.as_contract(&client.address, || {
+        _apply_one_sided_policy(&env, &round, policy, &users, &None)
+    });
+    let event = last_onesided_event(&env);
+    (env, client, result, event, users)
+}
+
+#[test]
+fn golden_carry_forward_up_only_event_and_treasury() {
+    let stakes = [100_0000000i128, 200_0000000, 300_0000000];
+    let (_env, client, result, event, users) =
+        apply_policy(BetSide::Up, &stakes, OneSidedPolicy::CarryForward);
+
+    // No protocol fee is taken on a degenerate market.
+    assert_eq!(result, Ok(0));
+    assert_eq!(client.get_protocol_fee_treasury(), 0);
+    // refund = 0, carry = whole pot, pools echoed, policy code 2, side Up.
+    assert_eq!(
+        event,
+        (1, 2, 0, 0, 600_0000000, 600_0000000, 0),
+        "CarryForward golden event"
+    );
+    // Stakes are still credited per participant (nothing is burned).
+    for (i, stake) in stakes.iter().enumerate() {
+        assert_eq!(
+            client.get_pending_winnings(&users.get(i as u32).unwrap()),
+            *stake
+        );
+    }
+}
+
+#[test]
+fn golden_carry_forward_down_only_reports_side_one() {
+    let stakes = [40_0000000i128, 60_0000000];
+    let (_env, client, result, event, _users) =
+        apply_policy(BetSide::Down, &stakes, OneSidedPolicy::CarryForward);
+
+    assert_eq!(result, Ok(0));
+    assert_eq!(client.get_protocol_fee_treasury(), 0);
+    assert_eq!(event, (1, 2, 1, 0, 100_0000000, 0, 100_0000000));
+}
+
+#[test]
+fn golden_refund_and_void_report_refund_not_carry() {
+    let stakes = [100_0000000i128, 200_0000000, 300_0000000];
+
+    let (_e1, c1, r1, refund_event, _u1) =
+        apply_policy(BetSide::Up, &stakes, OneSidedPolicy::Refund);
+    assert_eq!(r1, Ok(0));
+    assert_eq!(c1.get_protocol_fee_treasury(), 0);
+    assert_eq!(refund_event, (1, 0, 0, 600_0000000, 0, 600_0000000, 0));
+
+    let (_e2, c2, r2, void_event, _u2) = apply_policy(BetSide::Up, &stakes, OneSidedPolicy::Void);
+    assert_eq!(r2, Ok(0));
+    assert_eq!(c2.get_protocol_fee_treasury(), 0);
+    assert_eq!(void_event, (1, 1, 0, 600_0000000, 0, 600_0000000, 0));
+}
+
+#[test]
+fn golden_carry_forward_empty_market_is_all_zero() {
+    let (env, client, _admin, _oracle) = setup_test_env();
+    client.create_round(&1_0000000, &None);
+    let round = client.get_active_round().unwrap();
+
+    let result = env.as_contract(&client.address, || {
+        _apply_one_sided_policy(
+            &env,
+            &round,
+            OneSidedPolicy::CarryForward,
+            &soroban_sdk::Vec::new(&env),
+            &None,
+        )
+    });
+
+    let event = last_onesided_event(&env);
+    assert_eq!(result, Ok(0));
+    assert_eq!(client.get_protocol_fee_treasury(), 0);
+    // affected_side = 2 (empty), nothing refunded or carried.
+    assert_eq!(event, (1, 2, 2, 0, 0, 0, 0));
+}
+
+#[test]
+fn golden_carry_forward_conserves_supply_after_claims() {
+    let stakes = [333_3333333i128, 666_6666667];
+    let (env, client, _result, event, users) =
+        apply_policy(BetSide::Up, &stakes, OneSidedPolicy::CarryForward);
+    let total: i128 = stakes.iter().sum();
+    assert_eq!(event.4, total, "carry equals the whole pot");
+
+    let mut credited = 0i128;
+    for i in 0..users.len() {
+        credited += client.get_pending_winnings(&users.get(i).unwrap());
+    }
+    // Σ credits + treasury == pot: nothing created or destroyed.
+    assert_eq!(credited + client.get_protocol_fee_treasury(), total);
+
+    for i in 0..users.len() {
+        let user = users.get(i).unwrap();
+        client.claim_winnings(&user);
+        assert_eq!(client.balance(&user), client.balance(&user).max(0));
+    }
+    let _ = env;
+}
+
+#[test]
+fn golden_default_policy_through_resolve_round_is_refund() {
+    let (env, client, _admin, _oracle) = setup_test_env();
+    let alice = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &100_0000000, &BetSide::Up);
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+
+    client.resolve_round(&OraclePayload {
+        price: 2_0000000,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1u64,
+        network_id: env.ledger().network_id(),
+        contract_addr: client.address.clone(),
+        confidence: None,
+        attestation: None,
+    });
+
+    // Read right after the call: `events().all()` only holds the last invocation.
+    let event = last_onesided_event(&env);
+    assert_eq!(event, (1, 0, 0, 100_0000000, 0, 100_0000000, 0));
     assert_eq!(client.get_protocol_fee_treasury(), 0);
 }
