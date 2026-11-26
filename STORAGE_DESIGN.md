@@ -22,10 +22,16 @@ the whole map. The new design stores each user's record under a composite
 | **`Position(round_id, user)`** | `UserPosition` | **NEW** — indexed UpDown bet |
 | **`PrecisionPosition(round_id, user)`** | `PrecisionPrediction` | **NEW** — indexed precision guess |
 | **`RoundParticipants(round_id)`** | `Vec<Address>` | **NEW** — ordered list for resolution iteration |
+| **`PendingOutcome(round_id)`** | `PendingOutcome` | validated oracle result awaiting dispute-window finalization; TTL refreshed on read/write |
 | `CancelledRound(round_id)` | `bool` | marker for cancelled rounds (cleaned up on prune) |
 | **`ArchivedRound(round_id)`** | `ArchivedRoundSummary` | **NEW** — compact post-settlement history |
 | **`RecentArchivedRoundIds`** | `Vec<u64>` | **NEW** — FIFO index for archive retention |
 | **`UserRoundOutcome(round_id, user)`** | `UserRoundOutcome` | **NEW** — per-user outcome at settlement |
+
+Deferred outcomes use one persistent entry per round instead of rewriting a
+contract-wide map. Reads and writes extend the entry with the standard
+`TTL_BUMP_THRESHOLD` / `TTL_BUMP_AMOUNT` policy, and finalization or an accepted
+dispute removes only that round's entry.
 
 ## Archived Round Summaries
 
