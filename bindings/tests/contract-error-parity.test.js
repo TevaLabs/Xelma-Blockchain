@@ -9,6 +9,8 @@ const __dirname = path.dirname(__filename);
 const errorsPath = path.resolve(__dirname, "../../contracts/src/errors.rs");
 const bindingsPath = path.resolve(__dirname, "../src/index.ts");
 const docsPath = path.resolve(__dirname, "../../docs/CONTRACT_ERRORS.md");
+const walletGuidePath = path.resolve(__dirname, "../../docs/WALLET_ERROR_GUIDE.md");
+const walletGuideCode = readIfFound(walletGuidePath);
 
 function readIfFound(p) {
   if (!fs.existsSync(p)) {
@@ -43,7 +45,7 @@ while ((entry = tsEntryRegex.exec(tsMapMatch[1])) !== null) {
   tsCodes.set(parseInt(entry[1], 10), entry[2]);
 }
 
-const rustCodes = new Map(rustVariants.map(v => [v.code, v.name]));
+const rustCodes = new Map(rustVariants.map(v => [v,code, v.name]));
 
 // --- Docs: parse the markdown registry table ---
 const docsCodes = new Map();
@@ -121,6 +123,16 @@ describe("Contract Error Parity", () => {
 
   it("contains decodeContractError helper", () => {
     expect(bindingsCode.includes("export function decodeContractError")).toBe(true);
+  });
+
+  it("keeps WALLET_ERROR_GUIDE synced with all ContractError codes (#875)", () => {
+    const missingInGuide = [];
+    for (const [code, name] of rustCodes) {
+      if (!walletGuideCode.includes(name)) {
+        missingInGuide.push(`${code}: ${name}`);
+      }
+    }
+    expect(missingInGuide, formatMismatches("Missing in WALLET_ERROR_GUIDE.md", missingInGuide)).toEqual([]);
   });
 
   it("contains formatContractError helper", () => {
