@@ -11,7 +11,9 @@
 extern crate std;
 
 use std::env;
-use std::string::String;
+use std::format;
+use std::string::{String, ToString};
+use std::vec;
 use std::vec::Vec;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -76,9 +78,9 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
         Just(LifecycleAction::CancelRound),
         any::<bool>().prop_map(|up| LifecycleAction::ResolveRound { price_up: up }),
         user_idx.clone().prop_map(|u| LifecycleAction::ClaimWinnings { user_idx: u }),
-        amount.prop_map(|a| LifecycleAction::WithdrawFee { amount: a }),
+        amount.clone().prop_map(|a| LifecycleAction::WithdrawFee { amount: a }),
         // ── Extended fuzz actions ──
-        (user_idx.clone(), amount, target_price, tolerance_bps).prop_map(|(u, a, tp, tol)| {
+        (user_idx.clone(), amount, target_price.clone(), tolerance_bps).prop_map(|(u, a, tp, tol)| {
             LifecycleAction::PlacePrecisionBet {
                 user_idx: u,
                 amount: a,
@@ -306,7 +308,7 @@ fn fuzz_protocol_lifecycle_invariants() {
             if client.get_pending_winnings(u) == 0 {
                 let bal_before = client.balance(u);
                 let claim_res = client.try_claim_winnings(u);
-                let claimed = claim_res.unwrap_or(0);
+                let claimed = claim_res.ok().and_then(|res| res.ok()).unwrap_or(0);
                 if claimed != 0 || client.balance(u) != bal_before {
                     let diff = format!("Claim returned non-zero ({}) or balance changed on 0 pending winnings", claimed);
                     report_fuzz_failure(seed_opt, &mode, step_idx, "Claim Protection", act, &diff, &actions);

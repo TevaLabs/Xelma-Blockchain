@@ -11,6 +11,7 @@ fn test_precision_payout_policy_config() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     assert_eq!(client.get_precision_payout_policy(), 0);
 
@@ -39,6 +40,7 @@ fn test_resolve_precision_stake_weighted_policy() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     client.set_precision_payout_policy(&1);
 
@@ -112,6 +114,7 @@ fn test_precision_stake_weighted_conservation_remainder() {
 
     env.mock_all_auths();
     client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
 
     client.set_precision_payout_policy(&1);
 
