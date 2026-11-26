@@ -1,14 +1,46 @@
 // SPDX-License-Identifier: MIT
 //! End-to-end coverage for the staged dispute-window settlement lifecycle.
 
+use crate::common::MAX_DISPUTE_LEDGERS;
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
 use crate::types::{BetSide, OraclePayload, RoundArchiveStatus};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
-    Address, Env, TryIntoVal,
+    Address, Env, IntoVal, TryIntoVal,
 };
+
+#[test]
+fn set_dispute_ledgers_requires_admin_and_enforces_bounds() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &oracle);
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &attacker,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_dispute_ledgers",
+            args: (5u32,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_set_dispute_ledgers(&5u32).is_err());
+
+    env.mock_all_auths();
+    client.set_dispute_ledgers(&MAX_DISPUTE_LEDGERS);
+    assert_eq!(client.get_dispute_ledgers(), MAX_DISPUTE_LEDGERS);
+    assert_eq!(
+        client.try_set_dispute_ledgers(&(MAX_DISPUTE_LEDGERS + 1)),
+        Err(Ok(ContractError::WindowOutOfRange))
+    );
+}
 
 fn setup(
     env: &Env,
