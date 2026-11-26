@@ -107,13 +107,13 @@ pub enum ContractError {
     ClaimBatchTooLarge = 87,
     /// claim_many batch contains the same address more than once (Issue #277)
     DuplicateClaimAddress = 88,
-    /// Early cash-out feature is disabled or not configured
+    /// Early cash-out feature is disabled or not configured (code 95 / 0x5f).
     EarlyCashoutDisabled = 95,
-    /// User does not have an active position to cash out
+    /// User does not have an active position to cash out (code 96 / 0x60).
     PositionNotFound = 96,
-    /// Early cash-out attempted outside the valid running phase
+    /// Early cash-out attempted outside the valid running phase (code 97 / 0x61).
     InvalidPhaseForCashout = 97,
-    /// Early cash-out is only supported for UpDown rounds
+    /// Early cash-out is only supported for UpDown rounds (code 98 / 0x62).
     WrongModeForCashout = 98,
     /// A proposed insurance payout split does not sum to the covered balance.
     InsuranceInvalidSplit = 99,

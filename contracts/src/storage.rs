@@ -11,9 +11,37 @@
 //! (`Position` + `PrecisionPosition` + `PrecisionCommitment`) should route
 //! through `clear_user_positions` or `clear_round_storage`.
 
-use crate::types::DataKeyCore;
-use crate::types::DataKeyScoped;
+use crate::common::{TTL_BUMP_AMOUNT, TTL_BUMP_THRESHOLD};
+use crate::types::{DataKeyCore, DataKeyScoped, PendingOutcome};
 use soroban_sdk::{Address, Env, Vec};
+
+/// Loads a deferred outcome and refreshes its persistent TTL when present.
+pub fn read_pending_outcome(env: &Env, round_id: u64) -> Option<PendingOutcome> {
+    let key = DataKeyScoped::PendingOutcome(round_id);
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
+    }
+    env.storage().persistent().get(&key)
+}
+
+/// Stores a deferred outcome under its round-scoped key and applies the
+/// standard persistent-storage TTL policy.
+pub fn write_pending_outcome(env: &Env, outcome: &PendingOutcome) {
+    let key = DataKeyScoped::PendingOutcome(outcome.round.round_id);
+    env.storage().persistent().set(&key, outcome);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
+}
+
+/// Removes a deferred outcome after finalization or an accepted dispute.
+pub fn remove_pending_outcome(env: &Env, round_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&DataKeyScoped::PendingOutcome(round_id));
+}
 
 /// Removes **all** position storage keys for a single participant,
 /// regardless of the round's mode.

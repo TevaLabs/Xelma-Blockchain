@@ -172,7 +172,10 @@ fn test_place_bet_on_precision_mode_fails() {
     // The mode guard fires before any write: pools, balance, and the
     // Up/Down position store are all untouched (Issue #662).
     let round = client.get_active_round().expect("round must be active");
-    assert_eq!(round.pool_up, 0, "pool_up must be unchanged after rejection");
+    assert_eq!(
+        round.pool_up, 0,
+        "pool_up must be unchanged after rejection"
+    );
     assert_eq!(
         round.pool_down, 0,
         "pool_down must be unchanged after rejection"
@@ -2085,4 +2088,150 @@ fn test_alternation_three_round_cycle_no_stale_data() {
             }
         }
     });
+}
+
+// ─── Issue #798: mode guard leaves pools unchanged ───────────────────────────
+//
+// `place_bet` checks the round mode before the window, balance and
+// duplicate-bet checks and before any write, and every Precision route
+// (`place_precision_prediction`, `predict_price`, `commit_prediction`,
+// `reveal_prediction`) does the same on Up/Down rounds. So a wrong-mode
+// call fails with `WrongModeForPrediction` in every phase of the round and
+// writes nothing.
+
+/// An Up/Down bet on a Precision round is rejected with
+/// `WrongModeForPrediction` on both sides and in every phase (bet window,
+/// reveal-only window, after `end_ledger`), for a user with no prior stake.
+/// Nothing in the ledger changes, and the existing Precision prediction and
+/// pool stats are untouched.
+#[test]
+fn test_wrong_mode_updown_bet_on_precision_round_every_phase_leaves_storage_unchanged() {
+    use super::ledger_snapshot::assert_ledger_unchanged;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let predictor = Address::generate(&env);
+    let bettor = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&predictor);
+    client.mint_initial(&bettor);
+    client.create_round(&1_0000000, &Some(1));
+    client.place_precision_prediction(&predictor, &100_0000000, &1_2000000);
+
+    let round = client.get_active_round().expect("round must be active");
+    assert_eq!(round.mode, RoundMode::Precision);
+    let stats = client.get_round_pool_stats().expect("active round stats");
+    let bettor_balance = client.balance(&bettor);
+
+    let phases = [
+        ("bet window", round.start_ledger),
+        ("last bet ledger", round.bet_end_ledger - 1),
+        ("reveal-only window", round.bet_end_ledger),
+        ("after end_ledger", round.end_ledger),
+    ];
+    for (phase, ledger) in phases {
+        env.ledger().with_mut(|li| li.sequence_number = ledger);
+        for side in [BetSide::Up, BetSide::Down] {
+            let r = assert_ledger_unchanged(&env, phase, || {
+                client.try_place_bet(&bettor, &100_0000000, &side)
+            });
+            assert_eq!(
+                r,
+                Err(Ok(ContractError::WrongModeForPrediction)),
+                "{phase}: {side:?} bet on a Precision round"
+            );
+        }
+    }
+
+    let after = client.get_active_round().expect("round must be active");
+    assert_eq!(after, round, "round (incl. pool_up/pool_down) unchanged");
+    assert_eq!(after.pool_up, 0);
+    assert_eq!(after.pool_down, 0);
+    assert_eq!(client.get_round_pool_stats(), Some(stats));
+    assert_eq!(client.balance(&bettor), bettor_balance);
+    assert!(client.get_user_position(&bettor).is_none());
+    assert!(client.get_updown_positions().is_empty());
+    assert_eq!(
+        client
+            .get_user_precision_prediction(&predictor)
+            .expect("existing prediction survives")
+            .amount,
+        100_0000000
+    );
+}
+
+/// The reverse direction: every Precision route on an Up/Down round with
+/// funded pools is rejected with `WrongModeForPrediction`, and `pool_up` /
+/// `pool_down` keep their exact values.
+#[test]
+fn test_wrong_mode_precision_routes_on_updown_round_keep_pools_unchanged() {
+    use super::ledger_snapshot::assert_ledger_unchanged;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let up = Address::generate(&env);
+    let down = Address::generate(&env);
+    let predictor = Address::generate(&env);
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&up);
+    client.mint_initial(&down);
+    client.mint_initial(&predictor);
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&up, &100_0000000, &BetSide::Up);
+    client.place_bet(&down, &40_0000000, &BetSide::Down);
+
+    let round = client.get_active_round().expect("round must be active");
+    assert_eq!(round.mode, RoundMode::UpDown);
+    assert_eq!(round.pool_up, 100_0000000);
+    assert_eq!(round.pool_down, 40_0000000);
+    let predictor_balance = client.balance(&predictor);
+
+    for (phase, ledger) in [
+        ("bet window", round.start_ledger),
+        ("after bet_end", round.bet_end_ledger),
+    ] {
+        env.ledger().with_mut(|li| li.sequence_number = ledger);
+
+        let r = assert_ledger_unchanged(&env, "place_precision_prediction", || {
+            client.try_place_precision_prediction(&predictor, &50_0000000, &1_1000000)
+        });
+        assert_eq!(r, Err(Ok(ContractError::WrongModeForPrediction)), "{phase}");
+
+        let r = assert_ledger_unchanged(&env, "predict_price", || {
+            client.try_predict_price(&predictor, &1_1000000, &50_0000000)
+        });
+        assert_eq!(r, Err(Ok(ContractError::WrongModeForPrediction)), "{phase}");
+
+        let hash = BytesN::from_array(&env, &[7u8; 32]);
+        let r = assert_ledger_unchanged(&env, "commit_prediction", || {
+            client.try_commit_prediction(&predictor, &hash, &50_0000000)
+        });
+        assert_eq!(r, Err(Ok(ContractError::WrongModeForPrediction)), "{phase}");
+
+        let salt = test_salt(&env, 9);
+        let r = assert_ledger_unchanged(&env, "reveal_prediction", || {
+            client.try_reveal_prediction(&predictor, &1_1000000, &salt)
+        });
+        assert_eq!(r, Err(Ok(ContractError::WrongModeForPrediction)), "{phase}");
+    }
+
+    let after = client.get_active_round().expect("round must be active");
+    assert_eq!(after, round);
+    assert_eq!(after.pool_up, 100_0000000, "pool_up unchanged");
+    assert_eq!(after.pool_down, 40_0000000, "pool_down unchanged");
+    assert_eq!(client.balance(&predictor), predictor_balance);
+    assert!(client.get_user_precision_prediction(&predictor).is_none());
+    assert!(client.get_precision_predictions().is_empty());
 }

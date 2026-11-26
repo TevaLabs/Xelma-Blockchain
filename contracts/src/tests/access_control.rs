@@ -3,7 +3,7 @@
 
 use crate::contract::{VirtualTokenContract, VirtualTokenContractClient};
 use crate::errors::ContractError;
-use crate::types::{AccessState, BetSide};
+use crate::types::{AccessState, BetSide, DataKeyScoped};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger as _},
@@ -139,6 +139,31 @@ fn test_denylist_wins_over_allowlist() {
     client.create_round(&1_5000000, &None);
     let result = client.try_place_bet(&user, &50_0000000, &BetSide::Down);
     assert_eq!(result, Err(Ok(ContractError::AccessDenied)));
+}
+
+/// #838: if both markers exist in storage (e.g. legacy data written before
+/// the admin setters cleared the opposite list), the denylist still wins and
+/// the bet is blocked — in allowlist mode and in open mode.
+#[test]
+fn test_both_listed_bet_blocked_denylist_wins() {
+    let (env, client, _admin, _oracle) = setup();
+    let user = Address::generate(&env);
+    client.mint_initial(&user);
+    env.as_contract(&client.address, || {
+        let storage = env.storage().persistent();
+        storage.set(&DataKeyScoped::Allowlisted(user.clone()), &true);
+        storage.set(&DataKeyScoped::Denylisted(user.clone()), &true);
+    });
+    assert!(client.is_allowlisted(&user));
+    assert!(client.is_denylisted(&user));
+    assert_eq!(client.get_access_state(&user), AccessState::Denylisted);
+
+    client.create_round(&1_5000000, &None);
+    for enabled in [true, false] {
+        client.set_access_control_enabled(&enabled);
+        let result = client.try_place_bet(&user, &50_0000000, &BetSide::Up);
+        assert_eq!(result, Err(Ok(ContractError::AccessDenied)));
+    }
 }
 
 /// `test_admin_only_mutations` — non-admins cannot toggle the mode or mutate

@@ -10,7 +10,8 @@
 //!   changes nothing on its own.
 //! - **Denylist overrides**: a denylisted address is refused **regardless of
 //!   mode**. This is an emergency block / ban that works on open deployments
-//!   too, and always takes precedence over the allowlist.
+//!   too, and always takes precedence over the allowlist. An address carrying
+//!   both markers is blocked (#838).
 //! - **Allowlist mode**: when enabled via
 //!   [`set_access_control_enabled(true)`], only addresses that are explicitly
 //!   allowlisted are admitted. The admin signal (`DataKeyCore::AccessControlEnabled`)
