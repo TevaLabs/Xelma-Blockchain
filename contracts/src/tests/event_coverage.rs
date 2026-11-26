@@ -1132,6 +1132,63 @@ fn test_event_coverage_round_summary() {
     assert_eq!(canon.12, None); // confidence
 }
 
+/// `("pool", "onesided")` payload per docs/EVENT_SCHEMA.md:
+/// (round_id, policy_code, affected_side, refund_amount, carry_amount, pool_up, pool_down)
+type OneSidedPayload = (u64, u32, u32, i128, i128, i128, i128);
+
+/// Resolves a one-sided round and returns the number of `("pool", "onesided")`
+/// events plus the decoded documented payload. Events are read right after
+/// `resolve_round` because `events().all()` only holds the last invocation.
+fn resolve_one_sided(side: BetSide, stake: i128, price: u128) -> (usize, OneSidedPayload) {
+    let (env, contract_id, _admin, _oracle, client) = setup();
+    let alice = Address::generate(&env);
+    client.mint_initial(&alice);
+    client.create_round(&1_0000000, &None);
+    client.place_bet(&alice, &stake, &side);
+    env.ledger().with_mut(|li| li.sequence_number = 12);
+
+    client.resolve_round(&OraclePayload {
+        price,
+        timestamp: env.ledger().timestamp(),
+        round_id: 0,
+        nonce: 1,
+        network_id: env.ledger().network_id(),
+        contract_addr: contract_id,
+        confidence: None,
+        attestation: None,
+    });
+
+    let matching: std::vec::Vec<_> = env
+        .events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            topics.len() == 2
+                && topics.get(0).unwrap().try_into_val(&env) == Ok(symbol_short!("pool"))
+                && topics.get(1).unwrap().try_into_val(&env) == Ok(symbol_short!("onesided"))
+        })
+        .collect();
+    let (_, _, data) = matching
+        .last()
+        .expect("pool/onesided event must be emitted")
+        .clone();
+    (matching.len(), data.try_into_val(&env).unwrap())
+}
+
+#[test]
+fn test_event_coverage_onesided_up_matches_event_schema_field_order() {
+    let (count, payload) = resolve_one_sided(BetSide::Up, 100_0000000, 2_0000000);
+    assert_eq!(count, 1, "exactly one pool/onesided event per settlement");
+    // Refund policy (0), Up side (0): refund = pot, carry = 0, pools echoed.
+    assert_eq!(payload, (1, 0, 0, 100_0000000, 0, 100_0000000, 0));
+}
+
+#[test]
+fn test_event_coverage_onesided_down_matches_event_schema_field_order() {
+    let (count, payload) = resolve_one_sided(BetSide::Down, 300_0000000, 1_0000000);
+    assert_eq!(count, 1, "exactly one pool/onesided event per settlement");
+    // Refund policy (0), Down side (1): pool_down carries the stake.
+    assert_eq!(payload, (1, 0, 1, 300_0000000, 0, 0, 300_0000000));
 // ─── Fee event / treasury consistency (Issue #672) ──────────────────────────
 //
 // `_collect_protocol_fee` credits the treasury and (when the insurance split
