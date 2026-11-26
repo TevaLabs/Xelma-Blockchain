@@ -7,11 +7,30 @@ use crate::errors::ContractError;
 use crate::types::{BetSide, OraclePayload, RoundPhase};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    Address, Env, IntoVal,
+    Address, BytesN, Env, IntoVal,
 };
 
 const MAX_BET_WINDOW_LEDGERS: u32 = 1_440;
 const MAX_RUN_WINDOW_LEDGERS: u32 = 2_880;
+
+/// `sha256(price.to_xdr() || salt.to_xdr())` — the digest the production
+/// `reveal_prediction` path recomputes and compares against the commitment
+/// stored at commit time (mirrors `commit_reveal_e2e::make_commitment`).
+fn make_commitment(env: &Env, price: u128, salt: &BytesN<32>) -> BytesN<32> {
+    use soroban_sdk::xdr::ToXdr;
+    let mut preimage = soroban_sdk::Bytes::new(env);
+    preimage.append(&price.to_xdr(env));
+    preimage.append(&salt.clone().to_xdr(env));
+    env.crypto().sha256(&preimage).into()
+}
+
+/// Non-zero, non-constant salt that satisfies the contract's minimum
+/// entropy check (`salt_has_minimum_entropy`).
+fn boundary_test_salt(env: &Env) -> BytesN<32> {
+    let mut bytes = [0x5Au8; 32];
+    bytes[0] = 0xA5;
+    BytesN::from_array(env, &bytes)
+}
 
 #[test]
 fn test_set_windows_admin_only() {
@@ -336,8 +355,6 @@ fn test_close_buffer_precision_prediction_distinct_error() {
 
 #[test]
 fn test_close_buffer_commit_prediction_distinct_error() {
-    use soroban_sdk::BytesN;
-
     let env = Env::default();
     env.ledger().with_mut(|li| {
         li.sequence_number = 0;
@@ -780,4 +797,104 @@ fn test_get_round_phase_default_windows() {
 
     env.ledger().with_mut(|li| li.sequence_number = 62);
     assert_eq!(client.get_round_phase(), RoundPhase::Resolvable);
+}
+
+// ─── Issue #668: bet-window boundary ledgers (off-by-one) ───────────────────
+
+/// `commit_prediction` must be accepted at `bet_end_ledger - 1` (the last
+/// betting ledger) and rejected with `RoundEnded` exactly at
+/// `bet_end_ledger`, without mutating the rejected caller's balance.
+#[test]
+fn test_commit_prediction_boundary_at_bet_end_minus_one_and_bet_end() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 0;
+    });
+
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user_a);
+    client.mint_initial(&user_b);
+
+    // start_ledger = 0 ⇒ bet_end_ledger = 6, end_ledger = 12
+    apply_windows(&env, &client, 6, 12);
+    client.create_round(&1_0000000, &Some(1));
+
+    let hash_a = BytesN::from_array(&env, &[7u8; 32]);
+    let hash_b = BytesN::from_array(&env, &[8u8; 32]);
+
+    // bet_end_ledger - 1 = 5: last ledger of the bet window — accepted.
+    env.ledger().with_mut(|li| li.sequence_number = 5);
+    client.commit_prediction(&user_a, &hash_a, &50_0000000);
+    assert_eq!(client.balance(&user_a), 1000_0000000 - 50_0000000);
+
+    // bet_end_ledger = 6: the reveal window opens and the commit window
+    // closes on the same ledger — off-by-one must reject here.
+    env.ledger().with_mut(|li| li.sequence_number = 6);
+    let result = client.try_commit_prediction(&user_b, &hash_b, &50_0000000);
+    assert_eq!(result, Err(Ok(ContractError::RoundEnded)));
+    assert_eq!(
+        client.balance(&user_b),
+        1000_0000000,
+        "rejected commit must not move balance"
+    );
+}
+
+/// The reveal window opens exactly at `bet_end_ledger` (Issue #668): a
+/// reveal at `bet_end_ledger - 1` fails with `InvalidRevealWindow` and
+/// writes no prediction; the identical reveal succeeds at
+/// `bet_end_ledger` itself.
+#[test]
+fn test_reveal_window_opens_exactly_at_bet_end_ledger() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 0;
+    });
+
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    client.initialize(&admin, &oracle);
+    client.update_oracle_heartbeat(&0u32);
+    client.mint_initial(&user);
+
+    // start_ledger = 0 ⇒ bet_end_ledger = 6, end_ledger = 12
+    apply_windows(&env, &client, 6, 12);
+    client.create_round(&1_0000000, &Some(1));
+
+    let price = 2297u128;
+    let salt = boundary_test_salt(&env);
+    let hash = make_commitment(&env, price, &salt);
+    client.commit_prediction(&user, &hash, &50_0000000);
+    assert_eq!(client.balance(&user), 1000_0000000 - 50_0000000);
+
+    // bet_end_ledger - 1 = 5: still the betting window — reveal rejected,
+    // no prediction written, commitment left intact.
+    env.ledger().with_mut(|li| li.sequence_number = 5);
+    let result = client.try_reveal_prediction(&user, &price, &salt);
+    assert_eq!(result, Err(Ok(ContractError::InvalidRevealWindow)));
+    assert!(client.get_user_precision_prediction(&user).is_none());
+
+    // bet_end_ledger = 6: reveal window opens — the same reveal succeeds.
+    env.ledger().with_mut(|li| li.sequence_number = 6);
+    client.reveal_prediction(&user, &price, &salt);
+    let prediction = client.get_user_precision_prediction(&user).unwrap();
+    assert_eq!(prediction.predicted_price, price);
+    assert_eq!(prediction.amount, 50_0000000);
 }

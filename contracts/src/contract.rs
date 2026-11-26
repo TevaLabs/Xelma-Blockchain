@@ -1141,6 +1141,10 @@ impl VirtualTokenContract {
         queries::get_active_round(env)
     }
 
+    /// Returns the one-sided settlement policy for the active round.
+    ///
+    /// Never panics: with no active round (fresh deploy, or between rounds)
+    /// it returns the default `OneSidedPolicy::Refund` (#828).
     pub fn get_one_sided_policy(env: Env) -> OneSidedPolicy {
         let active_round: Option<Round> = env.storage().persistent().get(&DataKeyCore::ActiveRound);
         if let Some(round) = active_round {

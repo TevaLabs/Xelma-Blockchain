@@ -25,8 +25,6 @@ use crate::types::{BetSide, OraclePayload};
 
 /// Randomized actions covering all major protocol lifecycle entrypoints.
 #[derive(Debug, Clone)]
-/// Randomized actions covering all major protocol lifecycle entrypoints.
-#[derive(Debug, Clone)]
 pub enum LifecycleAction {
     CreateRound { start_price: u128 },
     MintUser { user_idx: usize },
@@ -41,7 +39,7 @@ pub enum LifecycleAction {
     // ── Extended fuzz actions (Issue #411) ──────────────────────────────────
     PlacePrecisionBet { user_idx: usize, amount: i128, target_price: u128, tolerance_bps: u32 },
     CommitPriceSample { price: u128, secret_nonce: u64 },
-    CashOutPosition { user_idx: usize },
+    CashOutEarly { user_idx: usize },
     AccessControlDenialCheck { user_idx: usize },
 }
 
@@ -78,7 +76,7 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
         Just(LifecycleAction::CancelRound),
         any::<bool>().prop_map(|up| LifecycleAction::ResolveRound { price_up: up }),
         user_idx.clone().prop_map(|u| LifecycleAction::ClaimWinnings { user_idx: u }),
-        amount.clone().prop_map(|a| LifecycleAction::WithdrawFee { amount: a }),
+        amount.prop_map(|a| LifecycleAction::WithdrawFee { amount: a }),
         // ── Extended fuzz actions ──
         (user_idx.clone(), amount, target_price, tolerance_bps).prop_map(|(u, a, tp, tol)| {
             LifecycleAction::PlacePrecisionBet {
@@ -88,11 +86,11 @@ fn action_generator() -> impl Strategy<Value = LifecycleAction> {
                 tolerance_bps: tol,
             }
         }),
-        (target_price, nonce).prop_map(|(p, n)| LifecycleAction::CommitPriceSample {
+        (target_price.clone(), nonce).prop_map(|(p, n)| LifecycleAction::CommitPriceSample {
             price: p,
             secret_nonce: n,
         }),
-        user_idx.clone().prop_map(|u| LifecycleAction::CashOutPosition { user_idx: u }),
+        user_idx.clone().prop_map(|u| LifecycleAction::CashOutEarly { user_idx: u }),
         user_idx.prop_map(|u| LifecycleAction::AccessControlDenialCheck { user_idx: u }),
     ]
 }
@@ -189,16 +187,27 @@ fn fuzz_protocol_lifecycle_invariants() {
                 }
             }
             LifecycleAction::CancelRound => {
-                let _ = client.try_cancel_round();
+                let _ = client.try_cancel_round(&0u32);
             }
             LifecycleAction::ResolveRound { price_up } => {
                 if let Some(active) = client.get_active_round() {
-                    env.ledger().with_mut(|li| li.sequence_number = active.end_ledger);
-                    let price = if *price_up { 2_0000000u128 } else { 5000000u128 };
+                    env.ledger()
+                        .with_mut(|li| li.sequence_number = active.end_ledger);
+                    let price = if *price_up {
+                        2_0000000u128
+                    } else {
+                        5_000000u128
+                    };
                     let _ = client.try_resolve_round(&OraclePayload {
-                        round_id: active.round_id,
                         price,
                         timestamp: env.ledger().timestamp(),
+                        // The oracle payload binds to the round's `start_ledger`.
+                        round_id: active.start_ledger,
+                        nonce: 1u64,
+                        network_id: env.ledger().network_id(),
+                        contract_addr: contract_id.clone(),
+                        confidence: None,
+                        attestation: None,
                     });
                 }
             }
@@ -219,9 +228,24 @@ fn fuzz_protocol_lifecycle_invariants() {
                 // Extended commit-reveal sample action
                 let _ = client.is_paused();
             }
-            LifecycleAction::CashOutPosition { user_idx } => {
+            LifecycleAction::CashOutEarly { user_idx } => {
                 let user = &users[*user_idx % users.len()];
-                let _ = client.get_pending_winnings(user);
+                // Early cash-out is opt-in: enable a 5% penalty so the action
+                // exercises the real entrypoint instead of always being
+                // rejected as `EarlyCashoutDisabled`. The setter is idempotent,
+                // so re-running it across steps is harmless.
+                let _ = client.try_set_early_cashout_bps(&Some(500u32));
+                // Cash-out is only valid in the Running phase: betting must be
+                // closed (`ledger >= bet_end_ledger`) and the round must not
+                // have ended yet (`ledger < end_ledger`). Move the ledger there
+                // when a round with a non-empty running window is active.
+                if let Some(active) = client.get_active_round() {
+                    if active.bet_end_ledger < active.end_ledger {
+                        env.ledger()
+                            .with_mut(|li| li.sequence_number = active.bet_end_ledger);
+                    }
+                }
+                let _ = client.try_cash_out_early(user);
             }
             LifecycleAction::AccessControlDenialCheck { user_idx } => {
                 let user = &users[*user_idx % users.len()];
