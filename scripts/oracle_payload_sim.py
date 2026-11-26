@@ -72,6 +72,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     g_output = parser.add_argument_group("output options")
     g_output.add_argument("--stellar-cli", action="store_true", help="Emit a copy-paste stellar contract invoke command")
     g_output.add_argument("--json", action="store_true", help="Emit only the JSON payload (no validation output)")
+    g_output.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Emit a stable JSON validation report for CI and fixture comparisons",
+    )
     g_output.add_argument("--contract-id", type=str, default=None, help="Contract ID for stellar CLI command")
     g_output.add_argument("--oracle-key", type=str, default=None, help="Stellar key identity for signing")
     g_output.add_argument("--network", type=str, default="testnet", help="Stellar network name (default: testnet)")
@@ -235,6 +240,19 @@ def build_payload_json(args: argparse.Namespace) -> str:
     return json.dumps(payload, indent=2)
 
 
+def build_check_report(issues: list[dict], payload_json: str) -> dict:
+    """Return the deterministic JSON layout consumed by CI fixture vectors."""
+    errors = [issue for issue in issues if issue["severity"] == "ERROR"]
+    warnings = [issue for issue in issues if issue["severity"] == "WARN"]
+    return {
+        "valid": not errors,
+        "errors": len(errors),
+        "warnings": len(warnings),
+        "checks": issues,
+        "payload": json.loads(payload_json),
+    }
+
+
 def build_stellar_cli(args: argparse.Namespace, payload_json: str) -> str:
     cid = args.contract_id or "<CONTRACT_ID>"
     skey = args.oracle_key or "<ORACLE_KEY>"
@@ -282,7 +300,7 @@ def print_header():
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
 
-    if not args.timestamp:
+    if args.timestamp is None:
         args.timestamp = int(time.time())
 
     all_issues: list[dict] = []
@@ -297,6 +315,10 @@ def main(argv: list[str] | None = None) -> int:
 
     payload_json = build_payload_json(args)
     errors = [i for i in all_issues if i["severity"] == "ERROR"]
+
+    if args.check_only:
+        print(json.dumps(build_check_report(all_issues, payload_json), indent=2, sort_keys=True))
+        return EXIT_SUCCESS if not errors else EXIT_VALIDATION_FAILED
 
     if args.json:
         print(payload_json)

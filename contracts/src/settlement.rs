@@ -16,78 +16,20 @@ use crate::settlement_math::{
     classify_price_direction, compute_deviation_bps, compute_updown_winner_payout,
     is_one_sided_pool, total_pot_updown, PriceDirection,
 };
-use crate::storage::clear_round_storage;
+use crate::storage::{
+    clear_round_storage, read_pending_outcome, remove_pending_outcome, write_pending_outcome,
+};
 use crate::types::{
     ArchivedRoundSummary, BetSide, DataKeyCore, DataKeyScoped, DeviationReferenceMode,
     HbGateConfig, LeaderboardEntry, MultiFeedPayload, OneSidedPolicy, OracleHeartbeatRecord,
-    OraclePayload, OracleQuorumConfig, PendingWinningsUpdatedAtKey, PrecisionCommitment,
-    PrecisionPayoutPolicy, PrecisionPrediction, PriceSample, Round, RoundArchiveStatus, RoundMode,
-    TwapSamplesKey, UserOutcomeType, UserPosition, UserRoundOutcome, UserStats,
+    OraclePayload, OracleQuorumConfig, PendingOutcome, PendingWinningsUpdatedAtKey,
+    PrecisionCommitment, PrecisionPayoutPolicy, PrecisionPrediction, PriceSample, Round,
+    RoundArchiveStatus, RoundMode, TwapSamplesKey, UserOutcomeType, UserPosition, UserRoundOutcome,
+    UserStats,
 };
 use alloc::vec::Vec as StdVec;
 use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Map, Symbol, Vec};
-
-#[contracttype]
-#[derive(Clone)]
-struct PendingDisputeSettlement {
-    round: Round,
-    final_price: u128,
-    confidence: Option<u32>,
-    resolved_at_ledger: u32,
-    deadline_ledger: u32,
-}
-
-fn _pending_disputes_key(env: &Env) -> Symbol {
-    Symbol::new(env, "PendingDisputes")
-}
-
-fn _read_pending_dispute(env: &Env, round_id: u64) -> Option<PendingDisputeSettlement> {
-    let key = _pending_disputes_key(env);
-    if env.storage().persistent().has(&key) {
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
-    }
-    let pending: Map<u64, PendingDisputeSettlement> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Map::new(env));
-    pending.get(round_id)
-}
-
-fn _write_pending_dispute(env: &Env, settlement: &PendingDisputeSettlement) {
-    let key = _pending_disputes_key(env);
-    let mut pending: Map<u64, PendingDisputeSettlement> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Map::new(env));
-    pending.set(settlement.round.round_id, settlement.clone());
-    env.storage().persistent().set(&key, &pending);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
-}
-
-fn _remove_pending_dispute(env: &Env, round_id: u64) {
-    let key = _pending_disputes_key(env);
-    let mut pending: Map<u64, PendingDisputeSettlement> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(Map::new(env));
-    pending.remove(round_id);
-    if pending.is_empty() {
-        env.storage().persistent().remove(&key);
-    } else {
-        env.storage().persistent().set(&key, &pending);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, TTL_BUMP_THRESHOLD, TTL_BUMP_AMOUNT);
-    }
-}
+use soroban_sdk::{symbol_short, Address, Bytes, Env, Map, Vec};
 
 /// Clears only storage owned by the terminal round. A newer active round may
 /// already exist while an older result is inside its dispute window, so this
@@ -1247,11 +1189,11 @@ fn _settle_round_with_price(
                 0,
                 confidence,
             );
-            _refund_under_threshold(env, round, &threshold_participants)?;
+            let refund_total = _refund_under_threshold(env, round, &threshold_participants)?;
             #[allow(deprecated)]
             env.events().publish(
                 (symbol_short!("round"), symbol_short!("fallback")),
-                (round_id, count, min),
+                (round_id, count, min, refund_total),
             );
             return Ok(());
         }
@@ -1263,9 +1205,9 @@ fn _settle_round_with_price(
         let deadline_ledger = resolved_at_ledger
             .checked_add(dispute_ledgers)
             .ok_or(ContractError::Overflow)?;
-        _write_pending_dispute(
+        write_pending_outcome(
             env,
-            &PendingDisputeSettlement {
+            &PendingOutcome {
                 round: round.clone(),
                 final_price,
                 confidence,
@@ -1391,13 +1333,15 @@ fn _complete_settlement(
 
 /// Permissionlessly voids a resolved round while its dispute window is open.
 /// Payouts and fees remain deferred, so each participant receives exactly the
-/// stake recorded for this round.
+/// stake recorded for this round. All storage effects (pending refunds, archive,
+/// storage cleanup, and pending-dispute removal) complete before emitting the
+/// `(round, voided)` event.
 pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     _ensure_not_paused(&env)?;
 
     let pending =
-        _read_pending_dispute(&env, round_id).ok_or(ContractError::RoundNotCancellable)?;
+        read_pending_outcome(&env, round_id).ok_or(ContractError::RoundNotCancellable)?;
     if env.ledger().sequence() >= pending.deadline_ledger {
         return Err(ContractError::RoundNotCancellable);
     }
@@ -1483,7 +1427,7 @@ pub fn void_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         pending.confidence,
     );
     _clear_dispute_round_storage(&env, round_id, &participants);
-    _remove_pending_dispute(&env, round_id);
+    remove_pending_outcome(&env, round_id);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -1499,7 +1443,7 @@ pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
     _require_supported_schema(&env)?;
     _ensure_not_paused(&env)?;
 
-    let pending = _read_pending_dispute(&env, round_id).ok_or(ContractError::NoActiveRound)?;
+    let pending = read_pending_outcome(&env, round_id).ok_or(ContractError::NoActiveRound)?;
     if env.ledger().sequence() < pending.deadline_ledger {
         return Err(ContractError::RoundNotEnded);
     }
@@ -1510,7 +1454,7 @@ pub fn finalize_round(env: Env, round_id: u64) -> Result<(), ContractError> {
         pending.final_price,
         pending.confidence,
     )?;
-    _remove_pending_dispute(&env, round_id);
+    remove_pending_outcome(&env, round_id);
 
     #[allow(deprecated)]
     env.events().publish(
@@ -2108,11 +2052,13 @@ pub fn _resolve_precision_mode(
         // mixed-reveal case — every participant's stake must be refunded in
         // full rather than silently vanishing from circulation (conservation:
         // sum_refunds == total_pot, fee == 0, no stats mutation).
+        let mut refund_total = 0i128;
         for i in 0..participants.len() {
             if let Some(user) = participants.get(i) {
                 let idx = i as usize;
                 let stake = participant_amounts.get(idx).copied().unwrap_or(0);
                 if stake > 0 {
+                    refund_total = payout_add(refund_total, stake)?;
                     _accumulate_pending(env, user.clone(), stake)?;
                     _persist_user_outcome(
                         env,
@@ -2128,6 +2074,11 @@ pub fn _resolve_precision_mode(
                 }
             }
         }
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("round"), symbol_short!("noreveal")),
+            (round_id, refund_total, 0i128),
+        );
     }
 
     Ok((fee_amount, total_pot))
@@ -2614,8 +2565,9 @@ pub fn _refund_under_threshold(
     env: &Env,
     round: &Round,
     participants: &Vec<Address>,
-) -> Result<(), ContractError> {
+) -> Result<i128, ContractError> {
     let round_id = round.round_id;
+    let mut total_refund = 0i128;
     let round_mode = match round.mode {
         RoundMode::UpDown => 0,
         RoundMode::Precision => 1,
@@ -2626,6 +2578,7 @@ pub fn _refund_under_threshold(
                 if let Some(user) = participants.get(i) {
                     let pos_key = DataKeyScoped::Position(round_id, user.clone());
                     if let Some(pos) = env.storage().persistent().get::<_, UserPosition>(&pos_key) {
+                        total_refund = payout_add(total_refund, pos.amount)?;
                         _accumulate_pending(env, user.clone(), pos.amount)?;
                         let prediction_side = match pos.side {
                             BetSide::Up => 0,
@@ -2669,6 +2622,7 @@ pub fn _refund_under_threshold(
                         refund_amount = commit.amount;
                     }
                     if refund_amount > 0 {
+                        total_refund = payout_add(total_refund, refund_amount)?;
                         _accumulate_pending(env, user.clone(), refund_amount)?;
                         _persist_user_outcome(
                             env,
@@ -2710,7 +2664,7 @@ pub fn _refund_under_threshold(
     env.storage()
         .persistent()
         .remove(&DataKeyCore::PrecisionPositions);
-    Ok(())
+    Ok(total_refund)
 }
 
 /// Domain-separation prefix for oracle attestation messages (Issue #263).

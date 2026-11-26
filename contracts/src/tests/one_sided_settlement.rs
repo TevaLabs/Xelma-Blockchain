@@ -163,6 +163,22 @@ fn test_deterministic_policy_selection() {
     assert_eq!(contract_policy, Policy::Refund);
 }
 
+/// #828: querying the policy with no active round must not panic and
+/// defaults to `Refund`, both before any round and after one settles.
+#[test]
+fn test_one_sided_policy_defaults_to_refund_without_active_round() {
+    let env = Env::default();
+    let contract_id = env.register(VirtualTokenContract, ());
+    let client = VirtualTokenContractClient::new(&env, &contract_id);
+    // Uninitialized contract: no active round, no config.
+    assert_eq!(client.get_active_round(), None);
+    assert_eq!(client.get_one_sided_policy(), OneSidedPolicy::Refund);
+
+    let (_env, client, _admin, _oracle) = setup_test_env();
+    assert_eq!(client.get_active_round(), None);
+    assert_eq!(client.get_one_sided_policy(), OneSidedPolicy::Refund);
+}
+
 #[test]
 fn test_emitted_events_and_metadata() {
     let (env, client, _admin, _oracle) = setup_test_env();
